@@ -220,4 +220,110 @@ mod tests {
         let result = translator.text_args("nonexistent-key", args);
         assert_eq!(result, "nonexistent-key");
     }
+
+    #[test]
+    fn gui_config_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("config-save"), "保存");
+        assert_eq!(translator.text("config-validate"), "验证");
+        assert_eq!(translator.text("config-reset"), "重置");
+        assert_eq!(translator.text("config-migrate"), "迁移");
+        assert_eq!(translator.text("config-reload"), "重载");
+        assert_eq!(translator.text("config-unsaved"), "● 未保存");
+        assert_eq!(translator.text("config-saved"), "● 已保存");
+        assert_eq!(translator.text("config-find"), "查找");
+        assert_eq!(translator.text("config-search-hint"), "搜索 TOML");
+        assert_eq!(
+            translator.text("config-search-type-to-search"),
+            "输入以搜索"
+        );
+        assert_eq!(translator.text("config-search-no-matches"), "0 个匹配");
+        assert_eq!(translator.text("config-prev"), "上一个");
+        assert_eq!(translator.text("config-next"), "下一个");
+    }
+
+    #[test]
+    fn gui_config_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("config-save"), "Save");
+        assert_eq!(translator.text("config-validate"), "Validate");
+        assert_eq!(translator.text("config-reset"), "Reset");
+        assert_eq!(translator.text("config-migrate"), "Migrate");
+        assert_eq!(translator.text("config-reload"), "Reload");
+        assert_eq!(translator.text("config-unsaved"), "● Unsaved");
+        assert_eq!(translator.text("config-saved"), "● Saved");
+        assert_eq!(translator.text("config-find"), "Find");
+        assert_eq!(translator.text("config-search-hint"), "Search TOML");
+        assert_eq!(
+            translator.text("config-search-type-to-search"),
+            "Type to search"
+        );
+        assert_eq!(translator.text("config-search-no-matches"), "0 matches");
+        assert_eq!(translator.text("config-prev"), "Prev");
+        assert_eq!(translator.text("config-next"), "Next");
+    }
+
+    #[test]
+    fn gui_config_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "config-notify-load-failed",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "Failed to load config: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "config-notify-save-failed",
+                HashMap::from([("error", "write error".to_string())])
+            ),
+            "Save failed: write error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "config-path-hint",
+                HashMap::from([("path", "/tmp/config.toml".to_string())])
+            ),
+            "Config file: /tmp/config.toml"
+        );
+    }
+
+    #[test]
+    fn gui_config_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "config-notify-load-failed",
+                HashMap::from([("error", "磁盘错误".to_string())])
+            ),
+            "加载配置失败：磁盘错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "config-notify-save-failed",
+                HashMap::from([("error", "写入错误".to_string())])
+            ),
+            "保存失败：写入错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "config-path-hint",
+                HashMap::from([("path", "/tmp/config.toml".to_string())])
+            ),
+            "配置文件：/tmp/config.toml"
+        );
+    }
+
+    #[test]
+    fn gui_config_panel_translates_confirm_dialog_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("config-confirm-title"), "未保存的更改");
+        assert_eq!(
+            translator.text("config-confirm-message"),
+            "当前编辑尚未保存。是否继续并覆盖编辑器内容？"
+        );
+        assert_eq!(translator.text("config-confirm-continue"), "继续");
+        assert_eq!(translator.text("config-confirm-cancel"), "取消");
+    }
 }

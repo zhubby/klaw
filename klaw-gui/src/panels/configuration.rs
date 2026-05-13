@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use egui::{
     Align, Color32, FontId, Rect, RichText, TextFormat,
     text::{CCursor, CCursorRange, LayoutJob, LayoutSection},
@@ -7,8 +8,9 @@ use egui::{
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular;
 use klaw_config::{ConfigSnapshot, ConfigStore};
-use klaw_ui_kit::label_with_hint;
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint};
 use std::{
+    collections::HashMap,
     ops::Range,
     path::{Path, PathBuf},
 };
@@ -36,19 +38,27 @@ impl ConfigurationPanel {
     const EDITOR_ID_SALT: &'static str = "configuration-editor";
     const RESET_TEXT_COLOR: Color32 = Color32::from_rgb(200, 150, 50);
 
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
         }
+        let t = Self::translator();
         match ConfigStore::open(None) {
             Ok(store) => {
                 let snapshot = store.snapshot();
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
-                notifications.success("Configuration loaded from disk");
+                notifications.success(t.text("config-notify-loaded"));
             }
             Err(err) => {
-                notifications.error(format!("Failed to load config: {err}"));
+                notifications.error(t.text_args(
+                    "config-notify-load-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
@@ -68,28 +78,36 @@ impl ConfigurationPanel {
 
     fn handle_save(&mut self, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("config-notify-store-unavailable"));
             return;
         };
+        let t = Self::translator();
         match store.save_raw_toml(&self.editor_raw) {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
-                notifications.success("Configuration saved");
+                notifications.success(t.text("config-notify-saved"));
             }
             Err(err) => {
-                notifications.error(format!("Save failed: {err}"));
+                notifications.error(t.text_args(
+                    "config-notify-save-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
 
     fn handle_validate(&mut self, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("config-notify-store-unavailable"));
             return;
         };
+        let t = Self::translator();
         match store.validate_raw_toml(&self.editor_raw) {
-            Ok(()) => notifications.success("Configuration is valid"),
-            Err(err) => notifications.error(format!("Validation failed: {err}")),
+            Ok(()) => notifications.success(t.text("config-notify-valid")),
+            Err(err) => notifications.error(t.text_args(
+                "config-notify-validation-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -114,9 +132,10 @@ impl ConfigurationPanel {
 
     fn execute_action(&mut self, action: ConfirmAction, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("config-notify-store-unavailable"));
             return;
         };
+        let t = Self::translator();
         let result = match action {
             ConfirmAction::Reset => store.reset_to_defaults(),
             ConfirmAction::Migrate => store.migrate_with_defaults(),
@@ -125,40 +144,50 @@ impl ConfigurationPanel {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
                 notifications.success(match action {
-                    ConfirmAction::Reset => "Configuration reset to defaults",
-                    ConfirmAction::Migrate => "Configuration migrated with defaults",
+                    ConfirmAction::Reset => t.text("config-notify-reset"),
+                    ConfirmAction::Migrate => t.text("config-notify-migrated"),
                 });
             }
             Err(err) => {
-                notifications.error(format!("Operation failed: {err}"));
+                notifications.error(t.text_args(
+                    "config-notify-operation-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
 
     fn try_reload(&mut self, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("config-notify-store-unavailable"));
             return;
         };
+        let t = Self::translator();
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
-                notifications.success("Configuration reloaded from disk");
+                notifications.success(t.text("config-notify-reloaded"));
             }
             Err(err) => {
-                notifications.error(format!("Reload failed: {err}"));
+                notifications.error(t.text_args(
+                    "config-notify-reload-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
 
-    fn subtitle() -> &'static str {
-        "Edit the TOML configuration for the klaw runtime"
+    fn subtitle(t: &Translator) -> String {
+        t.text("config-subtitle")
     }
 
-    fn path_hint(path: Option<&Path>) -> String {
+    fn path_hint(t: &Translator, path: Option<&Path>) -> String {
         match path {
-            Some(path) => format!("Config file: {}", path.display()),
-            None => "Config file: (not loaded)".to_string(),
+            Some(path) => t.text_args(
+                "config-path-hint",
+                HashMap::from([("path", path.display().to_string())]),
+            ),
+            None => t.text("config-path-not-loaded"),
         }
     }
 
@@ -581,6 +610,7 @@ impl PanelRenderer for ConfigurationPanel {
         const MIN_TOTAL_HEIGHT: f32 = 520.0;
         const MIN_EDITOR_HEIGHT: f32 = 320.0;
 
+        let t = Self::translator();
         self.ensure_store_loaded(notifications);
 
         let search_matches = self.search_matches();
@@ -605,41 +635,63 @@ impl PanelRenderer for ConfigurationPanel {
             ui.heading(ctx.tab_title);
             label_with_hint(
                 ui,
-                Self::subtitle(),
-                &Self::path_hint(this.config_path.as_deref()),
+                &Self::subtitle(&t),
+                &Self::path_hint(&t, this.config_path.as_deref()),
             );
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 let dirty = this.is_dirty();
-                let dirty_text = if dirty { "● Unsaved" } else { "● Saved" };
+                let dirty_text = if dirty {
+                    t.text("config-unsaved")
+                } else {
+                    t.text("config-saved")
+                };
                 let dirty_color = if dirty {
                     Color32::YELLOW
                 } else {
                     Color32::LIGHT_GREEN
                 };
                 if ui
-                    .button(format!("{} Save", regular::FLOPPY_DISK))
+                    .button(format!(
+                        "{} {}",
+                        regular::FLOPPY_DISK,
+                        t.text("config-save")
+                    ))
                     .clicked()
                 {
                     this.handle_save(notifications);
                 }
-                if ui.button(format!("{} Validate", regular::CHECK)).clicked() {
+                if ui
+                    .button(format!("{} {}", regular::CHECK, t.text("config-validate")))
+                    .clicked()
+                {
                     this.handle_validate(notifications);
                 }
                 if ui
                     .button(
-                        RichText::new(format!("{} Reset", regular::ARROW_COUNTER_CLOCKWISE))
-                            .color(Self::RESET_TEXT_COLOR),
+                        RichText::new(format!(
+                            "{} {}",
+                            regular::ARROW_COUNTER_CLOCKWISE,
+                            t.text("config-reset")
+                        ))
+                        .color(Self::RESET_TEXT_COLOR),
                     )
                     .clicked()
                 {
                     this.request_or_execute(ConfirmAction::Reset, notifications);
                 }
-                if ui.button(format!("{} Migrate", regular::BROOM)).clicked() {
+                if ui
+                    .button(format!("{} {}", regular::BROOM, t.text("config-migrate")))
+                    .clicked()
+                {
                     this.request_or_execute(ConfirmAction::Migrate, notifications);
                 }
                 if ui
-                    .button(format!("{} Reload", regular::ARROW_CLOCKWISE))
+                    .button(format!(
+                        "{} {}",
+                        regular::ARROW_CLOCKWISE,
+                        t.text("config-reload")
+                    ))
                     .clicked()
                 {
                     this.try_reload(notifications);
@@ -649,11 +701,15 @@ impl PanelRenderer for ConfigurationPanel {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label(format!("{} Find", regular::MAGNIFYING_GLASS));
+                ui.label(format!(
+                    "{} {}",
+                    regular::MAGNIFYING_GLASS,
+                    t.text("config-find")
+                ));
                 let search_response = ui.add(
                     egui::TextEdit::singleline(&mut this.search_query)
                         .desired_width(220.0)
-                        .hint_text("Search TOML"),
+                        .hint_text(t.text("config-search-hint")),
                 );
                 if search_response.changed() {
                     this.sync_search_with_query();
@@ -672,11 +728,11 @@ impl PanelRenderer for ConfigurationPanel {
                     this.search_match_committed = false;
                 }
                 let status_text = if this.search_query.trim().is_empty() {
-                    "Type to search".to_string()
+                    t.text("config-search-type-to-search")
                 } else if has_matches {
                     format!("{}/{}", this.search_match_index + 1, matches.len())
                 } else {
-                    "0 matches".to_string()
+                    t.text("config-search-no-matches")
                 };
                 let status_color = if this.search_query.trim().is_empty() {
                     ui.visuals().weak_text_color()
@@ -690,7 +746,11 @@ impl PanelRenderer for ConfigurationPanel {
                 if ui
                     .add_enabled(
                         has_matches,
-                        egui::Button::new(format!("{} Prev", regular::ARROW_UP)),
+                        egui::Button::new(format!(
+                            "{} {}",
+                            regular::ARROW_UP,
+                            t.text("config-prev")
+                        )),
                     )
                     .clicked()
                 {
@@ -699,7 +759,11 @@ impl PanelRenderer for ConfigurationPanel {
                 if ui
                     .add_enabled(
                         has_matches,
-                        egui::Button::new(format!("{} Next", regular::ARROW_DOWN)),
+                        egui::Button::new(format!(
+                            "{} {}",
+                            regular::ARROW_DOWN,
+                            t.text("config-next")
+                        )),
                     )
                     .clicked()
                 {
@@ -767,18 +831,18 @@ impl PanelRenderer for ConfigurationPanel {
         }
 
         if let Some(action) = self.pending_confirm {
-            egui::Window::new("Unsaved changes")
+            egui::Window::new(t.text("config-confirm-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
-                    ui.label("Current edits are not saved. Continue and overwrite editor content?");
+                    ui.label(t.text("config-confirm-message"));
                     ui.horizontal(|ui| {
-                        if ui.button("Continue").clicked() {
+                        if ui.button(t.text("config-confirm-continue")).clicked() {
                             self.pending_confirm = Some(action);
                             self.confirm_pending_action(notifications);
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(t.text("config-confirm-cancel")).clicked() {
                             self.pending_confirm = None;
                         }
                     });
