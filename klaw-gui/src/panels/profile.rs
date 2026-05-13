@@ -255,126 +255,136 @@ impl ProfilePanel {
         }
 
         let available_height = ui.available_height();
-        TableBuilder::new(ui)
-            .striped(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().at_least(140.0))
-            .column(Column::remainder().at_least(220.0))
-            .column(Column::auto().at_least(90.0))
-            .column(Column::auto().at_least(110.0))
-            .column(Column::remainder().at_least(260.0))
-            .min_scrolled_height(0.0)
-            .max_scroll_height(available_height)
-            .sense(egui::Sense::click())
-            .header(22.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong(t.text("profile-name"));
-                });
-                header.col(|ui| {
-                    ui.strong(t.text("profile-summary"));
-                });
-                header.col(|ui| {
-                    ui.strong(t.text("profile-size"));
-                });
-                header.col(|ui| {
-                    ui.strong(t.text("profile-modified"));
-                });
-                header.col(|ui| {
-                    ui.strong(t.text("profile-path"));
-                });
-            })
-            .body(|body| {
-                body.rows(22.0, self.docs.len(), |mut row| {
-                    let idx = row.index();
-                    let doc = &self.docs[idx];
-                    let is_selected = self.selected_doc.as_deref() == Some(&doc.file_name);
-                    row.set_selected(is_selected);
+        egui::ScrollArea::both()
+            .id_salt("workspace-markdown-files-scroll")
+            .auto_shrink([false, false])
+            .max_height(available_height)
+            .show(ui, |ui| {
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::auto().at_least(140.0))
+                    .column(Column::remainder().at_least(220.0))
+                    .column(Column::auto().at_least(90.0))
+                    .column(Column::auto().at_least(110.0))
+                    .column(Column::remainder().at_least(260.0))
+                    .vscroll(false)
+                    .min_scrolled_height(0.0)
+                    .sense(egui::Sense::click())
+                    .header(22.0, |mut header| {
+                        header.col(|ui| {
+                            ui.strong(t.text("profile-name"));
+                        });
+                        header.col(|ui| {
+                            ui.strong(t.text("profile-summary"));
+                        });
+                        header.col(|ui| {
+                            ui.strong(t.text("profile-size"));
+                        });
+                        header.col(|ui| {
+                            ui.strong(t.text("profile-modified"));
+                        });
+                        header.col(|ui| {
+                            ui.strong(t.text("profile-path"));
+                        });
+                    })
+                    .body(|body| {
+                        body.rows(22.0, self.docs.len(), |mut row| {
+                            let idx = row.index();
+                            let doc = &self.docs[idx];
+                            let is_selected = self.selected_doc.as_deref() == Some(&doc.file_name);
+                            row.set_selected(is_selected);
 
-                    row.col(|ui| {
-                        ui.label(&doc.file_name);
-                    });
-                    row.col(|ui| {
-                        ui.label(&doc.summary);
-                    });
-                    row.col(|ui| {
-                        ui.label(format_bytes(doc.size_bytes));
-                    });
-                    row.col(|ui| {
-                        ui.label(&doc.modified_label);
-                    });
-                    row.col(|ui| {
-                        ui.label(doc.path.display().to_string());
-                    });
-
-                    let response = row.response();
-                    let interaction = handle_workspace_doc_row_interaction(
-                        is_selected,
-                        doc.file_name.clone(),
-                        response.clicked(),
-                        response.double_clicked(),
-                    );
-                    self.selected_doc = interaction.selected_doc;
-                    if interaction.open_preview {
-                        preview_target = Some(doc.clone());
-                    }
-
-                    let doc_clone = doc.clone();
-                    let has_default_template =
-                        klaw_core::get_default_template_content(&doc.file_name).is_some();
-                    response.context_menu(|ui| {
-                        if ui
-                            .button(format!("{} {}", regular::EYE, t.text("profile-preview")))
-                            .clicked()
-                        {
-                            preview_target = Some(doc_clone.clone());
-                            ui.close();
-                        }
-                        if ui
-                            .button(format!(
-                                "{} {}",
-                                regular::PENCIL_SIMPLE,
-                                t.text("profile-edit")
-                            ))
-                            .clicked()
-                        {
-                            edit_target = Some(doc_clone.clone());
-                            ui.close();
-                        }
-                        if has_default_template
-                            && ui
-                                .add(egui::Button::new(
-                                    RichText::new(format!(
-                                        "{} {}",
-                                        regular::ARROW_COUNTER_CLOCKWISE,
-                                        t.text("profile-reset")
-                                    ))
-                                    .color(RESET_BUTTON_COLOR),
-                                ))
-                                .clicked()
-                        {
-                            self.pending_default_confirm = Some(PendingDefaultReset {
-                                file_name: doc_clone.file_name.clone(),
-                                target: DefaultResetTarget::File(doc_clone.path.clone()),
+                            row.col(|ui| {
+                                ui.label(&doc.file_name);
                             });
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui
-                            .add(egui::Button::new(
-                                RichText::new(format!(
-                                    "{} {}",
-                                    regular::TRASH,
-                                    t.text("profile-delete")
-                                ))
-                                .color(egui::Color32::RED),
-                            ))
-                            .clicked()
-                        {
-                            self.pending_delete_doc = Some(doc_clone.clone());
-                            ui.close();
-                        }
+                            row.col(|ui| {
+                                ui.label(&doc.summary);
+                            });
+                            row.col(|ui| {
+                                ui.label(format_bytes(doc.size_bytes));
+                            });
+                            row.col(|ui| {
+                                ui.label(&doc.modified_label);
+                            });
+                            row.col(|ui| {
+                                ui.label(doc.path.display().to_string());
+                            });
+
+                            let response = row.response();
+                            let interaction = handle_workspace_doc_row_interaction(
+                                is_selected,
+                                doc.file_name.clone(),
+                                response.clicked(),
+                                response.double_clicked(),
+                            );
+                            self.selected_doc = interaction.selected_doc;
+                            if interaction.open_preview {
+                                preview_target = Some(doc.clone());
+                            }
+
+                            let doc_clone = doc.clone();
+                            let has_default_template =
+                                klaw_core::get_default_template_content(&doc.file_name).is_some();
+                            response.context_menu(|ui| {
+                                if ui
+                                    .button(format!(
+                                        "{} {}",
+                                        regular::EYE,
+                                        t.text("profile-preview")
+                                    ))
+                                    .clicked()
+                                {
+                                    preview_target = Some(doc_clone.clone());
+                                    ui.close();
+                                }
+                                if ui
+                                    .button(format!(
+                                        "{} {}",
+                                        regular::PENCIL_SIMPLE,
+                                        t.text("profile-edit")
+                                    ))
+                                    .clicked()
+                                {
+                                    edit_target = Some(doc_clone.clone());
+                                    ui.close();
+                                }
+                                if has_default_template
+                                    && ui
+                                        .add(egui::Button::new(
+                                            RichText::new(format!(
+                                                "{} {}",
+                                                regular::ARROW_COUNTER_CLOCKWISE,
+                                                t.text("profile-reset")
+                                            ))
+                                            .color(RESET_BUTTON_COLOR),
+                                        ))
+                                        .clicked()
+                                {
+                                    self.pending_default_confirm = Some(PendingDefaultReset {
+                                        file_name: doc_clone.file_name.clone(),
+                                        target: DefaultResetTarget::File(doc_clone.path.clone()),
+                                    });
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui
+                                    .add(egui::Button::new(
+                                        RichText::new(format!(
+                                            "{} {}",
+                                            regular::TRASH,
+                                            t.text("profile-delete")
+                                        ))
+                                        .color(egui::Color32::RED),
+                                    ))
+                                    .clicked()
+                                {
+                                    self.pending_delete_doc = Some(doc_clone.clone());
+                                    ui.close();
+                                }
+                            });
+                        });
                     });
-                });
             });
 
         if let Some(doc) = edit_target {
