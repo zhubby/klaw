@@ -208,16 +208,30 @@ fn build_env_filter(command: &Commands, log_level: Option<LogLevel>) -> EnvFilte
 
     match effective_level {
         Some(level) => {
-            // Keep app-level debug/trace while suppressing noisy DB internals.
+            let gui_window_backend_level = if matches!(command, Commands::Gui(_)) {
+                gui_window_backend_filter_level(level)
+            } else {
+                level.as_filter()
+            };
+            // Keep app-level debug/trace while suppressing noisy DB and window backend internals.
             let filter = format!(
                 "{},sqlx=warn,sqlx::query=warn,sqlx::query::logger=warn,\
                 turso=warn,turso_core=warn,turso_ext=warn,turso_sync_engine=warn,\
-                turso_parser=warn,turso_sdk_kit=warn,turso_sync_sdk_kit=warn",
-                level.as_filter()
+                turso_parser=warn,turso_sdk_kit=warn,turso_sync_sdk_kit=warn,\
+                winit={gui_window_backend_level},egui_winit={gui_window_backend_level}",
+                level.as_filter(),
             );
             EnvFilter::new(filter)
         }
         None => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+    }
+}
+
+fn gui_window_backend_filter_level(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Trace | LogLevel::Debug | LogLevel::Info => "info",
+        LogLevel::Warn => "warn",
+        LogLevel::Error => "error",
     }
 }
 
@@ -384,6 +398,17 @@ mod tests {
         assert!(rendered.contains("error"));
         assert!(rendered.contains("sqlx=warn"));
         assert!(rendered.contains("turso=warn"));
+        assert!(rendered.contains("winit=error"));
+        assert!(rendered.contains("egui_winit=error"));
+    }
+
+    #[test]
+    fn build_env_filter_for_gui_caps_window_backend_debug_noise() {
+        let filter = build_env_filter(&Commands::Gui(GuiCommand {}), None);
+        let rendered = filter.to_string();
+        assert!(rendered.contains("debug"));
+        assert!(rendered.contains("winit=info"));
+        assert!(rendered.contains("egui_winit=info"));
     }
 
     #[test]
