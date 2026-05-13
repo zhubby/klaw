@@ -318,3 +318,91 @@ setting-sync-item-archive = 归档
 setting-sync-item-user-workspace = 用户工作区
 setting-sync-item-memory = 记忆
 setting-sync-item-config = 配置
+
+## 系统面板
+system-view-host-information = 主机信息
+system-view-program-disk-usage = 程序磁盘使用
+system-view-environment = 环境
+
+system-dir-tmp = 临时文件
+system-dir-workspace = 工作区
+system-dir-sessions = 会话
+system-dir-archives = 归档
+system-dir-logs = 日志
+system-dir-skills = 技能
+system-dir-skills-registry = 技能仓库
+system-dir-models = 模型
+
+system-cpu-usage = CPU 使用率
+system-memory-usage = 内存使用率
+system-system-information = 系统信息
+
+system-host-app-uptime = 应用运行时间
+system-host-name = 主机名
+system-host-os-name = 操作系统名称
+system-host-os-version = 操作系统版本
+system-host-long-os-version = 详细操作系统版本
+system-host-kernel-version = 内核版本
+system-host-cpu-architecture = CPU 架构
+system-host-logical-cpu-count = 逻辑 CPU 核心数
+system-host-physical-core-count = 物理 CPU 核心数
+system-host-primary-cpu-brand = 主 CPU 品牌
+system-host-primary-cpu-frequency = 主 CPU 频率
+system-host-total-memory = 总内存
+system-host-used-memory = 已用内存
+system-host-free-memory = 可用内存
+system-host-total-swap = 总交换空间
+system-host-used-swap = 已用交换空间
+system-host-system-uptime = 系统运行时间
+system-host-system-boot-time = 系统启动时间
+system-host-load-average = 平均负载
+system-host-data-directory = 数据目录
+
+system-host-data-dir-size = 数据目录大小
+system-host-data-dir-file-count = 数据目录文件数
+system-host-data-dir-mount-point = 数据目录挂载点
+system-host-data-dir-disk-capacity = 数据目录磁盘容量
+system-host-data-dir-disk-available = 数据目录磁盘可用空间
+
+system-cpu-cores-info = { $logical } 逻辑 / { $physical } 物理 核心数
+system-memory-free = 可用: { $free }
+system-cpu-frequency-mhz = { $freq } MHz
+system-host-na = 无
+system-host-loading = 加载中...
+
+system-disk-usage-description = 检查和清理 Klaw 数据目录下的数据。
+system-dir-path = 路径: { $path }
+system-dir-path-unavailable = 路径不可用。
+system-dir-clearing-hint = 清除操作将删除 `{ $dir }` 内的文件；目录本身将被保留。
+
+system-usage-calculating = 计算中...
+system-usage = 使用: { $usage }
+system-usage-unavailable-error = 使用: 不可用 ({ $error })
+system-usage-unavailable = 使用: 不可用
+
+system-refresh = 刷新
+system-open-dir-hint = 在文件管理器中打开 { $title } 目录
+system-clear-dir-hint = 清除 { $title } 目录
+system-clear = 清除
+system-cancel = 取消
+
+system-confirm-clear-title = 清除 { $title } 目录
+system-confirm-clear-message = 确定要清除 { $title } 目录吗？
+
+system-env-dependencies = 环境依赖
+system-env-loading = 加载中...
+system-env-not-found = 未找到
+system-env-required = 必需
+system-env-preferred = 推荐
+system-env-optional = 可选
+system-env-project = 项目:
+system-env-all-available = 所有依赖可用
+system-env-tm-missing = 注意：终端复用器 (zellij/tmux) 不可用
+system-env-preferred-missing = 注意：部分推荐依赖缺失
+system-env-required-missing = 警告：部分必需依赖缺失
+
+system-notify-failed-collect-usage = 收集 { $title } 使用量失败: { $error }
+system-notify-dir-cleared = { $title } 目录已清除
+system-notify-failed-clear-dir = 清除 { $title } 目录失败: { $error }
+system-notify-failed-resolve = 解析数据目录失败: { $error }
+system-notify-failed-open-dir = 打开 { $title } 目录失败: { $error }

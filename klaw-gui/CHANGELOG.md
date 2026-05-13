@@ -6,6 +6,7 @@
 
 - `Settings > General` 新增语言下拉框，支持 English / 简体中文并持久化到 GUI settings
 - 顶部菜单栏现在通过 `klaw-ui-kit` 的 GUI Fluent 资源渲染，可随语言设置切换
+- System 面板全面支持多语言（Host Information、Program Disk Usage、Environment 三个视图标签、目录区标题、主机信息行标签、环境依赖检查、清除确认对话框、通知消息等均随语言设置切换）
 
 ## 2026-05-08
 

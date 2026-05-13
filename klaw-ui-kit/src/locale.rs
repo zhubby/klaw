@@ -528,4 +528,155 @@ mod tests {
             "当前主题模式：深色（可在底部状态栏更改）。"
         );
     }
+
+    #[test]
+    fn gui_system_panel_translates_view_tabs_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("system-view-host-information"),
+            "Host Information"
+        );
+        assert_eq!(
+            translator.text("system-view-program-disk-usage"),
+            "Program Disk Usage"
+        );
+        assert_eq!(translator.text("system-view-environment"), "Environment");
+    }
+
+    #[test]
+    fn gui_system_panel_translates_view_tabs_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("system-view-host-information"), "主机信息");
+        assert_eq!(
+            translator.text("system-view-program-disk-usage"),
+            "程序磁盘使用"
+        );
+        assert_eq!(translator.text("system-view-environment"), "环境");
+    }
+
+    #[test]
+    fn gui_system_panel_translates_dir_titles_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("system-dir-tmp"), "Temporary");
+        assert_eq!(translator.text("system-dir-workspace"), "Workspace");
+        assert_eq!(translator.text("system-dir-sessions"), "Sessions");
+        assert_eq!(translator.text("system-dir-logs"), "Logs");
+        assert_eq!(
+            translator.text("system-dir-skills-registry"),
+            "Skills Registry"
+        );
+        assert_eq!(translator.text("system-dir-models"), "Models");
+    }
+
+    #[test]
+    fn gui_system_panel_translates_dir_titles_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("system-dir-tmp"), "临时文件");
+        assert_eq!(translator.text("system-dir-workspace"), "工作区");
+        assert_eq!(translator.text("system-dir-sessions"), "会话");
+        assert_eq!(translator.text("system-dir-logs"), "日志");
+        assert_eq!(translator.text("system-dir-skills-registry"), "技能仓库");
+        assert_eq!(translator.text("system-dir-models"), "模型");
+    }
+
+    #[test]
+    fn gui_system_panel_translates_host_info_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("system-cpu-usage"), "CPU Usage");
+        assert_eq!(translator.text("system-memory-usage"), "Memory Usage");
+        assert_eq!(
+            translator.text("system-system-information"),
+            "System Information"
+        );
+        assert_eq!(translator.text("system-host-app-uptime"), "App Uptime");
+        assert_eq!(translator.text("system-host-name"), "Host Name");
+        assert_eq!(translator.text("system-host-os-name"), "OS Name");
+        assert_eq!(translator.text("system-host-total-memory"), "Total Memory");
+        assert_eq!(translator.text("system-host-na"), "N/A");
+        assert_eq!(translator.text("system-host-loading"), "Loading...");
+    }
+
+    #[test]
+    fn gui_system_panel_translates_host_info_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("system-cpu-usage"), "CPU 使用率");
+        assert_eq!(translator.text("system-memory-usage"), "内存使用率");
+        assert_eq!(translator.text("system-system-information"), "系统信息");
+        assert_eq!(translator.text("system-host-app-uptime"), "应用运行时间");
+        assert_eq!(translator.text("system-host-na"), "无");
+        assert_eq!(translator.text("system-host-loading"), "加载中...");
+    }
+
+    #[test]
+    fn gui_system_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "system-cpu-cores-info",
+                HashMap::from([("logical", "8".to_string()), ("physical", "4".to_string())])
+            ),
+            "8 logical / 4 physical cores"
+        );
+        assert_eq!(
+            translator.text_args(
+                "system-memory-free",
+                HashMap::from([("free", "2.00 GB".to_string())])
+            ),
+            "Free: 2.00 GB"
+        );
+        assert_eq!(
+            translator.text_args(
+                "system-cpu-frequency-mhz",
+                HashMap::from([("freq", "2400".to_string())])
+            ),
+            "2400 MHz"
+        );
+        assert_eq!(
+            translator.text_args(
+                "system-confirm-clear-title",
+                HashMap::from([("title", "Sessions".to_string())])
+            ),
+            "Clear Sessions directory"
+        );
+        assert_eq!(
+            translator.text_args(
+                "system-notify-dir-cleared",
+                HashMap::from([("title", "Logs".to_string())])
+            ),
+            "Logs directory cleared"
+        );
+    }
+
+    #[test]
+    fn gui_system_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "system-cpu-cores-info",
+                HashMap::from([("logical", "8".to_string()), ("physical", "4".to_string())])
+            ),
+            "8 逻辑 / 4 物理 核心数"
+        );
+        assert_eq!(
+            translator.text_args(
+                "system-memory-free",
+                HashMap::from([("free", "2.00 GB".to_string())])
+            ),
+            "可用: 2.00 GB"
+        );
+        assert_eq!(
+            translator.text_args(
+                "system-confirm-clear-title",
+                HashMap::from([("title", "会话".to_string())])
+            ),
+            "清除 会话 目录"
+        );
+        assert_eq!(
+            translator.text_args(
+                "system-notify-dir-cleared",
+                HashMap::from([("title", "日志".to_string())])
+            ),
+            "日志 目录已清除"
+        );
+    }
 }

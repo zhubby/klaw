@@ -319,4 +319,92 @@ setting-sync-item-user-workspace = User Workspace
 setting-sync-item-memory = Memory
 setting-sync-item-config = Config
 
+## System panel
+system-view-host-information = Host Information
+system-view-program-disk-usage = Program Disk Usage
+system-view-environment = Environment
+
+system-dir-tmp = Temporary
+system-dir-workspace = Workspace
+system-dir-sessions = Sessions
+system-dir-archives = Archives
+system-dir-logs = Logs
+system-dir-skills = Skills
+system-dir-skills-registry = Skills Registry
+system-dir-models = Models
+
+system-cpu-usage = CPU Usage
+system-memory-usage = Memory Usage
+system-system-information = System Information
+
+system-host-app-uptime = App Uptime
+system-host-name = Host Name
+system-host-os-name = OS Name
+system-host-os-version = OS Version
+system-host-long-os-version = Long OS Version
+system-host-kernel-version = Kernel Version
+system-host-cpu-architecture = CPU Architecture
+system-host-logical-cpu-count = Logical CPU Count
+system-host-physical-core-count = Physical Core Count
+system-host-primary-cpu-brand = Primary CPU Brand
+system-host-primary-cpu-frequency = Primary CPU Frequency
+system-host-total-memory = Total Memory
+system-host-used-memory = Used Memory
+system-host-free-memory = Free Memory
+system-host-total-swap = Total Swap
+system-host-used-swap = Used Swap
+system-host-system-uptime = System Uptime
+system-host-system-boot-time = System Boot Time
+system-host-load-average = Load Average
+system-host-data-directory = Data Directory
+
+system-host-data-dir-size = Data Directory Size
+system-host-data-dir-file-count = Data Directory File Count
+system-host-data-dir-mount-point = Data Directory Mount Point
+system-host-data-dir-disk-capacity = Data Directory Disk Capacity
+system-host-data-dir-disk-available = Data Directory Disk Available
+
+system-cpu-cores-info = { $logical } logical / { $physical } physical cores
+system-memory-free = Free: { $free }
+system-cpu-frequency-mhz = { $freq } MHz
+system-host-na = N/A
+system-host-loading = Loading...
+
+system-disk-usage-description = Inspect and clear data under the Klaw data directory.
+system-dir-path = Path: { $path }
+system-dir-path-unavailable = Path unavailable.
+system-dir-clearing-hint = Clearing removes files inside `{ $dir }`; the directory itself is kept.
+
+system-usage-calculating = Calculating...
+system-usage = Usage: { $usage }
+system-usage-unavailable-error = Usage: unavailable ({ $error })
+system-usage-unavailable = Usage: unavailable
+
+system-refresh = Refresh
+system-open-dir-hint = Open { $title } directory in Finder
+system-clear-dir-hint = Clear { $title } directory
+system-clear = Clear
+system-cancel = Cancel
+
+system-confirm-clear-title = Clear { $title } directory
+system-confirm-clear-message = Are you sure you want to clear the { $title } directory?
+
+system-env-dependencies = Environment Dependencies
+system-env-loading = Loading...
+system-env-not-found = not found
+system-env-required = Required
+system-env-preferred = Preferred
+system-env-optional = Optional
+system-env-project = Project:
+system-env-all-available = All dependencies available
+system-env-tm-missing = Note: Terminal multiplexer (zellij/tmux) not available
+system-env-preferred-missing = Note: Some preferred dependencies are missing
+system-env-required-missing = Warning: Some required dependencies are missing
+
+system-notify-failed-collect-usage = Failed to collect { $title } usage: { $error }
+system-notify-dir-cleared = { $title } directory cleared
+system-notify-failed-clear-dir = Failed to clear { $title } directory: { $error }
+system-notify-failed-resolve = Failed to resolve data directories: { $error }
+system-notify-failed-open-dir = Failed to open { $title } directory: { $error }
+
 test-english-only = English only
