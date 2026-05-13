@@ -784,3 +784,277 @@ provider-delete-message = 确定要删除提供商 '{ $provider_id }' 吗？
 provider-delete-info = 此操作将从 config.toml 中移除该提供商。活跃或正在使用的提供商无法删除。
 provider-delete-btn = { $icon } 删除
 provider-delete-cancel = 取消
+
+## Tool panel
+
+tool-subtitle = 管理工具启停与各项设置。
+tool-status-sync-pending = 运行时同步等待中...
+tool-btn-reload = { $icon } 刷新
+
+## Tool table
+tool-col-tool = 工具
+tool-col-status = 状态
+tool-col-description = 描述
+tool-status-enabled = 已启用
+tool-status-disabled = 已禁用
+
+## Tool context menu
+tool-ctx-edit = { $icon } 编辑
+tool-ctx-inspect = { $icon } 查看详情
+tool-ctx-logs = { $icon } 日志
+
+## Tool form
+tool-form-title = 编辑工具: { $name }
+tool-toggle-title = 编辑工具: { $kind }
+tool-form-enabled = 启用
+tool-form-workspace = 工作目录
+tool-form-allow-absolute-paths = 允许绝对路径
+tool-form-allow-login-shell = 允许登录 Shell
+tool-form-max-timeout-ms = 最大超时(ms)
+tool-form-max-output-bytes = 最大输出字节数
+tool-form-max-bytes = 最大字节数
+tool-form-search-limit = 搜索上限
+tool-form-fts-limit = 全文检索上限
+tool-form-vector-limit = 向量检索上限
+tool-form-use-vector = 使用向量检索
+tool-form-context-limit = 上下文上限
+tool-form-include-explain = 包含解释
+tool-form-max-chars = 最大字符数
+tool-form-timeout-seconds = 超时(秒)
+tool-form-cache-ttl-minutes = 缓存 TTL(分钟)
+tool-form-max-redirects = 最大重定向数
+tool-form-readability = 可读性提取
+tool-form-provider = 提供商
+tool-form-base-url = 基础 URL
+tool-form-api-key = API 密钥
+tool-form-env-key = 环境变量键
+tool-form-search-depth = 搜索深度
+tool-form-topic = 主题
+tool-form-include-answer = 包含答案
+tool-form-include-raw-content = 包含原始内容
+tool-form-include-images = 包含图片
+tool-form-project-id = 项目 ID
+tool-form-country = 国家
+tool-form-search-lang = 搜索语言
+tool-form-ui-lang = 界面语言
+tool-form-safesearch = 安全搜索
+tool-form-freshness = 时效性
+tool-form-max-iterations = 最大迭代数
+tool-form-max-tool-calls = 最大工具调用数
+tool-form-inherit-parent-tools = 继承父级工具
+
+## Tool web search sections
+tool-section-tavily = Tavily
+tool-section-brave = Brave
+
+## Tool form buttons
+tool-form-save = 保存
+tool-form-cancel = 取消
+
+## Tool inspect window
+tool-inspect-title = 查看工具详情: { $name }
+tool-inspect-description = 描述
+tool-inspect-schema = 模式
+tool-inspect-metadata-unavailable = 该工具无运行时元数据。
+
+## Tool logs window
+tool-log-window-title = 工具日志: { $name }
+tool-log-btn-refresh = { $icon } 刷新
+tool-log-rows = { $count } 行
+tool-log-hint-summary = 双击行或右键查看摘要。
+tool-log-filter-session = 会话
+tool-log-filter-start = 开始时间
+tool-log-filter-end = 结束时间
+tool-log-filter-status = 状态
+tool-log-filter-all = 全部
+tool-log-filter-failed-only = 仅失败
+tool-log-sort-time-asc = 时间升序
+tool-log-sort-time-desc = 时间降序
+tool-log-col-tool-call-id = 工具调用 ID
+tool-log-col-status = 状态
+tool-log-col-seq = 序号
+tool-log-col-session = 会话
+tool-log-status-success = 成功
+tool-log-status-failed = 失败
+tool-log-ctx-summary = { $icon } 摘要
+tool-log-no-rows = 未找到工具审计记录。
+
+## Tool log summary window
+tool-log-summary-title = 工具日志摘要: { $name }
+tool-log-summary-hint = 参数 / 结果 / 元数据支持标签页切换。
+tool-log-summary-label-summary = 摘要
+tool-log-summary-label-tool = 工具
+tool-log-summary-label-session = 会话
+tool-log-summary-label-chat = 对话
+tool-log-summary-label-status = 状态
+tool-log-summary-label-seq = 序号
+tool-log-summary-label-started = 开始时间
+tool-log-summary-label-duration = 持续时间
+tool-log-summary-label-error-code = 错误码
+tool-log-summary-tab-arguments = 参数
+tool-log-summary-tab-result = 结果
+tool-log-summary-tab-metadata = 元数据
+tool-log-summary-section-arguments = 参数
+tool-log-summary-section-result = 结果
+tool-log-summary-section-metadata = 元数据
+tool-log-summary-section-error = 错误
+tool-log-summary-section-error-details = 错误详情
+tool-log-summary-section-signals = 信号
+
+## Tool notifications
+tool-notify-config-loaded = 工具配置已从磁盘加载
+tool-notify-load-failed = 加载配置失败: { $error }
+tool-notify-store-unavailable = 配置存储不可用
+tool-notify-save-failed = 保存失败: { $error }
+tool-notify-config-reloaded = 配置已从磁盘重新加载
+tool-notify-reload-failed = 重新加载失败: { $error }
+tool-notify-runtime-metadata-failed = 加载运行时工具元数据失败: { $error }
+tool-notify-synced = 工具配置已保存并同步运行时（{ $count } 个工具活跃）
+tool-notify-sync-failed = 工具配置已保存，但同步运行时失败: { $error }
+tool-notify-syncing = 正在同步工具配置与运行时...
+tool-notify-saved = 工具配置已保存
+
+## Skills Registry panel
+skills-reg-label-registries-count = 注册源: { $count }
+skills-reg-btn-config = { $icon } 配置
+skills-reg-btn-reload = { $icon } 刷新
+skills-reg-btn-add = { $icon } 添加技能注册源
+skills-reg-no-registries = 未配置技能注册源。
+
+## Skills Registry table
+skills-reg-col-name = 名称
+skills-reg-col-address = 地址
+skills-reg-col-synced = 已同步
+skills-reg-col-commit = 提交
+skills-reg-col-installed = 已安装
+skills-reg-status-outdated = { $icon } 过期
+skills-reg-status-synced = { $icon } 已同步
+
+## Skills Registry context menu
+skills-reg-ctx-sync = { $icon } 同步
+skills-reg-ctx-edit = { $icon } 编辑
+skills-reg-ctx-copy-name = { $icon } 复制名称
+skills-reg-ctx-delete = { $icon } 删除
+
+## Skills Registry config window
+skills-reg-config-title = 技能注册源配置
+skills-reg-config-sync-timeout = 同步超时 (秒)
+skills-reg-config-save = 保存超时
+skills-reg-config-cancel = 取消
+
+## Skills Registry form window
+skills-reg-form-title-edit = 编辑技能注册源
+skills-reg-form-title-add = 添加技能注册源
+skills-reg-form-label-name = 名称
+skills-reg-form-label-address = 地址
+skills-reg-form-btn-save = 保存
+skills-reg-form-btn-cancel = 取消
+
+## Skills Registry delete dialog
+skills-reg-delete-title = 删除技能注册源
+skills-reg-delete-message = 确定要删除注册源 '{ $registry_name }' 吗？
+skills-reg-delete-description = 这将从配置中移除注册源，并清理清单中已安装的技能。
+skills-reg-delete-btn = { $icon } 删除
+skills-reg-delete-cancel = 取消
+
+## Skills Registry notifications
+skills-reg-notify-config-loaded = 技能注册源配置已从磁盘加载
+skills-reg-notify-load-failed = 加载配置失败: { $error }
+skills-reg-notify-store-unavailable = 配置存储不可用
+skills-reg-notify-save-failed = 保存失败: { $error }
+skills-reg-notify-config-reloaded = 配置已从磁盘重新加载
+skills-reg-notify-reload-failed = 重新加载失败: { $error }
+skills-reg-notify-sync-already-running = 技能注册源同步已在运行
+skills-reg-notify-registry-not-found = 未找到技能注册源 `{ $registry_name }`
+skills-reg-error-sync-timeout-invalid = skills.sync_timeout 必须为正整数
+skills-reg-notify-sync-timeout-saved = skills.sync_timeout 已保存
+skills-reg-notify-sync-started = 开始同步注册源 `{ $registry_name }`
+skills-reg-notify-sync-success = 注册源 `{ $registry_name }` 已同步: 新增 { $added }, 移除 { $removed }
+skills-reg-notify-sync-failed = 同步注册源 `{ $registry_name }` 失败: { $error }
+skills-reg-notify-sync-disconnected = 技能注册源同步工作器已断开
+skills-reg-notify-registry-deleted = 技能注册源 `{ $registry_name }` 已删除
+skills-reg-notify-cleaned-skills = 已清理 { $count } 个已安装技能
+skills-reg-notify-cleanup-failed = 清理注册源清单失败: { $error }
+skills-reg-notify-registry-saved = 技能注册源已保存
+skills-reg-notify-reload-not-sent = 运行时技能提示刷新未发送: { $error }
+skills-reg-error-name-empty = 技能注册源名称不能为空
+skills-reg-error-address-empty = 技能注册源地址不能为空
+skills-reg-error-name-duplicate = 技能注册源 '{ $name }' 已存在，请使用其他名称
+
+## Skills Manager panel
+skills-mgr-label-installed-count = 已安装: { $count }
+skills-mgr-label-registries-count = 注册源: { $count }
+skills-mgr-btn-refresh = { $icon } 刷新
+skills-mgr-btn-install = { $icon } 安装
+skills-mgr-btn-install-local = { $icon } 安装本地
+skills-mgr-no-skills = 未找到已安装技能。
+
+## Skills Manager table
+skills-mgr-col-name = 名称
+skills-mgr-col-source = 来源
+skills-mgr-col-registry = 注册源
+skills-mgr-col-state = 状态
+skills-mgr-col-updated = 更新时间
+skills-mgr-col-path = 路径
+skills-mgr-source-local = 本地
+skills-mgr-source-registry = 注册源
+skills-mgr-state-stale = 过期
+skills-mgr-state-fresh = 最新
+skills-mgr-state-none = -
+
+## Skills Manager context menu
+skills-mgr-menu-view = { $icon } 查看
+skills-mgr-menu-remove = { $icon } 移除
+skills-mgr-menu-copy-name = { $icon } 复制名称
+
+## Skills Manager detail window
+skills-mgr-detail-title = 技能详情: { $name }
+skills-mgr-detail-name = 名称: { $name }
+skills-mgr-detail-source = 来源: { $source }
+skills-mgr-detail-registry = 注册源: { $registry }
+skills-mgr-detail-state = 状态: { $icon } { $state }
+skills-mgr-detail-path = 路径: { $path }
+skills-mgr-detail-updated = 更新时间: { $time }
+
+## Skills Manager install window
+skills-mgr-install-title = 安装技能
+skills-mgr-install-registry = 注册源
+skills-mgr-install-select-registry = (选择注册源)
+skills-mgr-install-select-registry-error = 请先选择注册源
+skills-mgr-install-col-action = 操作
+skills-mgr-install-col-skill = 技能
+skills-mgr-install-col-id = ID
+skills-mgr-install-col-path = 路径
+skills-mgr-install-btn-install = 安装
+skills-mgr-install-btn-uninstall = 卸载
+
+## Skills Manager delete dialog
+skills-mgr-delete-title = 确认移除
+skills-mgr-delete-message = 确定要移除技能 `{ $name }` 吗？
+skills-mgr-delete-registry = 注册源: { $registry }
+skills-mgr-delete-btn-remove = { $icon } 移除
+skills-mgr-delete-cancel = 取消
+
+## Skills Manager notifications
+skills-mgr-notify-load-failed = 加载配置失败: { $error }
+skills-mgr-notify-reload-failed = 重新加载配置失败: { $error }
+skills-mgr-notify-reload-not-sent = 运行时技能提示刷新未发送: { $error }
+skills-mgr-notify-load-skills-failed = 加载已安装技能失败: { $error }
+skills-mgr-notify-load-detail-failed = 加载技能 `{ $skill_name }` 详情失败: { $error }
+skills-mgr-notify-no-registry = 未配置技能注册源
+skills-mgr-notify-local-install-success = 已从 { $source_dir } 安装本地技能 `{ $skill_name }` 至 { $target_dir }
+skills-mgr-notify-local-install-failed = 安装本地技能失败: { $error }
+skills-mgr-notify-install-config-save-failed = 保存已安装技能 `{ $skill_id }` 至配置失败: { $error }
+skills-mgr-notify-already-installed = `{ $skill_id }` 已安装
+skills-mgr-notify-install-success = 已从注册源 `{ $registry_name }` 安装 `{ $skill_id }`
+skills-mgr-notify-install-partial = `{ $skill_id }` 已保存至配置，但安装未能立即完成: { $error }
+skills-mgr-notify-uninstall-config-update-failed = 卸载 `{ $skill_id }` 时更新配置失败: { $error }
+skills-mgr-notify-not-installed = `{ $skill_id }` 未安装
+skills-mgr-notify-uninstall-success = 已从注册源 `{ $registry_name }` 卸载 `{ $skill_id }`
+skills-mgr-notify-uninstall-partial = `{ $skill_id }` 已从配置移除，但注册源卸载未能立即完成: { $error }
+skills-mgr-notify-remove-config-failed = 从配置移除 `{ $skill_name }` 失败: { $error }
+skills-mgr-notify-uninstall-local-cleanup-failed = `{ $skill_name }` 已从配置移除，但本地清理失败: { $error }
+skills-mgr-notify-uninstall-failed = 卸载 `{ $skill_name }` 失败: { $error }
+skills-mgr-notify-uninstall-scope-registry = 注册源 `{ $registry_name }` 中的 `{ $skill_name }`
+skills-mgr-notify-uninstall-scope-local = 本地 `{ $skill_name }`
+skills-mgr-notify-uninstall-result = 已卸载 { $scope }: { $managed } 个管理文件, { $local } 个本地文件已移除

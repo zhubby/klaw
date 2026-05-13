@@ -3,6 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{
     RuntimeRequestHandle, begin_sync_tools_request, begin_tool_definitions_request,
 };
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::{ArrayEditor, show_json_tree_with_id};
 use chrono::{Datelike, Local, NaiveDate};
@@ -19,6 +20,8 @@ use klaw_session::{
     SessionManager, SqliteSessionManager, ToolAuditFilterOptionsQuery, ToolAuditQuery,
     ToolAuditRecord, ToolAuditSortOrder,
 };
+use klaw_ui_kit::{LocaleDomain, Translator};
+use std::collections::HashMap;
 use std::future::Future;
 use std::thread;
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
@@ -541,17 +544,44 @@ impl SubAgentForm {
 }
 
 impl ToolForm {
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
         match self {
-            ToolForm::ApplyPatch(_) => "Edit Tool: apply_patch",
-            ToolForm::Shell(_) => "Edit Tool: shell",
-            ToolForm::Toggle(kind, _) => kind.title(),
-            ToolForm::ChannelAttachment(_) => "Edit Tool: channel_attachment",
-            ToolForm::Memory(_) => "Edit Tool: memory",
-            ToolForm::Knowledge(_) => "Edit Tool: knowledge",
-            ToolForm::WebFetch(_) => "Edit Tool: web_fetch",
-            ToolForm::WebSearch(_) => "Edit Tool: web_search",
-            ToolForm::SubAgent(_) => "Edit Tool: sub_agent",
+            ToolForm::ApplyPatch(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "apply_patch".to_string())]),
+            ),
+            ToolForm::Shell(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "shell".to_string())]),
+            ),
+            ToolForm::Toggle(kind, _) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", kind.config_key().to_string())]),
+            ),
+            ToolForm::ChannelAttachment(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "channel_attachment".to_string())]),
+            ),
+            ToolForm::Memory(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "memory".to_string())]),
+            ),
+            ToolForm::Knowledge(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "knowledge".to_string())]),
+            ),
+            ToolForm::WebFetch(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "web_fetch".to_string())]),
+            ),
+            ToolForm::WebSearch(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "web_search".to_string())]),
+            ),
+            ToolForm::SubAgent(_) => ToolPanel::translator().text_args(
+                "tool-form-title",
+                HashMap::from([("name", "sub_agent".to_string())]),
+            ),
         }
     }
 }
@@ -575,21 +605,29 @@ impl ToggleToolKind {
         }
     }
 
-    fn title(self) -> &'static str {
+    fn config_key(self) -> &'static str {
         match self {
-            Self::Archive => "Edit Tool: archive",
-            Self::Voice => "Edit Tool: voice",
-            Self::Approval => "Edit Tool: approval",
-            Self::AskQuestion => "Edit Tool: ask_question",
-            Self::Geo => "Edit Tool: geo",
-            Self::FileRead => "Edit Tool: file_read",
-            Self::LocalSearch => "Edit Tool: local_search",
-            Self::TerminalMultiplexers => "Edit Tool: terminal_multiplexers",
-            Self::CronManager => "Edit Tool: cron_manager",
-            Self::HeartbeatManager => "Edit Tool: heartbeat_manager",
-            Self::SkillsRegistry => "Edit Tool: skills_registry",
-            Self::SkillsManager => "Edit Tool: skills_manager",
+            Self::Archive => "archive",
+            Self::Voice => "voice",
+            Self::Approval => "approval",
+            Self::AskQuestion => "ask_question",
+            Self::Geo => "geo",
+            Self::FileRead => "file_read",
+            Self::LocalSearch => "local_search",
+            Self::TerminalMultiplexers => "terminal_multiplexers",
+            Self::CronManager => "cron_manager",
+            Self::HeartbeatManager => "heartbeat_manager",
+            Self::SkillsRegistry => "skills_registry",
+            Self::SkillsManager => "skills_manager",
         }
+    }
+
+    #[allow(dead_code)]
+    fn title(self) -> String {
+        ToolPanel::translator().text_args(
+            "tool-toggle-title",
+            HashMap::from([("kind", self.config_key().to_string())]),
+        )
     }
 
     fn enabled(self, config: &AppConfig) -> bool {
@@ -628,6 +666,10 @@ impl ToggleToolKind {
 }
 
 impl ToolPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -638,9 +680,12 @@ impl ToolPanel {
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
                 self.refresh_runtime_tool_definitions(notifications, false);
-                notifications.success("Tool config loaded from disk");
+                notifications.success(Self::translator().text("tool-notify-config-loaded"));
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "tool-notify-load-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -658,7 +703,7 @@ impl ToolPanel {
         F: FnOnce(&mut AppConfig) -> Result<(), String>,
     {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("tool-notify-store-unavailable"));
             return false;
         };
         match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
@@ -668,7 +713,10 @@ impl ToolPanel {
                 true
             }
             Err(err) => {
-                notifications.error(format!("Save failed: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "tool-notify-save-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 false
             }
         }
@@ -676,16 +724,19 @@ impl ToolPanel {
 
     fn reload(&mut self, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("tool-notify-store-unavailable"));
             return;
         };
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
                 self.refresh_runtime_tool_definitions(notifications, false);
-                notifications.success("Configuration reloaded from disk");
+                notifications.success(Self::translator().text("tool-notify-config-reloaded"));
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "tool-notify-reload-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -713,7 +764,10 @@ impl ToolPanel {
                     self.runtime_definitions = definitions;
                 }
                 Err(err) if notify_on_error => {
-                    notifications.error(format!("Failed to load runtime tool metadata: {err}"));
+                    notifications.error(Self::translator().text_args(
+                        "tool-notify-runtime-metadata-failed",
+                        HashMap::from([("error", err.to_string())]),
+                    ));
                 }
                 Err(_) => {}
             }
@@ -725,14 +779,15 @@ impl ToolPanel {
             self.sync_tools_request = None;
             match result {
                 Ok(tool_names) => {
-                    notifications.success(format!(
-                        "Tool config saved and runtime synced ({} tools active)",
-                        tool_names.len()
+                    notifications.success(Self::translator().text_args(
+                        "tool-notify-synced",
+                        HashMap::from([("count", tool_names.len().to_string())]),
                     ));
                     self.refresh_runtime_tool_definitions(notifications, true);
                 }
-                Err(err) => notifications.error(format!(
-                    "Tool config saved, but failed to sync running runtime: {err}"
+                Err(err) => notifications.error(Self::translator().text_args(
+                    "tool-notify-sync-failed",
+                    HashMap::from([("error", err.to_string())]),
                 )),
             }
         }
@@ -884,7 +939,7 @@ impl ToolPanel {
 
         if self.save_config(
             notifications,
-            "Tool config saved",
+            &Self::translator().text("tool-notify-saved"),
             move |config| match form {
                 ToolForm::ApplyPatch(form) => {
                     config.tools.apply_patch = form.to_config();
@@ -925,7 +980,7 @@ impl ToolPanel {
             },
         ) {
             self.sync_tools_request = Some(begin_sync_tools_request());
-            notifications.info("Syncing tool config with runtime...");
+            notifications.info(Self::translator().text("tool-notify-syncing"));
             self.form = None;
         }
     }
@@ -933,6 +988,7 @@ impl ToolPanel {
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let mut save_clicked = false;
         let mut cancel_clicked = false;
+        let t = Self::translator();
 
         let Some(form) = self.form.as_mut() else {
             return;
@@ -951,15 +1007,15 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("workspace");
+                                ui.label(t.text("tool-form-workspace"));
                                 ui.text_edit_singleline(&mut form.workspace);
                                 ui.end_row();
 
-                                ui.label("allow_absolute_paths");
+                                ui.label(t.text("tool-form-allow-absolute-paths"));
                                 ui.checkbox(&mut form.allow_absolute_paths, "");
                                 ui.end_row();
                             });
@@ -971,23 +1027,23 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("workspace");
+                                ui.label(t.text("tool-form-workspace"));
                                 ui.text_edit_singleline(&mut form.workspace);
                                 ui.end_row();
 
-                                ui.label("allow_login_shell");
+                                ui.label(t.text("tool-form-allow-login-shell"));
                                 ui.checkbox(&mut form.allow_login_shell, "");
                                 ui.end_row();
 
-                                ui.label("max_timeout_ms");
+                                ui.label(t.text("tool-form-max-timeout-ms"));
                                 ui.text_edit_singleline(&mut form.max_timeout_ms);
                                 ui.end_row();
 
-                                ui.label("max_output_bytes");
+                                ui.label(t.text("tool-form-max-output-bytes"));
                                 ui.text_edit_singleline(&mut form.max_output_bytes);
                                 ui.end_row();
                             });
@@ -999,7 +1055,7 @@ impl ToolPanel {
                     }
                     ToolForm::Toggle(_, form) => {
                         ui.horizontal(|ui| {
-                            ui.label("enabled");
+                            ui.label(t.text("tool-form-enabled"));
                             ui.checkbox(&mut form.enabled, "");
                         });
                     }
@@ -1008,11 +1064,11 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("max_bytes");
+                                ui.label(t.text("tool-form-max-bytes"));
                                 ui.text_edit_singleline(&mut form.max_bytes);
                                 ui.end_row();
                             });
@@ -1024,23 +1080,23 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("search_limit");
+                                ui.label(t.text("tool-form-search-limit"));
                                 ui.text_edit_singleline(&mut form.search_limit);
                                 ui.end_row();
 
-                                ui.label("fts_limit");
+                                ui.label(t.text("tool-form-fts-limit"));
                                 ui.text_edit_singleline(&mut form.fts_limit);
                                 ui.end_row();
 
-                                ui.label("vector_limit");
+                                ui.label(t.text("tool-form-vector-limit"));
                                 ui.text_edit_singleline(&mut form.vector_limit);
                                 ui.end_row();
 
-                                ui.label("use_vector");
+                                ui.label(t.text("tool-form-use-vector"));
                                 ui.checkbox(&mut form.use_vector, "");
                                 ui.end_row();
                             });
@@ -1050,19 +1106,19 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("search_limit");
+                                ui.label(t.text("tool-form-search-limit"));
                                 ui.text_edit_singleline(&mut form.search_limit);
                                 ui.end_row();
 
-                                ui.label("context_limit");
+                                ui.label(t.text("tool-form-context-limit"));
                                 ui.text_edit_singleline(&mut form.context_limit);
                                 ui.end_row();
 
-                                ui.label("include_explain");
+                                ui.label(t.text("tool-form-include-explain"));
                                 ui.checkbox(&mut form.include_explain, "");
                                 ui.end_row();
                             });
@@ -1072,27 +1128,27 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("max_chars");
+                                ui.label(t.text("tool-form-max-chars"));
                                 ui.text_edit_singleline(&mut form.max_chars);
                                 ui.end_row();
 
-                                ui.label("timeout_seconds");
+                                ui.label(t.text("tool-form-timeout-seconds"));
                                 ui.text_edit_singleline(&mut form.timeout_seconds);
                                 ui.end_row();
 
-                                ui.label("cache_ttl_minutes");
+                                ui.label(t.text("tool-form-cache-ttl-minutes"));
                                 ui.text_edit_singleline(&mut form.cache_ttl_minutes);
                                 ui.end_row();
 
-                                ui.label("max_redirects");
+                                ui.label(t.text("tool-form-max-redirects"));
                                 ui.text_edit_singleline(&mut form.max_redirects);
                                 ui.end_row();
 
-                                ui.label("readability");
+                                ui.label(t.text("tool-form-readability"));
                                 ui.checkbox(&mut form.readability, "");
                                 ui.end_row();
                             });
@@ -1104,93 +1160,93 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("provider");
+                                ui.label(t.text("tool-form-provider"));
                                 ui.text_edit_singleline(&mut form.provider);
                                 ui.end_row();
                             });
 
                         ui.separator();
-                        ui.strong("Tavily");
+                        ui.strong(t.text("tool-section-tavily"));
                         egui::Grid::new("tool-web-search-tavily-grid")
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("base_url");
+                                ui.label(t.text("tool-form-base-url"));
                                 ui.text_edit_singleline(&mut form.tavily_base_url);
                                 ui.end_row();
 
-                                ui.label("api_key");
+                                ui.label(t.text("tool-form-api-key"));
                                 ui.text_edit_singleline(&mut form.tavily_api_key);
                                 ui.end_row();
 
-                                ui.label("env_key");
+                                ui.label(t.text("tool-form-env-key"));
                                 ui.text_edit_singleline(&mut form.tavily_env_key);
                                 ui.end_row();
 
-                                ui.label("search_depth");
+                                ui.label(t.text("tool-form-search-depth"));
                                 ui.text_edit_singleline(&mut form.tavily_search_depth);
                                 ui.end_row();
 
-                                ui.label("topic");
+                                ui.label(t.text("tool-form-topic"));
                                 ui.text_edit_singleline(&mut form.tavily_topic);
                                 ui.end_row();
 
-                                ui.label("include_answer");
+                                ui.label(t.text("tool-form-include-answer"));
                                 ui.checkbox(&mut form.tavily_include_answer, "");
                                 ui.end_row();
 
-                                ui.label("include_raw_content");
+                                ui.label(t.text("tool-form-include-raw-content"));
                                 ui.checkbox(&mut form.tavily_include_raw_content, "");
                                 ui.end_row();
 
-                                ui.label("include_images");
+                                ui.label(t.text("tool-form-include-images"));
                                 ui.checkbox(&mut form.tavily_include_images, "");
                                 ui.end_row();
 
-                                ui.label("project_id");
+                                ui.label(t.text("tool-form-project-id"));
                                 ui.text_edit_singleline(&mut form.tavily_project_id);
                                 ui.end_row();
                             });
 
                         ui.separator();
-                        ui.strong("Brave");
+                        ui.strong(t.text("tool-section-brave"));
                         egui::Grid::new("tool-web-search-brave-grid")
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("base_url");
+                                ui.label(t.text("tool-form-base-url"));
                                 ui.text_edit_singleline(&mut form.brave_base_url);
                                 ui.end_row();
 
-                                ui.label("api_key");
+                                ui.label(t.text("tool-form-api-key"));
                                 ui.text_edit_singleline(&mut form.brave_api_key);
                                 ui.end_row();
 
-                                ui.label("env_key");
+                                ui.label(t.text("tool-form-env-key"));
                                 ui.text_edit_singleline(&mut form.brave_env_key);
                                 ui.end_row();
 
-                                ui.label("country");
+                                ui.label(t.text("tool-form-country"));
                                 ui.text_edit_singleline(&mut form.brave_country);
                                 ui.end_row();
 
-                                ui.label("search_lang");
+                                ui.label(t.text("tool-form-search-lang"));
                                 ui.text_edit_singleline(&mut form.brave_search_lang);
                                 ui.end_row();
 
-                                ui.label("ui_lang");
+                                ui.label(t.text("tool-form-ui-lang"));
                                 ui.text_edit_singleline(&mut form.brave_ui_lang);
                                 ui.end_row();
 
-                                ui.label("safesearch");
+                                ui.label(t.text("tool-form-safesearch"));
                                 ui.text_edit_singleline(&mut form.brave_safesearch);
                                 ui.end_row();
 
-                                ui.label("freshness");
+                                ui.label(t.text("tool-form-freshness"));
                                 ui.text_edit_singleline(&mut form.brave_freshness);
                                 ui.end_row();
                             });
@@ -1200,19 +1256,19 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("enabled");
+                                ui.label(t.text("tool-form-enabled"));
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                ui.label("max_iterations");
+                                ui.label(t.text("tool-form-max-iterations"));
                                 ui.text_edit_singleline(&mut form.max_iterations);
                                 ui.end_row();
 
-                                ui.label("max_tool_calls");
+                                ui.label(t.text("tool-form-max-tool-calls"));
                                 ui.text_edit_singleline(&mut form.max_tool_calls);
                                 ui.end_row();
 
-                                ui.label("inherit_parent_tools");
+                                ui.label(t.text("tool-form-inherit-parent-tools"));
                                 ui.checkbox(&mut form.inherit_parent_tools, "");
                                 ui.end_row();
                             });
@@ -1223,10 +1279,10 @@ impl ToolPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("tool-form-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("tool-form-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -1241,6 +1297,7 @@ impl ToolPanel {
     }
 
     fn render_inspect_window(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         let Some(tool) = self
             .inspect_key
             .and_then(|key| self.tool_by_config_key(key))
@@ -1267,96 +1324,93 @@ impl ToolPanel {
             (window_size.y - INSPECT_WINDOW_CHROME_HEIGHT).max(INSPECT_SCHEMA_HEIGHT);
 
         let mut open = true;
-        egui::Window::new(format!("Inspect Tool: {}", self.tool_display_name(&tool)))
-            .id(egui::Id::new(("tool-inspect", tool.config_key)))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .default_width(INSPECT_WINDOW_WIDTH)
-            .min_width(INSPECT_WINDOW_WIDTH)
-            .max_width(INSPECT_WINDOW_WIDTH)
-            .default_height(window_size.y)
-            .min_height(window_size.y)
-            .max_height(window_size.y)
-            .show(ui.ctx(), |ui| {
-                let description = self.tool_description(&tool);
-                egui::ScrollArea::vertical()
-                    .id_salt(("tool-inspect-body", tool.config_key))
-                    .max_height(inspect_body_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        StripBuilder::new(ui)
-                            .size(Size::exact(
-                                INSPECT_DESCRIPTION_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
-                            ))
-                            .size(Size::exact(
-                                INSPECT_SCHEMA_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
-                            ))
-                            .vertical(|mut strip| {
-                                strip.cell(|ui| {
-                                    ui.strong("Description");
-                                    ui.add_space(6.0);
-                                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                                        ui.set_min_height(INSPECT_DESCRIPTION_HEIGHT);
-                                        ui.set_max_height(INSPECT_DESCRIPTION_HEIGHT);
-                                        egui::ScrollArea::vertical()
-                                            .id_salt((
-                                                "tool-inspect-description",
-                                                tool.config_key,
-                                            ))
-                                            .max_height(INSPECT_DESCRIPTION_HEIGHT)
-                                            .auto_shrink([false, false])
-                                            .show(ui, |ui| {
-                                                ui.label(description);
-                                            });
-                                    });
+        egui::Window::new(Self::translator().text_args(
+            "tool-inspect-title",
+            HashMap::from([("name", self.tool_display_name(&tool).to_string())]),
+        ))
+        .id(egui::Id::new(("tool-inspect", tool.config_key)))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .default_width(INSPECT_WINDOW_WIDTH)
+        .min_width(INSPECT_WINDOW_WIDTH)
+        .max_width(INSPECT_WINDOW_WIDTH)
+        .default_height(window_size.y)
+        .min_height(window_size.y)
+        .max_height(window_size.y)
+        .show(ui.ctx(), |ui| {
+            let description = self.tool_description(&tool);
+            egui::ScrollArea::vertical()
+                .id_salt(("tool-inspect-body", tool.config_key))
+                .max_height(inspect_body_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    StripBuilder::new(ui)
+                        .size(Size::exact(
+                            INSPECT_DESCRIPTION_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
+                        ))
+                        .size(Size::exact(
+                            INSPECT_SCHEMA_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
+                        ))
+                        .vertical(|mut strip| {
+                            strip.cell(|ui| {
+                                ui.strong(t.text("tool-inspect-description"));
+                                ui.add_space(6.0);
+                                egui::Frame::group(ui.style()).show(ui, |ui| {
+                                    ui.set_min_height(INSPECT_DESCRIPTION_HEIGHT);
+                                    ui.set_max_height(INSPECT_DESCRIPTION_HEIGHT);
+                                    egui::ScrollArea::vertical()
+                                        .id_salt(("tool-inspect-description", tool.config_key))
+                                        .max_height(INSPECT_DESCRIPTION_HEIGHT)
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            ui.label(description);
+                                        });
                                 });
+                            });
 
-                                strip.cell(|ui| {
-                                    ui.separator();
-                                    ui.strong("Schema");
-                                    ui.add_space(6.0);
-                                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                                        ui.set_min_height(INSPECT_SCHEMA_HEIGHT);
-                                        ui.set_max_height(INSPECT_SCHEMA_HEIGHT);
-                                        if definition.is_none() {
-                                            egui::ScrollArea::vertical()
-                                                .id_salt((
-                                                    "tool-inspect-schema-empty",
-                                                    tool.config_key,
-                                                ))
-                                                .max_height(INSPECT_SCHEMA_HEIGHT)
-                                                .auto_shrink([false, false])
-                                                .show(ui, |ui| {
-                                                    ui.label(
-                                                        "Runtime metadata unavailable for this tool.",
-                                                    );
-                                                });
-                                            return;
-                                        }
-
-                                        egui::ScrollArea::both()
-                                            .id_salt(("tool-inspect-schema", tool.config_key))
+                            strip.cell(|ui| {
+                                ui.separator();
+                                ui.strong(t.text("tool-inspect-schema"));
+                                ui.add_space(6.0);
+                                egui::Frame::group(ui.style()).show(ui, |ui| {
+                                    ui.set_min_height(INSPECT_SCHEMA_HEIGHT);
+                                    ui.set_max_height(INSPECT_SCHEMA_HEIGHT);
+                                    if definition.is_none() {
+                                        egui::ScrollArea::vertical()
+                                            .id_salt(("tool-inspect-schema-empty", tool.config_key))
                                             .max_height(INSPECT_SCHEMA_HEIGHT)
                                             .auto_shrink([false, false])
                                             .show(ui, |ui| {
-                                                let editor_width = ui.available_width().max(1.0);
-                                                ui.add_sized(
-                                                    [editor_width, INSPECT_SCHEMA_HEIGHT],
-                                                    egui::TextEdit::multiline(&mut schema_json)
-                                                        .desired_width(f32::INFINITY)
-                                                        .font(egui::TextStyle::Monospace)
-                                                        .code_editor()
-                                                        .layouter(&mut json_layouter)
-                                                        .interactive(false),
+                                                ui.label(
+                                                    t.text("tool-inspect-metadata-unavailable"),
                                                 );
                                             });
-                                    });
+                                        return;
+                                    }
+
+                                    egui::ScrollArea::both()
+                                        .id_salt(("tool-inspect-schema", tool.config_key))
+                                        .max_height(INSPECT_SCHEMA_HEIGHT)
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            let editor_width = ui.available_width().max(1.0);
+                                            ui.add_sized(
+                                                [editor_width, INSPECT_SCHEMA_HEIGHT],
+                                                egui::TextEdit::multiline(&mut schema_json)
+                                                    .desired_width(f32::INFINITY)
+                                                    .font(egui::TextStyle::Monospace)
+                                                    .code_editor()
+                                                    .layouter(&mut json_layouter)
+                                                    .interactive(false),
+                                            );
+                                        });
                                 });
                             });
-                    });
-            });
+                        });
+                });
+        });
 
         if !open {
             self.inspect_key = None;
@@ -1425,14 +1479,16 @@ impl ToolPanel {
         };
     }
 
-    fn log_sort_label(&self) -> &'static str {
+    fn log_sort_label(&self) -> String {
+        let t = Self::translator();
         match self.log_sort_order {
-            ToolLogSortOrder::StartedAtAsc => "Time ↑",
-            ToolLogSortOrder::StartedAtDesc => "Time ↓",
+            ToolLogSortOrder::StartedAtAsc => t.text("tool-log-sort-time-asc"),
+            ToolLogSortOrder::StartedAtDesc => t.text("tool-log-sort-time-desc"),
         }
     }
 
     fn render_logs_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(tool_key) = self.logs_key else {
             return;
         };
@@ -1446,184 +1502,207 @@ impl ToolPanel {
 
         let window_size = viewport_ratio_window_size(ui.ctx(), LOGS_WINDOW_VIEWPORT_RATIO);
         let mut open = true;
-        egui::Window::new(format!("Tool Logs: {}", self.tool_display_name(&tool)))
-            .id(egui::Id::new(("tool-logs", tool.config_key)))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .default_width(window_size.x)
-            .min_width(window_size.x)
-            .max_width(window_size.x)
-            .default_height(window_size.y)
-            .min_height(window_size.y)
-            .max_height(window_size.y)
-            .show(ui.ctx(), |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Refresh").clicked() {
-                        self.refresh_tool_logs(tool.config_key, notifications);
-                    }
-                    ui.label(format!("Rows: {}", self.log_rows.len()));
-                    ui.separator();
-                    ui.label("Double-click a row or right-click for Summary.");
-                });
-                let mut need_refresh = false;
-                ui.horizontal(|ui| {
-                    ui.label("session");
-                    let combo_resp =
-                        egui::ComboBox::from_id_salt(("tool-log-session-filter", tool.config_key))
-                            .selected_text(self.log_session_filter.as_deref().unwrap_or("All"))
-                            .width(220.0)
-                            .show_ui(ui, |ui| {
-                                let mut changed = false;
+        egui::Window::new(t.text_args(
+            "tool-log-window-title",
+            HashMap::from([("name", self.tool_display_name(&tool).to_string())]),
+        ))
+        .id(egui::Id::new(("tool-logs", tool.config_key)))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .default_width(window_size.x)
+        .min_width(window_size.x)
+        .max_width(window_size.x)
+        .default_height(window_size.y)
+        .min_height(window_size.y)
+        .max_height(window_size.y)
+        .show(ui.ctx(), |ui| {
+            ui.horizontal(|ui| {
+                if ui.button(t.text("tool-log-btn-refresh")).clicked() {
+                    self.refresh_tool_logs(tool.config_key, notifications);
+                }
+                ui.label(t.text_args(
+                    "tool-log-rows",
+                    HashMap::from([("count", self.log_rows.len().to_string())]),
+                ));
+                ui.separator();
+                ui.label(t.text("tool-log-hint-summary"));
+            });
+            let mut need_refresh = false;
+            ui.horizontal(|ui| {
+                ui.label(t.text("tool-log-filter-session"));
+                let combo_resp =
+                    egui::ComboBox::from_id_salt(("tool-log-session-filter", tool.config_key))
+                        .selected_text(
+                            self.log_session_filter
+                                .as_deref()
+                                .unwrap_or(&t.text("tool-log-filter-all")),
+                        )
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            let mut changed = false;
+                            if ui
+                                .selectable_value(
+                                    &mut self.log_session_filter,
+                                    None,
+                                    t.text("tool-log-filter-all"),
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            for session_key in &self.log_session_options {
                                 if ui
-                                    .selectable_value(&mut self.log_session_filter, None, "All")
+                                    .selectable_value(
+                                        &mut self.log_session_filter,
+                                        Some(session_key.clone()),
+                                        session_key,
+                                    )
                                     .changed()
                                 {
                                     changed = true;
                                 }
-                                for session_key in &self.log_session_options {
-                                    if ui
-                                        .selectable_value(
-                                            &mut self.log_session_filter,
-                                            Some(session_key.clone()),
-                                            session_key,
-                                        )
-                                        .changed()
-                                    {
-                                        changed = true;
-                                    }
-                                }
-                                changed
-                            });
-                    if combo_resp.inner.unwrap_or(false) {
-                        need_refresh = true;
-                    }
-
-                    ui.label("start");
-                    if render_date_picker(ui, &mut self.log_start_date, "tool-log-start-date") {
-                        need_refresh = true;
-                    }
-                    ui.label("end");
-                    if render_date_picker(ui, &mut self.log_end_date, "tool-log-end-date") {
-                        need_refresh = true;
-                    }
-
-                    ui.label("status");
-                    egui::ComboBox::from_id_salt(("tool-log-status-filter", tool.config_key))
-                        .selected_text(match self.log_status_filter {
-                            LogStatusFilter::All => "All",
-                            LogStatusFilter::FailedOnly => "Failed only",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.log_status_filter,
-                                LogStatusFilter::All,
-                                "All",
-                            );
-                            ui.selectable_value(
-                                &mut self.log_status_filter,
-                                LogStatusFilter::FailedOnly,
-                                "Failed only",
-                            );
+                            }
+                            changed
                         });
-                });
-                ui.separator();
-                if need_refresh {
-                    self.refresh_tool_logs(tool.config_key, notifications);
+                if combo_resp.inner.unwrap_or(false) {
+                    need_refresh = true;
                 }
-                let filtered_rows = self.filtered_log_rows();
-                if filtered_rows.is_empty() {
-                    ui.label("No tool audit rows found.");
-                    return;
+
+                ui.label(t.text("tool-log-filter-start"));
+                if render_date_picker(ui, &mut self.log_start_date, "tool-log-start-date") {
+                    need_refresh = true;
                 }
-                egui::ScrollArea::both()
-                    .id_salt(("tool-logs-list", tool.config_key))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let row_height = ui.spacing().interact_size.y;
-                        TableBuilder::new(ui)
-                            .striped(true)
-                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                            .column(Column::auto().at_least(150.0))
-                            .column(Column::auto().at_least(90.0))
-                            .column(Column::auto().at_least(80.0))
-                            .column(Column::auto().at_least(80.0))
-                            .column(Column::remainder().at_least(120.0))
-                            .sense(egui::Sense::click())
-                            .header(24.0, |mut header| {
-                                header.col(|ui| {
-                                    if ui.button(self.log_sort_label()).clicked() {
-                                        self.toggle_log_sort_order();
-                                        self.refresh_tool_logs(tool.config_key, notifications);
-                                    }
-                                });
-                                header.col(|ui| {
-                                    ui.strong("Tool Call ID");
-                                });
-                                header.col(|ui| {
-                                    ui.strong("Status");
-                                });
-                                header.col(|ui| {
-                                    ui.strong("Seq");
-                                });
-                                header.col(|ui| {
-                                    ui.strong("Session");
-                                });
-                            })
-                            .body(|body| {
-                                body.rows(row_height, filtered_rows.len(), |mut row| {
-                                    let audit = &filtered_rows[row.index()];
-                                    let selected =
-                                        self.log_selected_id.as_deref() == Some(audit.id.as_str());
-                                    row.set_selected(selected);
+                ui.label(t.text("tool-log-filter-end"));
+                if render_date_picker(ui, &mut self.log_end_date, "tool-log-end-date") {
+                    need_refresh = true;
+                }
 
-                                    row.col(|ui| {
-                                        ui.label(format_timestamp_millis(audit.started_at_ms));
-                                    });
-                                    row.col(|ui| {
-                                        ui.monospace(tool_call_id_label(audit));
-                                    });
-                                    row.col(|ui| {
-                                        let failed = matches!(
-                                            audit.status,
-                                            klaw_session::ToolAuditStatus::Failed
-                                        );
-                                        render_boolean_status(ui, !failed, "Success", "Failed");
-                                    });
-                                    row.col(|ui| {
-                                        ui.monospace(format!(
-                                            "{}/{}",
-                                            audit.request_seq, audit.tool_call_seq
-                                        ));
-                                    });
-                                    row.col(|ui| {
-                                        ui.label(&audit.session_key);
-                                    });
+                ui.label(t.text("tool-log-filter-status"));
+                egui::ComboBox::from_id_salt(("tool-log-status-filter", tool.config_key))
+                    .selected_text(match self.log_status_filter {
+                        LogStatusFilter::All => t.text("tool-log-filter-all"),
+                        LogStatusFilter::FailedOnly => t.text("tool-log-filter-failed-only"),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.log_status_filter,
+                            LogStatusFilter::All,
+                            t.text("tool-log-filter-all"),
+                        );
+                        ui.selectable_value(
+                            &mut self.log_status_filter,
+                            LogStatusFilter::FailedOnly,
+                            t.text("tool-log-filter-failed-only"),
+                        );
+                    });
+            });
+            ui.separator();
+            if need_refresh {
+                self.refresh_tool_logs(tool.config_key, notifications);
+            }
+            let filtered_rows = self.filtered_log_rows();
+            if filtered_rows.is_empty() {
+                ui.label(t.text("tool-log-no-rows"));
+                return;
+            }
+            egui::ScrollArea::both()
+                .id_salt(("tool-logs-list", tool.config_key))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let row_height = ui.spacing().interact_size.y;
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(150.0))
+                        .column(Column::auto().at_least(90.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::auto().at_least(80.0))
+                        .column(Column::remainder().at_least(120.0))
+                        .sense(egui::Sense::click())
+                        .header(24.0, |mut header| {
+                            header.col(|ui| {
+                                if ui.button(self.log_sort_label()).clicked() {
+                                    self.toggle_log_sort_order();
+                                    self.refresh_tool_logs(tool.config_key, notifications);
+                                }
+                            });
+                            header.col(|ui| {
+                                ui.strong(t.text("tool-log-col-tool-call-id"));
+                            });
+                            header.col(|ui| {
+                                ui.strong(t.text("tool-log-col-status"));
+                            });
+                            header.col(|ui| {
+                                ui.strong(t.text("tool-log-col-seq"));
+                            });
+                            header.col(|ui| {
+                                ui.strong(t.text("tool-log-col-session"));
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(row_height, filtered_rows.len(), |mut row| {
+                                let audit = &filtered_rows[row.index()];
+                                let selected =
+                                    self.log_selected_id.as_deref() == Some(audit.id.as_str());
+                                row.set_selected(selected);
 
-                                    let row_response = row.response();
-                                    if row_response.double_clicked() {
+                                row.col(|ui| {
+                                    ui.label(format_timestamp_millis(audit.started_at_ms));
+                                });
+                                row.col(|ui| {
+                                    ui.monospace(tool_call_id_label(audit));
+                                });
+                                row.col(|ui| {
+                                    let failed = matches!(
+                                        audit.status,
+                                        klaw_session::ToolAuditStatus::Failed
+                                    );
+                                    render_boolean_status(
+                                        ui,
+                                        !failed,
+                                        &t.text("tool-log-status-success"),
+                                        &t.text("tool-log-status-failed"),
+                                    );
+                                });
+                                row.col(|ui| {
+                                    ui.monospace(format!(
+                                        "{}/{}",
+                                        audit.request_seq, audit.tool_call_seq
+                                    ));
+                                });
+                                row.col(|ui| {
+                                    ui.label(&audit.session_key);
+                                });
+
+                                let row_response = row.response();
+                                if row_response.double_clicked() {
+                                    self.log_selected_id = Some(audit.id.clone());
+                                    self.log_summary_id = Some(audit.id.clone());
+                                    self.log_summary_tab = ToolLogSummaryTab::Arguments;
+                                } else if row_response.clicked() || row_response.secondary_clicked()
+                                {
+                                    self.log_selected_id = Some(audit.id.clone());
+                                }
+                                row_response.context_menu(|ui| {
+                                    if ui
+                                        .button(t.text_args(
+                                            "tool-log-ctx-summary",
+                                            HashMap::from([("icon", regular::EYE.to_string())]),
+                                        ))
+                                        .clicked()
+                                    {
                                         self.log_selected_id = Some(audit.id.clone());
                                         self.log_summary_id = Some(audit.id.clone());
                                         self.log_summary_tab = ToolLogSummaryTab::Arguments;
-                                    } else if row_response.clicked()
-                                        || row_response.secondary_clicked()
-                                    {
-                                        self.log_selected_id = Some(audit.id.clone());
+                                        ui.close();
                                     }
-                                    row_response.context_menu(|ui| {
-                                        if ui.button(format!("{} Summary", regular::EYE)).clicked()
-                                        {
-                                            self.log_selected_id = Some(audit.id.clone());
-                                            self.log_summary_id = Some(audit.id.clone());
-                                            self.log_summary_tab = ToolLogSummaryTab::Arguments;
-                                            ui.close();
-                                        }
-                                    });
                                 });
                             });
-                    });
-            });
+                        });
+                });
+        });
 
         if !open {
             self.logs_key = None;
@@ -1639,6 +1718,7 @@ impl ToolPanel {
     }
 
     fn render_log_summary_window(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         let Some(summary_id) = self.log_summary_id.clone() else {
             return;
         };
@@ -1656,32 +1736,35 @@ impl ToolPanel {
         let summary_body_height = (window_size.y - LOGS_SUMMARY_WINDOW_CHROME_HEIGHT)
             .max(LOG_DETAIL_SECTION_BLOCK_HEIGHT);
         let mut open = true;
-        egui::Window::new(format!("Tool Log Summary: {}", audit.tool_name))
-            .id(egui::Id::new((
-                "tool-log-summary-window",
-                audit.id.as_str(),
-            )))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .default_width(window_size.x)
-            .min_width(window_size.x)
-            .max_width(window_size.x)
-            .default_height(window_size.y)
-            .min_height(window_size.y)
-            .max_height(window_size.y)
-            .show(ui.ctx(), |ui| {
-                ui.label("Arguments / Result / Metadata supports tab switching.");
-                ui.separator();
-                egui::ScrollArea::vertical()
-                    .id_salt(("tool-log-summary-body", audit.id.as_str()))
-                    .max_height(summary_body_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        render_tool_log_summary(ui, &audit, &mut self.log_summary_tab);
-                    });
-            });
+        egui::Window::new(t.text_args(
+            "tool-log-summary-title",
+            HashMap::from([("name", audit.tool_name.clone())]),
+        ))
+        .id(egui::Id::new((
+            "tool-log-summary-window",
+            audit.id.as_str(),
+        )))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .default_width(window_size.x)
+        .min_width(window_size.x)
+        .max_width(window_size.x)
+        .default_height(window_size.y)
+        .min_height(window_size.y)
+        .max_height(window_size.y)
+        .show(ui.ctx(), |ui| {
+            ui.label(t.text("tool-log-summary-hint"));
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt(("tool-log-summary-body", audit.id.as_str()))
+                .max_height(summary_body_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    render_tool_log_summary(ui, &audit, &mut self.log_summary_tab);
+                });
+        });
 
         if !open {
             self.log_summary_id = None;
@@ -1722,6 +1805,7 @@ impl PanelRenderer for ToolPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         self.ensure_store_loaded(notifications);
         self.poll_runtime_requests(notifications);
         if self.has_pending_runtime_request() {
@@ -1731,11 +1815,17 @@ impl PanelRenderer for ToolPanel {
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label("Manage tool enablement and per-tool settings.");
+            ui.label(t.text("tool-subtitle"));
             if self.has_pending_runtime_request() {
-                ui.label("Runtime sync pending...");
+                ui.label(t.text("tool-status-sync-pending"));
             }
-            if ui.button("Reload").clicked() {
+            if ui
+                .button(t.text_args(
+                    "tool-btn-reload",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.reload(notifications);
             }
         });
@@ -1767,13 +1857,13 @@ impl PanelRenderer for ToolPanel {
                     .sense(egui::Sense::click())
                     .header(24.0, |mut header| {
                         header.col(|ui| {
-                            ui.strong("Tool");
+                            ui.strong(t.text("tool-col-tool"));
                         });
                         header.col(|ui| {
-                            ui.strong("Status");
+                            ui.strong(t.text("tool-col-status"));
                         });
                         header.col(|ui| {
-                            ui.strong("Description");
+                            ui.strong(t.text("tool-col-description"));
                         });
                     })
                     .body(|body| {
@@ -1783,7 +1873,12 @@ impl PanelRenderer for ToolPanel {
                                 ui.monospace(self.tool_display_name(&tool));
                             });
                             row.col(|ui| {
-                                render_boolean_status(ui, tool.enabled, "Enabled", "Disabled");
+                                render_boolean_status(
+                                    ui,
+                                    tool.enabled,
+                                    &t.text("tool-status-enabled"),
+                                    &t.text("tool-status-disabled"),
+                                );
                             });
                             row.col(|ui| {
                                 ui.label(self.tool_description(&tool));
@@ -1795,18 +1890,36 @@ impl PanelRenderer for ToolPanel {
                             }
                             response.context_menu(|ui| {
                                 if ui
-                                    .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                    .button(t.text_args(
+                                        "tool-ctx-edit",
+                                        HashMap::from([(
+                                            "icon",
+                                            regular::PENCIL_SIMPLE.to_string(),
+                                        )]),
+                                    ))
                                     .clicked()
                                 {
                                     edit_key = Some(tool.config_key);
                                     ui.close();
                                 }
-                                if ui.button(format!("{} Inspect", regular::EYE)).clicked() {
+                                if ui
+                                    .button(t.text_args(
+                                        "tool-ctx-inspect",
+                                        HashMap::from([("icon", regular::EYE.to_string())]),
+                                    ))
+                                    .clicked()
+                                {
                                     inspect_key = Some(tool.config_key);
                                     ui.close();
                                 }
                                 if ui
-                                    .button(format!("{} Logs", regular::LIST_BULLETS))
+                                    .button(t.text_args(
+                                        "tool-ctx-logs",
+                                        HashMap::from([(
+                                            "icon",
+                                            regular::LIST_BULLETS.to_string(),
+                                        )]),
+                                    ))
                                     .clicked()
                                 {
                                     logs_key = Some(tool.config_key);
@@ -2276,6 +2389,11 @@ fn offset_to_ms(datetime: OffsetDateTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_ui_kit::UiLanguage;
+
+    fn test_translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, UiLanguage::English)
+    }
 
     #[test]
     fn shell_form_rejects_invalid_numbers() {
@@ -2417,7 +2535,15 @@ mod tests {
         };
 
         assert_eq!(kind, ToggleToolKind::SkillsRegistry);
-        assert_eq!(kind.title(), "Edit Tool: skills_registry");
+        assert_eq!(kind.config_key(), "skills_registry");
+        let t = test_translator();
+        assert_eq!(
+            kind.title(),
+            t.text_args(
+                "tool-toggle-title",
+                HashMap::from([("kind", "skills_registry".to_string())]),
+            )
+        );
         assert!(form.enabled);
     }
 }

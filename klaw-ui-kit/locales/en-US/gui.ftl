@@ -785,4 +785,278 @@ provider-delete-info = This removes the provider from config.toml. Active or in-
 provider-delete-btn = { $icon } Delete
 provider-delete-cancel = Cancel
 
+## Tool panel
+
+tool-subtitle = Manage tool enablement and per-tool settings.
+tool-status-sync-pending = Runtime sync pending...
+tool-btn-reload = { $icon } Reload
+
+## Tool table
+tool-col-tool = Tool
+tool-col-status = Status
+tool-col-description = Description
+tool-status-enabled = Enabled
+tool-status-disabled = Disabled
+
+## Tool context menu
+tool-ctx-edit = { $icon } Edit
+tool-ctx-inspect = { $icon } Inspect
+tool-ctx-logs = { $icon } Logs
+
+## Tool form
+tool-form-title = Edit Tool: { $name }
+tool-toggle-title = Edit Tool: { $kind }
+tool-form-enabled = enabled
+tool-form-workspace = workspace
+tool-form-allow-absolute-paths = allow_absolute_paths
+tool-form-allow-login-shell = allow_login_shell
+tool-form-max-timeout-ms = max_timeout_ms
+tool-form-max-output-bytes = max_output_bytes
+tool-form-max-bytes = max_bytes
+tool-form-search-limit = search_limit
+tool-form-fts-limit = fts_limit
+tool-form-vector-limit = vector_limit
+tool-form-use-vector = use_vector
+tool-form-context-limit = context_limit
+tool-form-include-explain = include_explain
+tool-form-max-chars = max_chars
+tool-form-timeout-seconds = timeout_seconds
+tool-form-cache-ttl-minutes = cache_ttl_minutes
+tool-form-max-redirects = max_redirects
+tool-form-readability = readability
+tool-form-provider = provider
+tool-form-base-url = base_url
+tool-form-api-key = api_key
+tool-form-env-key = env_key
+tool-form-search-depth = search_depth
+tool-form-topic = topic
+tool-form-include-answer = include_answer
+tool-form-include-raw-content = include_raw_content
+tool-form-include-images = include_images
+tool-form-project-id = project_id
+tool-form-country = country
+tool-form-search-lang = search_lang
+tool-form-ui-lang = ui_lang
+tool-form-safesearch = safesearch
+tool-form-freshness = freshness
+tool-form-max-iterations = max_iterations
+tool-form-max-tool-calls = max_tool_calls
+tool-form-inherit-parent-tools = inherit_parent_tools
+
+## Tool web search sections
+tool-section-tavily = Tavily
+tool-section-brave = Brave
+
+## Tool form buttons
+tool-form-save = Save
+tool-form-cancel = Cancel
+
+## Tool inspect window
+tool-inspect-title = Inspect Tool: { $name }
+tool-inspect-description = Description
+tool-inspect-schema = Schema
+tool-inspect-metadata-unavailable = Runtime metadata unavailable for this tool.
+
+## Tool logs window
+tool-log-window-title = Tool Logs: { $name }
+tool-log-btn-refresh = { $icon } Refresh
+tool-log-rows = { $count } rows
+tool-log-hint-summary = Double-click a row or right-click for Summary.
+tool-log-filter-session = Session
+tool-log-filter-start = Start
+tool-log-filter-end = End
+tool-log-filter-status = Status
+tool-log-filter-all = All
+tool-log-filter-failed-only = Failed only
+tool-log-sort-time-asc = time asc
+tool-log-sort-time-desc = time desc
+tool-log-col-tool-call-id = Tool Call ID
+tool-log-col-status = Status
+tool-log-col-seq = Seq
+tool-log-col-session = Session
+tool-log-status-success = Success
+tool-log-status-failed = Failed
+tool-log-ctx-summary = { $icon } Summary
+tool-log-no-rows = No tool audit rows found.
+
+## Tool log summary window
+tool-log-summary-title = Tool Log Summary: { $name }
+tool-log-summary-hint = Arguments / Result / Metadata supports tab switching.
+tool-log-summary-label-summary = Summary
+tool-log-summary-label-tool = tool
+tool-log-summary-label-session = session
+tool-log-summary-label-chat = chat
+tool-log-summary-label-status = status
+tool-log-summary-label-seq = seq
+tool-log-summary-label-started = started
+tool-log-summary-label-duration = duration
+tool-log-summary-label-error-code = error_code
+tool-log-summary-tab-arguments = Arguments
+tool-log-summary-tab-result = Result
+tool-log-summary-tab-metadata = Metadata
+tool-log-summary-section-arguments = Arguments
+tool-log-summary-section-result = Result
+tool-log-summary-section-metadata = Metadata
+tool-log-summary-section-error = Error
+tool-log-summary-section-error-details = Error Details
+tool-log-summary-section-signals = Signals
+
+## Tool notifications
+tool-notify-config-loaded = Tool config loaded from disk
+tool-notify-load-failed = Failed to load config: { $error }
+tool-notify-store-unavailable = Configuration store is not available
+tool-notify-save-failed = Save failed: { $error }
+tool-notify-config-reloaded = Configuration reloaded from disk
+tool-notify-reload-failed = Reload failed: { $error }
+tool-notify-runtime-metadata-failed = Failed to load runtime tool metadata: { $error }
+tool-notify-synced = Tool config saved and runtime synced ({ $count } tools active)
+tool-notify-sync-failed = Tool config saved, but failed to sync running runtime: { $error }
+tool-notify-syncing = Syncing tool config with runtime...
+tool-notify-saved = Tool config saved
+
+## Skills Registry panel
+skills-reg-label-registries-count = Registries: { $count }
+skills-reg-btn-config = { $icon } Config
+skills-reg-btn-reload = { $icon } Reload
+skills-reg-btn-add = { $icon } Add Skills Registry
+skills-reg-no-registries = No skill registries configured.
+
+## Skills Registry table
+skills-reg-col-name = Name
+skills-reg-col-address = Address
+skills-reg-col-synced = Synced
+skills-reg-col-commit = Commit
+skills-reg-col-installed = Installed
+skills-reg-status-outdated = { $icon } Outdated
+skills-reg-status-synced = { $icon } Synced
+
+## Skills Registry context menu
+skills-reg-ctx-sync = { $icon } Sync
+skills-reg-ctx-edit = { $icon } Edit
+skills-reg-ctx-copy-name = { $icon } Copy Name
+skills-reg-ctx-delete = { $icon } Delete
+
+## Skills Registry config window
+skills-reg-config-title = Skills Registry Config
+skills-reg-config-sync-timeout = sync_timeout (seconds)
+skills-reg-config-save = Save Timeout
+skills-reg-config-cancel = Cancel
+
+## Skills Registry form window
+skills-reg-form-title-edit = Edit Skills Registry
+skills-reg-form-title-add = Add Skills Registry
+skills-reg-form-label-name = Name
+skills-reg-form-label-address = Address
+skills-reg-form-btn-save = Save
+skills-reg-form-btn-cancel = Cancel
+
+## Skills Registry delete dialog
+skills-reg-delete-title = Delete Skills Registry
+skills-reg-delete-message = Are you sure you want to delete registry '{ $registry_name }'?
+skills-reg-delete-description = This will remove the registry from configuration and clean up installed skills from the manifest.
+skills-reg-delete-btn = { $icon } Delete
+skills-reg-delete-cancel = Cancel
+
+## Skills Registry notifications
+skills-reg-notify-config-loaded = Skills registry config loaded from disk
+skills-reg-notify-load-failed = Failed to load config: { $error }
+skills-reg-notify-store-unavailable = Configuration store is not available
+skills-reg-notify-save-failed = Save failed: { $error }
+skills-reg-notify-config-reloaded = Configuration reloaded from disk
+skills-reg-notify-reload-failed = Reload failed: { $error }
+skills-reg-notify-sync-already-running = A skills registry sync is already running
+skills-reg-notify-registry-not-found = Skills registry `{ $registry_name }` not found
+skills-reg-error-sync-timeout-invalid = skills.sync_timeout must be a positive integer
+skills-reg-notify-sync-timeout-saved = skills.sync_timeout saved
+skills-reg-notify-sync-started = Started syncing registry `{ $registry_name }`
+skills-reg-notify-sync-success = Registry `{ $registry_name }` synced: added { $added }, removed { $removed }
+skills-reg-notify-sync-failed = Failed to sync registry `{ $registry_name }`: { $error }
+skills-reg-notify-sync-disconnected = Skill registry sync worker disconnected
+skills-reg-notify-registry-deleted = Skills registry `{ $registry_name }` deleted
+skills-reg-notify-cleaned-skills = Cleaned { $count } installed skills from manifest
+skills-reg-notify-cleanup-failed = Failed to cleanup registry manifest: { $error }
+skills-reg-notify-registry-saved = Skills registry saved
+skills-reg-notify-reload-not-sent = Runtime skills prompt reload not sent: { $error }
+skills-reg-error-name-empty = Skills registry name cannot be empty
+skills-reg-error-address-empty = Skills registry address cannot be empty
+skills-reg-error-name-duplicate = Skills registry '{ $name }' already exists, choose another name
+
+## Skills Manager panel
+skills-mgr-label-installed-count = Installed: { $count }
+skills-mgr-label-registries-count = Registries: { $count }
+skills-mgr-btn-refresh = { $icon } Refresh
+skills-mgr-btn-install = { $icon } Install
+skills-mgr-btn-install-local = { $icon } Install Local
+skills-mgr-no-skills = No installed skills found.
+
+## Skills Manager table
+skills-mgr-col-name = Name
+skills-mgr-col-source = Source
+skills-mgr-col-registry = Registry
+skills-mgr-col-state = State
+skills-mgr-col-updated = Updated
+skills-mgr-col-path = Path
+skills-mgr-source-local = local
+skills-mgr-source-registry = registry
+skills-mgr-state-stale = stale
+skills-mgr-state-fresh = fresh
+skills-mgr-state-none = -
+
+## Skills Manager context menu
+skills-mgr-menu-view = { $icon } View
+skills-mgr-menu-remove = { $icon } Remove
+skills-mgr-menu-copy-name = { $icon } Copy Name
+
+## Skills Manager detail window
+skills-mgr-detail-title = Skill Detail: { $name }
+skills-mgr-detail-name = Name: { $name }
+skills-mgr-detail-source = Source: { $source }
+skills-mgr-detail-registry = Registry: { $registry }
+skills-mgr-detail-state = State: { $icon } { $state }
+skills-mgr-detail-path = Path: { $path }
+skills-mgr-detail-updated = Updated: { $time }
+
+## Skills Manager install window
+skills-mgr-install-title = Install Skill
+skills-mgr-install-registry = Registry
+skills-mgr-install-select-registry = (select registry)
+skills-mgr-install-select-registry-error = Select a registry first
+skills-mgr-install-col-action = Action
+skills-mgr-install-col-skill = Skill
+skills-mgr-install-col-id = ID
+skills-mgr-install-col-path = Path
+skills-mgr-install-btn-install = Install
+skills-mgr-install-btn-uninstall = Uninstall
+
+## Skills Manager delete dialog
+skills-mgr-delete-title = Confirm Remove
+skills-mgr-delete-message = Are you sure you want to remove skill `{ $name }`?
+skills-mgr-delete-registry = Registry: { $registry }
+skills-mgr-delete-btn-remove = { $icon } Remove
+skills-mgr-delete-cancel = Cancel
+
+## Skills Manager notifications
+skills-mgr-notify-load-failed = Failed to load config: { $error }
+skills-mgr-notify-reload-failed = Failed to reload config: { $error }
+skills-mgr-notify-reload-not-sent = Runtime skills prompt reload not sent: { $error }
+skills-mgr-notify-load-skills-failed = Failed to load installed skills: { $error }
+skills-mgr-notify-load-detail-failed = Failed to load skill `{ $skill_name }`: { $error }
+skills-mgr-notify-no-registry = No skills registry configured
+skills-mgr-notify-local-install-success = Installed local skill `{ $skill_name }` from { $source_dir } to { $target_dir }
+skills-mgr-notify-local-install-failed = Failed to install local skill: { $error }
+skills-mgr-notify-install-config-save-failed = Failed to save installed skill `{ $skill_id }` to config: { $error }
+skills-mgr-notify-already-installed = `{ $skill_id }` is already installed
+skills-mgr-notify-install-success = Installed `{ $skill_id }` from registry `{ $registry_name }`
+skills-mgr-notify-install-partial = Saved `{ $skill_id }` in config, but install did not complete immediately: { $error }
+skills-mgr-notify-uninstall-config-update-failed = Failed to update config while uninstalling `{ $skill_id }`: { $error }
+skills-mgr-notify-not-installed = `{ $skill_id }` is not installed
+skills-mgr-notify-uninstall-success = Uninstalled `{ $skill_id }` from registry `{ $registry_name }`
+skills-mgr-notify-uninstall-partial = Removed `{ $skill_id }` from config, but registry uninstall did not complete immediately: { $error }
+skills-mgr-notify-remove-config-failed = Failed to remove `{ $skill_name }` from config: { $error }
+skills-mgr-notify-uninstall-local-cleanup-failed = Removed `{ $skill_name }` from config, but local cleanup failed: { $error }
+skills-mgr-notify-uninstall-failed = Failed to uninstall `{ $skill_name }`: { $error }
+skills-mgr-notify-uninstall-scope-registry = from registry `{ $registry_name }` for `{ $skill_name }`
+skills-mgr-notify-uninstall-scope-local = locally for `{ $skill_name }`
+skills-mgr-notify-uninstall-result = Uninstalled { $scope }: { $managed } managed files, { $local } local files removed
+
 test-english-only = English only

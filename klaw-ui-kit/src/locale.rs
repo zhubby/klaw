@@ -1131,4 +1131,481 @@ mod tests {
             "🗑 删除"
         );
     }
+
+    #[test]
+    fn gui_tool_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("tool-subtitle"),
+            "Manage tool enablement and per-tool settings."
+        );
+        assert_eq!(translator.text("tool-status-enabled"), "Enabled");
+        assert_eq!(translator.text("tool-status-disabled"), "Disabled");
+        assert_eq!(
+            translator.text("tool-status-sync-pending"),
+            "Runtime sync pending..."
+        );
+        assert_eq!(translator.text("tool-col-tool"), "Tool");
+        assert_eq!(translator.text("tool-col-status"), "Status");
+        assert_eq!(translator.text("tool-col-description"), "Description");
+        assert_eq!(translator.text("tool-inspect-description"), "Description");
+        assert_eq!(translator.text("tool-inspect-schema"), "Schema");
+        assert_eq!(
+            translator.text("tool-inspect-metadata-unavailable"),
+            "Runtime metadata unavailable for this tool."
+        );
+        assert_eq!(
+            translator.text("tool-notify-config-loaded"),
+            "Tool config loaded from disk"
+        );
+    }
+
+    #[test]
+    fn gui_tool_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("tool-subtitle"), "管理工具启停与各项设置。");
+        assert_eq!(translator.text("tool-status-enabled"), "已启用");
+        assert_eq!(translator.text("tool-status-disabled"), "已禁用");
+        assert_eq!(
+            translator.text("tool-status-sync-pending"),
+            "运行时同步等待中..."
+        );
+        assert_eq!(translator.text("tool-col-tool"), "工具");
+        assert_eq!(translator.text("tool-col-status"), "状态");
+        assert_eq!(translator.text("tool-col-description"), "描述");
+        assert_eq!(translator.text("tool-inspect-description"), "描述");
+        assert_eq!(translator.text("tool-inspect-schema"), "模式");
+        assert_eq!(
+            translator.text("tool-inspect-metadata-unavailable"),
+            "该工具无运行时元数据。"
+        );
+        assert_eq!(
+            translator.text("tool-notify-config-loaded"),
+            "工具配置已从磁盘加载"
+        );
+    }
+
+    #[test]
+    fn gui_tool_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "tool-btn-reload",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Reload"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-form-title",
+                HashMap::from([("name", "Bash".to_string())])
+            ),
+            "Edit Tool: Bash"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-toggle-title",
+                HashMap::from([("kind", "Bash".to_string())])
+            ),
+            "Edit Tool: Bash"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-inspect-title",
+                HashMap::from([("name", "Bash".to_string())])
+            ),
+            "Inspect Tool: Bash"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-notify-load-failed",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "Failed to load config: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-notify-synced",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "Tool config saved and runtime synced (5 tools active)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-log-window-title",
+                HashMap::from([("name", "Bash".to_string())])
+            ),
+            "Tool Logs: Bash"
+        );
+    }
+
+    #[test]
+    fn gui_tool_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "tool-btn-reload",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-form-title",
+                HashMap::from([("name", "Bash".to_string())])
+            ),
+            "编辑工具: Bash"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-toggle-title",
+                HashMap::from([("kind", "Bash".to_string())])
+            ),
+            "编辑工具: Bash"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-inspect-title",
+                HashMap::from([("name", "Bash".to_string())])
+            ),
+            "查看工具详情: Bash"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-notify-load-failed",
+                HashMap::from([("error", "磁盘错误".to_string())])
+            ),
+            "加载配置失败: 磁盘错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-notify-synced",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "工具配置已保存并同步运行时（5 个工具活跃）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "tool-log-window-title",
+                HashMap::from([("name", "Bash".to_string())])
+            ),
+            "工具日志: Bash"
+        );
+    }
+
+    #[test]
+    fn gui_skills_reg_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("skills-reg-no-registries"),
+            "No skill registries configured."
+        );
+        assert_eq!(translator.text("skills-reg-col-name"), "Name");
+        assert_eq!(translator.text("skills-reg-col-address"), "Address");
+        assert_eq!(translator.text("skills-reg-col-synced"), "Synced");
+        assert_eq!(
+            translator.text("skills-reg-config-title"),
+            "Skills Registry Config"
+        );
+        assert_eq!(
+            translator.text("skills-reg-form-title-add"),
+            "Add Skills Registry"
+        );
+        assert_eq!(
+            translator.text("skills-reg-form-title-edit"),
+            "Edit Skills Registry"
+        );
+        assert_eq!(
+            translator.text("skills-reg-delete-title"),
+            "Delete Skills Registry"
+        );
+        assert_eq!(
+            translator.text("skills-reg-notify-config-loaded"),
+            "Skills registry config loaded from disk"
+        );
+        assert_eq!(
+            translator.text("skills-reg-error-name-empty"),
+            "Skills registry name cannot be empty"
+        );
+        assert_eq!(
+            translator.text("skills-reg-error-address-empty"),
+            "Skills registry address cannot be empty"
+        );
+    }
+
+    #[test]
+    fn gui_skills_reg_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("skills-reg-no-registries"),
+            "未配置技能注册源。"
+        );
+        assert_eq!(translator.text("skills-reg-col-name"), "名称");
+        assert_eq!(translator.text("skills-reg-col-address"), "地址");
+        assert_eq!(translator.text("skills-reg-col-synced"), "已同步");
+        assert_eq!(translator.text("skills-reg-config-title"), "技能注册源配置");
+        assert_eq!(
+            translator.text("skills-reg-form-title-add"),
+            "添加技能注册源"
+        );
+        assert_eq!(
+            translator.text("skills-reg-form-title-edit"),
+            "编辑技能注册源"
+        );
+        assert_eq!(translator.text("skills-reg-delete-title"), "删除技能注册源");
+        assert_eq!(
+            translator.text("skills-reg-notify-config-loaded"),
+            "技能注册源配置已从磁盘加载"
+        );
+        assert_eq!(
+            translator.text("skills-reg-error-name-empty"),
+            "技能注册源名称不能为空"
+        );
+        assert_eq!(
+            translator.text("skills-reg-error-address-empty"),
+            "技能注册源地址不能为空"
+        );
+    }
+
+    #[test]
+    fn gui_skills_reg_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-label-registries-count",
+                HashMap::from([("count", "2".to_string())])
+            ),
+            "Registries: 2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-btn-config",
+                HashMap::from([("icon", "⚙".to_string())])
+            ),
+            "⚙ Config"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-btn-reload",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Reload"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-btn-add",
+                HashMap::from([("icon", "+".to_string())])
+            ),
+            "+ Add Skills Registry"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-error-name-duplicate",
+                HashMap::from([("name", "my-reg".to_string())])
+            ),
+            "Skills registry 'my-reg' already exists, choose another name"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-delete-message",
+                HashMap::from([("registry_name", "my-reg".to_string())])
+            ),
+            "Are you sure you want to delete registry 'my-reg'?"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-notify-sync-success",
+                HashMap::from([
+                    ("registry_name", "my-reg".to_string()),
+                    ("added", "3".to_string()),
+                    ("removed", "1".to_string())
+                ])
+            ),
+            "Registry `my-reg` synced: added 3, removed 1"
+        );
+    }
+
+    #[test]
+    fn gui_skills_reg_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-label-registries-count",
+                HashMap::from([("count", "2".to_string())])
+            ),
+            "注册源: 2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-btn-config",
+                HashMap::from([("icon", "⚙".to_string())])
+            ),
+            "⚙ 配置"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-btn-reload",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-btn-add",
+                HashMap::from([("icon", "+".to_string())])
+            ),
+            "+ 添加技能注册源"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-error-name-duplicate",
+                HashMap::from([("name", "my-reg".to_string())])
+            ),
+            "技能注册源 'my-reg' 已存在，请使用其他名称"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-delete-message",
+                HashMap::from([("registry_name", "my-reg".to_string())])
+            ),
+            "确定要删除注册源 'my-reg' 吗？"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-reg-notify-sync-success",
+                HashMap::from([
+                    ("registry_name", "my-reg".to_string()),
+                    ("added", "3".to_string()),
+                    ("removed", "1".to_string())
+                ])
+            ),
+            "注册源 `my-reg` 已同步: 新增 3, 移除 1"
+        );
+    }
+
+    #[test]
+    fn gui_skills_mgr_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("skills-mgr-no-skills"),
+            "No installed skills found."
+        );
+        assert_eq!(translator.text("skills-mgr-col-name"), "Name");
+        assert_eq!(translator.text("skills-mgr-col-source"), "Source");
+        assert_eq!(translator.text("skills-mgr-col-registry"), "Registry");
+        assert_eq!(translator.text("skills-mgr-col-state"), "State");
+        assert_eq!(translator.text("skills-mgr-source-local"), "local");
+        assert_eq!(translator.text("skills-mgr-source-registry"), "registry");
+        assert_eq!(translator.text("skills-mgr-state-stale"), "stale");
+        assert_eq!(translator.text("skills-mgr-state-fresh"), "fresh");
+        assert_eq!(translator.text("skills-mgr-install-title"), "Install Skill");
+        assert_eq!(translator.text("skills-mgr-delete-title"), "Confirm Remove");
+    }
+
+    #[test]
+    fn gui_skills_mgr_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("skills-mgr-no-skills"),
+            "未找到已安装技能。"
+        );
+        assert_eq!(translator.text("skills-mgr-col-name"), "名称");
+        assert_eq!(translator.text("skills-mgr-col-source"), "来源");
+        assert_eq!(translator.text("skills-mgr-col-registry"), "注册源");
+        assert_eq!(translator.text("skills-mgr-col-state"), "状态");
+        assert_eq!(translator.text("skills-mgr-source-local"), "本地");
+        assert_eq!(translator.text("skills-mgr-source-registry"), "注册源");
+        assert_eq!(translator.text("skills-mgr-state-stale"), "过期");
+        assert_eq!(translator.text("skills-mgr-state-fresh"), "最新");
+        assert_eq!(translator.text("skills-mgr-install-title"), "安装技能");
+        assert_eq!(translator.text("skills-mgr-delete-title"), "确认移除");
+    }
+
+    #[test]
+    fn gui_skills_mgr_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-label-installed-count",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "Installed: 5"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-detail-title",
+                HashMap::from([("name", "my-skill".to_string())])
+            ),
+            "Skill Detail: my-skill"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-delete-message",
+                HashMap::from([("name", "my-skill".to_string())])
+            ),
+            "Are you sure you want to remove skill `my-skill`?"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-notify-local-install-success",
+                HashMap::from([
+                    ("skill_name", "my-skill".to_string()),
+                    ("source_dir", "/src".to_string()),
+                    ("target_dir", "/dest".to_string())
+                ])
+            ),
+            "Installed local skill `my-skill` from /src to /dest"
+        );
+    }
+
+    #[test]
+    fn gui_skills_mgr_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-label-installed-count",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "已安装: 5"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-detail-title",
+                HashMap::from([("name", "my-skill".to_string())])
+            ),
+            "技能详情: my-skill"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-delete-message",
+                HashMap::from([("name", "my-skill".to_string())])
+            ),
+            "确定要移除技能 `my-skill` 吗？"
+        );
+        assert_eq!(
+            translator.text_args(
+                "skills-mgr-notify-local-install-success",
+                HashMap::from([
+                    ("skill_name", "my-skill".to_string()),
+                    ("source_dir", "/src".to_string()),
+                    ("target_dir", "/dest".to_string())
+                ])
+            ),
+            "已从 /src 安装本地技能 `my-skill` 至 /dest"
+        );
+    }
 }
