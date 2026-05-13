@@ -786,4 +786,349 @@ mod tests {
         assert_eq!(translator.text("mcp-state-running"), "运行中");
         assert_eq!(translator.text("mcp-detail-heading"), "MCP 服务器详情");
     }
+
+    #[test]
+    fn gui_local_model_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("local-model-subtitle"),
+            "Browse, install, and manage local LLM models stored on your device."
+        );
+        assert_eq!(
+            translator.text("local-model-installed-label"),
+            "Installed Models"
+        );
+        assert_eq!(
+            translator.text("local-model-no-models"),
+            "No local models installed yet."
+        );
+        assert_eq!(translator.text("local-model-col-name"), "Name");
+        assert_eq!(translator.text("local-model-col-size"), "Size");
+        assert_eq!(translator.text("local-model-col-created"), "Created");
+        assert_eq!(
+            translator.text("local-model-col-default-file"),
+            "Default Model File"
+        );
+        assert_eq!(
+            translator.text("local-model-window-install"),
+            "Install Model"
+        );
+        assert_eq!(
+            translator.text("local-model-window-downloading"),
+            "Downloading Model"
+        );
+        assert_eq!(
+            translator.text("local-model-window-delete"),
+            "Delete Local Model"
+        );
+        assert_eq!(
+            translator.text("local-model-notify-config-loaded"),
+            "Local model config loaded from disk"
+        );
+    }
+
+    #[test]
+    fn gui_local_model_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("local-model-subtitle"),
+            "浏览、安装和管理存储在设备上的本地 LLM 模型。"
+        );
+        assert_eq!(translator.text("local-model-installed-label"), "已安装模型");
+        assert_eq!(
+            translator.text("local-model-no-models"),
+            "尚未安装本地模型。"
+        );
+        assert_eq!(translator.text("local-model-col-name"), "名称");
+        assert_eq!(translator.text("local-model-col-size"), "大小");
+        assert_eq!(translator.text("local-model-col-created"), "创建时间");
+        assert_eq!(
+            translator.text("local-model-col-default-file"),
+            "默认模型文件"
+        );
+        assert_eq!(translator.text("local-model-window-install"), "安装模型");
+        assert_eq!(
+            translator.text("local-model-window-downloading"),
+            "正在下载模型"
+        );
+        assert_eq!(translator.text("local-model-window-delete"), "删除本地模型");
+        assert_eq!(
+            translator.text("local-model-notify-config-loaded"),
+            "本地模型配置已从磁盘加载"
+        );
+    }
+
+    #[test]
+    fn gui_local_model_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "local-model-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-btn-install",
+                HashMap::from([("icon", "⬇".to_string())])
+            ),
+            "⬇ Install Model"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-btn-open-dir",
+                HashMap::from([("icon", "📂".to_string())])
+            ),
+            "📂 Open Models Directory"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-notify-load-failed",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "Failed to load config: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-download-file-label",
+                HashMap::from([
+                    ("index", "1".to_string()),
+                    ("total", "3".to_string()),
+                    ("name", "model.bin".to_string())
+                ])
+            ),
+            "File 1 / 3: model.bin"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-delete-confirm-message",
+                HashMap::from([("model_id", "gpt2".to_string())])
+            ),
+            "Delete model 'gpt2'?"
+        );
+    }
+
+    #[test]
+    fn gui_local_model_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "local-model-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-btn-install",
+                HashMap::from([("icon", "⬇".to_string())])
+            ),
+            "⬇ 安装模型"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-btn-open-dir",
+                HashMap::from([("icon", "📂".to_string())])
+            ),
+            "📂 打开模型目录"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-notify-load-failed",
+                HashMap::from([("error", "磁盘错误".to_string())])
+            ),
+            "加载配置失败: 磁盘错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-download-file-label",
+                HashMap::from([
+                    ("index", "1".to_string()),
+                    ("total", "3".to_string()),
+                    ("name", "model.bin".to_string())
+                ])
+            ),
+            "文件 1 / 3: model.bin"
+        );
+        assert_eq!(
+            translator.text_args(
+                "local-model-delete-confirm-message",
+                HashMap::from([("model_id", "gpt2".to_string())])
+            ),
+            "删除模型 'gpt2'？"
+        );
+    }
+
+    #[test]
+    fn gui_provider_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("provider-no-providers"),
+            "No providers configured."
+        );
+        assert_eq!(translator.text("provider-col-id"), "ID");
+        assert_eq!(translator.text("provider-col-name"), "Name");
+        assert_eq!(translator.text("provider-col-base-url"), "Base URL");
+        assert_eq!(translator.text("provider-col-wire-api"), "Wire API");
+        assert_eq!(
+            translator.text("provider-col-default-model"),
+            "Default Model"
+        );
+        assert_eq!(translator.text("provider-col-stream"), "Stream");
+        assert_eq!(translator.text("provider-col-tokenizer"), "Tokenizer");
+        assert_eq!(translator.text("provider-col-auth"), "Auth");
+        assert_eq!(translator.text("provider-badge-config"), "config");
+        assert_eq!(translator.text("provider-badge-runtime"), "runtime");
+        assert_eq!(translator.text("provider-auth-api-key"), "api_key");
+        assert_eq!(translator.text("provider-auth-none"), "none");
+        assert_eq!(translator.text("provider-stream-yes"), "yes");
+        assert_eq!(translator.text("provider-stream-no"), "no");
+        assert_eq!(translator.text("provider-form-title-add"), "Add Provider");
+        assert_eq!(translator.text("provider-form-title-edit"), "Edit Provider");
+        assert_eq!(
+            translator.text("provider-form-persisted-info"),
+            "Provider configuration is persisted to config.toml."
+        );
+        assert_eq!(translator.text("provider-form-id"), "Provider ID");
+        assert_eq!(translator.text("provider-form-name"), "Display Name");
+        assert_eq!(translator.text("provider-delete-title"), "Delete Provider");
+    }
+
+    #[test]
+    fn gui_provider_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("provider-no-providers"), "未配置提供商。");
+        assert_eq!(translator.text("provider-col-id"), "ID");
+        assert_eq!(translator.text("provider-col-name"), "名称");
+        assert_eq!(translator.text("provider-col-base-url"), "基础 URL");
+        assert_eq!(translator.text("provider-col-wire-api"), "传输协议");
+        assert_eq!(translator.text("provider-col-default-model"), "默认模型");
+        assert_eq!(translator.text("provider-col-stream"), "流式");
+        assert_eq!(translator.text("provider-col-tokenizer"), "分词器");
+        assert_eq!(translator.text("provider-col-auth"), "认证");
+        assert_eq!(translator.text("provider-badge-config"), "配置");
+        assert_eq!(translator.text("provider-badge-runtime"), "运行时");
+        assert_eq!(translator.text("provider-auth-api-key"), "API 密钥");
+        assert_eq!(translator.text("provider-auth-none"), "无");
+        assert_eq!(translator.text("provider-stream-yes"), "是");
+        assert_eq!(translator.text("provider-stream-no"), "否");
+        assert_eq!(translator.text("provider-form-title-add"), "添加提供商");
+        assert_eq!(translator.text("provider-form-title-edit"), "编辑提供商");
+        assert_eq!(
+            translator.text("provider-form-persisted-info"),
+            "提供商配置保存在 config.toml 中。"
+        );
+        assert_eq!(translator.text("provider-form-id"), "提供商 ID");
+        assert_eq!(translator.text("provider-form-name"), "显示名称");
+        assert_eq!(translator.text("provider-delete-title"), "删除提供商");
+    }
+
+    #[test]
+    fn gui_provider_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "provider-label-config-default",
+                HashMap::from([("provider", "openai".to_string())])
+            ),
+            "Config default: openai"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-label-runtime-active",
+                HashMap::from([("provider", "openai".to_string())])
+            ),
+            "Runtime active: openai"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-btn-add",
+                HashMap::from([("icon", "+".to_string())])
+            ),
+            "+ Add Provider"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-btn-reload",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Reload"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-auth-env",
+                HashMap::from([("key", "OPENAI_API_KEY".to_string())])
+            ),
+            "env: OPENAI_API_KEY"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-delete-message",
+                HashMap::from([("provider_id", "openai".to_string())])
+            ),
+            "Are you sure you want to delete provider 'openai'?"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-delete-btn",
+                HashMap::from([("icon", "🗑".to_string())])
+            ),
+            "🗑 Delete"
+        );
+    }
+
+    #[test]
+    fn gui_provider_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "provider-label-config-default",
+                HashMap::from([("provider", "openai".to_string())])
+            ),
+            "配置默认: openai"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-label-runtime-active",
+                HashMap::from([("provider", "openai".to_string())])
+            ),
+            "运行时活跃: openai"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-btn-add",
+                HashMap::from([("icon", "+".to_string())])
+            ),
+            "+ 添加提供商"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-btn-reload",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 重载"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-auth-env",
+                HashMap::from([("key", "OPENAI_API_KEY".to_string())])
+            ),
+            "环境变量: OPENAI_API_KEY"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-delete-message",
+                HashMap::from([("provider_id", "openai".to_string())])
+            ),
+            "确定要删除提供商 'openai' 吗？"
+        );
+        assert_eq!(
+            translator.text_args(
+                "provider-delete-btn",
+                HashMap::from([("icon", "🗑".to_string())])
+            ),
+            "🗑 删除"
+        );
+    }
 }
