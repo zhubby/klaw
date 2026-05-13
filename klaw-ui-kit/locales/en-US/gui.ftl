@@ -455,7 +455,7 @@ mcp-detail-tools = Tools: { $tool_count }
 mcp-detail-last-error = Last Error: { $last_error }
 mcp-detail-tools-list-heading = tools/list response
 mcp-detail-tools-list-null = null
-mcp-detail-json-render-error = { "error" : "failed to render json: { $error }" }
+mcp-detail-json-render-error = Error: failed to render json: { $error }
 
 mcp-state-starting = starting
 mcp-state-running = running

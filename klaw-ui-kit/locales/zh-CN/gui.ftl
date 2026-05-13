@@ -455,7 +455,7 @@ mcp-detail-tools = 工具: { $tool_count }
 mcp-detail-last-error = 最近错误: { $last_error }
 mcp-detail-tools-list-heading = tools/list 响应
 mcp-detail-tools-list-null = 无
-mcp-detail-json-render-error = { "error" : "渲染 JSON 失败: { $error }" }
+mcp-detail-json-render-error = 错误: 渲染 JSON 失败: { $error }
 
 mcp-state-starting = 启动中
 mcp-state-running = 运行中
