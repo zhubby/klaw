@@ -319,6 +319,286 @@ setting-sync-item-user-workspace = 用户工作区
 setting-sync-item-memory = 记忆
 setting-sync-item-config = 配置
 
+## LLM 面板
+llm-error-config-load = 加载配置失败: { $error }
+llm-error-config-reload = 重载配置失败: { $error }
+llm-error-rows-load = 加载 LLM 审计行失败: { $error }
+llm-error-loader-disconnected = LLM 审计加载器意外关闭
+llm-error-detail-load = 加载 LLM 审计详情失败: { $error }
+llm-error-detail-loader-disconnected = LLM 审计详情加载器意外关闭
+
+llm-btn-refresh = 刷新
+llm-label-total = 总计: { $count }
+llm-status-loading = 加载中...
+llm-status-loading-rows = 正在加载 LLM 审计行...
+llm-status-no-rows = 未找到 LLM 审计行。
+
+llm-filter-session = 会话
+llm-filter-provider = 提供商
+llm-filter-all = 全部
+llm-filter-start-date = 开始日期
+llm-filter-end-date = 结束日期
+llm-label-page = 页码
+llm-label-size = 每页数量
+
+llm-col-session = 会话
+llm-col-provider = 提供商
+llm-col-model = 模型
+llm-col-wire-api = 传输协议
+llm-col-turn = 轮次
+llm-col-seq = 序号
+llm-col-status = 状态
+
+llm-ctx-view-details = { $icon } 查看详情
+llm-ctx-copy-session-key = { $icon } 复制会话密钥
+llm-ctx-copy-request-id = { $icon } 复制请求 ID
+
+llm-title-detail = LLM 审计详情
+llm-detail-session = 会话: { $session }
+llm-detail-time = 时间: { $time }
+llm-detail-provider = 提供商: { $provider }
+llm-detail-model = 模型: { $model }
+llm-detail-wire-api = 传输协议: { $wire_api }
+llm-detail-status = { $icon } { $text }
+llm-detail-error-code = 错误码: { $error_code }
+llm-detail-error-message = 错误消息: { $error_message }
+
+llm-tab-request = 请求
+llm-tab-response = 响应
+llm-detail-loading-request = 正在加载请求载荷...
+llm-detail-loading-response = 正在加载响应载荷...
+llm-detail-empty-response = 空
+
+llm-sort-time-asc = 时间 ↑
+llm-sort-time-desc = 时间 ↓
+
+llm-status-success = 成功
+llm-status-failed = 失败
+
+## MCP 面板
+mcp-notify-config-loaded = MCP 配置已从磁盘加载
+mcp-notify-load-config-failed = 加载配置失败: { $error }
+mcp-notify-store-unavailable = 配置存储不可用
+mcp-notify-save-failed = 保存失败: { $error }
+mcp-notify-server-saved = MCP 服务器已保存
+mcp-notify-server-deleted = 已删除 MCP 服务器 '{ $id }'
+mcp-notify-config-reloaded = 配置已从磁盘重新加载
+mcp-notify-reload-failed = 重载失败: { $error }
+mcp-notify-status-refreshed = MCP 状态已刷新
+mcp-notify-status-refresh-failed = 刷新 MCP 状态失败: { $error }
+mcp-notify-status-refresh-disconnected = 刷新 MCP 状态失败: 后台任务已断开连接
+mcp-notify-sync-success = MCP 运行时已同步
+mcp-notify-sync-failed = 同步 MCP 运行时失败: { $error }
+mcp-notify-sync-disconnected = 同步 MCP 运行时失败: 后台任务已断开连接
+mcp-notify-server-restarted = 已重启 MCP 服务器 { $target }
+mcp-notify-restart-failed = 重启 { $target } 失败: { $error }
+mcp-notify-restart-already-in-progress = MCP 服务器重启正在进行中
+mcp-notify-settings-saved = MCP 设置已保存
+
+mcp-label-servers-count = 服务器: { $count }
+mcp-status-applying-changes = 正在应用 MCP 变更...
+mcp-status-refreshing = 正在刷新运行时状态...
+mcp-status-restarting = 正在重启 MCP 服务器...
+mcp-label-no-servers = 未配置 MCP 服务器。
+
+mcp-col-id = ID
+mcp-col-on = 启用
+mcp-col-status = 状态
+mcp-col-mode = 模式
+mcp-col-command-url = 命令/URL
+mcp-col-args = 参数
+mcp-col-tools = 工具
+
+mcp-mode-stdio = stdio
+mcp-mode-sse = sse
+mcp-label-enabled-yes = 是
+mcp-label-enabled-no = 否
+
+mcp-form-title-edit = 编辑 MCP 服务器
+mcp-form-title-add = 添加 MCP 服务器
+mcp-form-id = ID
+mcp-form-enabled = 启用
+mcp-form-mode = 模式
+mcp-form-tool-timeout-seconds = 工具超时秒数
+mcp-form-command = 命令
+mcp-form-cwd = 工作目录
+mcp-form-url = URL
+mcp-form-args = 参数
+mcp-form-env = 环境变量
+mcp-form-headers = 请求头
+mcp-btn-save = 保存
+mcp-btn-cancel = 取消
+
+mcp-error-server-id-empty = MCP 服务器 ID 不能为空
+mcp-error-server-id-duplicate = MCP 服务器 ID '{ $id }' 已存在，请选择其他 ID
+mcp-error-tool-timeout-invalid = tool_timeout_seconds 必须为正整数
+mcp-error-startup-timeout-invalid = startup_timeout_seconds 必须为正整数
+
+mcp-btn-config = { $icon } 配置
+mcp-btn-add = 添加
+mcp-btn-reload = 重载
+mcp-btn-refresh-status = { $icon } 刷新状态
+mcp-btn-detail = { $icon } 详情
+mcp-btn-edit = { $icon } 编辑
+mcp-btn-restart = { $icon } 重启
+mcp-btn-delete = { $icon } 删除
+
+mcp-window-global-settings = MCP 设置
+mcp-form-startup-timeout-seconds = startup_timeout_seconds:
+
+mcp-window-detail-title = MCP 详情: { $server_id }
+
+mcp-detail-heading = MCP 服务器详情
+mcp-detail-server = 服务器: { $server_id }
+mcp-detail-state = 状态: { $state }
+mcp-detail-tools = 工具: { $tool_count }
+mcp-detail-last-error = 最近错误: { $last_error }
+mcp-detail-tools-list-heading = tools/list 响应
+mcp-detail-tools-list-null = 无
+mcp-detail-json-render-error = { "error" : "渲染 JSON 失败: { $error }" }
+
+mcp-state-starting = 启动中
+mcp-state-running = 运行中
+mcp-state-stopped = 已停止
+mcp-state-failed = 已失败
+
+mcp-placeholder-none = -
+
+## ACP 面板
+acp-panel-description = ACP 让 klaw 通过适配器命令调用外部 ACP 兼容的编码代理。
+acp-panel-default-templates-hint = 默认模板使用 `npx -y @zed-industries/claude-agent-acp` 和 `npx -y @zed-industries/codex-acp`; 运行时工作目录来自 `working_directory`。
+
+acp-notify-config-loaded = ACP 配置已从磁盘加载
+acp-notify-load-config-failed = 加载配置失败: { $error }
+acp-notify-store-unavailable = 配置存储不可用
+acp-notify-save-failed = 保存失败: { $error }
+acp-notify-config-reloaded = 配置已从磁盘重新加载
+acp-notify-reload-failed = 重载失败: { $error }
+acp-notify-status-refreshed = ACP 状态已刷新
+acp-notify-status-refresh-failed = 刷新 ACP 状态失败: { $error }
+acp-notify-status-refresh-disconnected = 刷新 ACP 状态失败: 后台任务已断开连接
+acp-notify-sync-success = ACP 运行时已同步
+acp-notify-sync-failed = 同步 ACP 运行时失败: { $error }
+acp-notify-sync-disconnected = 同步 ACP 运行时失败: 后台任务已断开连接
+acp-notify-server-restarted = 已重启 ACP 代理 { $target }
+acp-notify-restart-failed = 重启 { $target } 失败: { $error }
+acp-notify-server-deleted = 已删除 ACP 代理 '{ $id }'
+acp-notify-server-saved = ACP 代理已保存
+acp-notify-agent-started = ACP 代理 { $agent_id } 会话已启动
+acp-notify-agent-start-failed = 启动 ACP 代理 { $agent_id } 失败: { $error }
+acp-notify-agent-stopped = ACP 代理会话已停止
+acp-notify-agent-stop-failed = 停止 ACP 代理失败: { $error }
+acp-notify-agent-stopped-with-error = ACP 代理会话停止时出错: { $error }
+acp-notify-agent-stop-disconnected = 停止 ACP 代理失败: 后台任务已断开连接
+acp-notify-permission-resolved = 已发送请求 { $request_id } 的权限响应
+acp-notify-permission-resolve-failed = 发送请求 { $request_id } 的权限响应失败: { $error }
+acp-notify-prompt-opened = ACP 测试提示已打开
+acp-notify-prompt-failed = 打开测试提示失败: { $error }
+acp-notify-settings-saved = ACP 设置已保存
+acp-notify-restart-already-in-progress = ACP 代理重启正在进行中
+
+acp-stats-enabled = 已启用
+acp-stats-running = 运行中
+acp-stats-failed = 已失败
+acp-stats-tools = 工具
+
+acp-col-id = ID
+acp-col-on = 启用
+acp-col-status = 状态
+acp-col-command = 命令
+acp-col-tools = 工具
+
+acp-enabled-status-yes = 是
+acp-enabled-status-no = 否
+
+acp-value-not-set = (未设置)
+acp-value-unknown = (未知)
+acp-value-none = (无)
+
+acp-button-config = { $icon } 配置
+acp-button-add-agent = 添加代理
+acp-button-reload = 重载
+acp-button-sync-runtime = { $icon } 同步运行时
+acp-button-refresh-status = { $icon } 刷新状态
+acp-button-test = { $icon } 测试
+
+acp-form-title-edit = 编辑 ACP 代理
+acp-form-title-add = 添加 ACP 代理
+acp-form-config-persisted-info = ACP 代理配置保存在 config.toml 中。
+acp-form-label-id = ID
+acp-form-label-enabled = 启用
+acp-form-label-command = 命令
+acp-form-working-directory-info = 运行时工作目录来自工具/测试提示的 `working_directory` 输入。
+acp-form-label-description = 描述
+acp-form-button-save = 保存
+acp-form-button-cancel = 取消
+
+acp-settings-window-title = ACP 设置
+acp-settings-description = ACP 通过 stdio 调用外部 ACP 兼容的编码代理。
+acp-settings-startup-timeout-label = startup_timeout_seconds:
+acp-settings-button-save = 保存
+acp-settings-button-cancel = 取消
+acp-settings-startup-timeout-invalid = startup_timeout_seconds 必须为正整数
+
+acp-delete-dialog-title = 删除 ACP 代理
+acp-delete-dialog-message = 确定要删除 ACP 代理 '{ $agent_id }' 吗？
+acp-delete-dialog-info = 此操作将从 config.toml 中移除该 ACP 代理。
+acp-delete-dialog-button-delete = { $icon } 删除
+acp-delete-dialog-button-cancel = 取消
+
+acp-detail-window-title = ACP 详情: { $agent_id }
+acp-detail-label-id = ID
+acp-detail-label-enabled = 启用
+acp-detail-label-tool-name = 工具名称
+acp-detail-label-command = 命令
+acp-detail-label-env-vars = 环境变量
+acp-detail-label-description = 描述
+acp-detail-label-last-error = 最近错误
+acp-detail-latest-prompt-snapshot = 最近提示快照
+acp-detail-snapshot-mode = 模式: { $mode }
+acp-detail-snapshot-title = 标题: { $title }
+acp-detail-snapshot-updated-at = 更新时间: { $updated_at }
+acp-detail-snapshot-available-commands = 可用命令: { $commands }
+acp-detail-snapshot-config-options = 配置选项: { $options }
+
+acp-test-prompt-title = ACP 测试提示
+acp-test-prompt-working-directory-info = 工作目录: { $working_directory }
+acp-test-prompt-input-hint = 输入消息并按 Enter 发送给 ACP 代理。
+acp-test-prompt-input-placeholder = 输入消息...
+acp-test-prompt-stop-button = { $icon } 停止
+acp-test-prompt-output-section = 输出
+acp-test-prompt-last-error = 最近错误
+acp-test-prompt-session-snapshot = 会话快照
+acp-test-prompt-snapshot-title = 标题
+acp-test-prompt-snapshot-mode = 模式
+acp-test-prompt-snapshot-updated-at = 更新时间
+acp-test-prompt-snapshot-commands = 命令
+acp-test-prompt-config-options = 配置选项
+acp-test-prompt-pending-permissions = 待处理权限
+acp-test-prompt-permission-timeline = 权限时间线
+acp-test-prompt-structured-events = 结构化事件
+acp-test-prompt-raw-stream = 原始流
+acp-waiting-for-session-updates = 等待 ACP 会话更新...
+
+acp-permission-label = #{ $request_id } { $title }
+acp-permission-sending-response = 正在发送响应...
+acp-permission-tool-kind = 工具类型: { $kind }
+acp-permission-tool-status = 工具状态: { $status }
+acp-permission-raw-input = 原始输入: { $raw_input }
+acp-permission-option-button = { $label } ({ $kind })
+acp-permission-cancel = 取消
+
+acp-content-block-image-with-uri = [图片 { $mime_type } { $data_len } 字节 { $uri }]
+acp-content-block-image = [图片 { $mime_type } { $data_len } 字节]
+acp-content-block-audio = [音频 { $mime_type } { $data_len } 字节]
+acp-content-block-resource-with-title = [资源 { $name } { $title } { $uri }]
+acp-content-block-resource = [资源 { $name } { $uri }]
+acp-content-block-embedded-text-with-mime = [嵌入文本 { $uri } { $mime_type }] { $text }
+acp-content-block-embedded-text = [嵌入文本 { $uri }] { $text }
+acp-content-block-embedded-blob-with-mime = [嵌入数据块 { $uri } { $mime_type } { $byte_len } 字节]
+acp-content-block-embedded-blob = [嵌入数据块 { $uri } { $byte_len } 字节]
+acp-content-block-unsupported = [不支持的内容 { $description }]
+
 ## 系统面板
 system-view-host-information = 主机信息
 system-view-program-disk-usage = 程序磁盘使用

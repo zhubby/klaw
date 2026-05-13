@@ -4,6 +4,7 @@ use crate::runtime_bridge::{
     AcpPromptEvent, RuntimeRequestHandle, begin_stop_acp_prompt_request, request_acp_status,
     request_execute_acp_prompt_stream, request_resolve_acp_permission, request_sync_acp,
 };
+use crate::settings::current_ui_language;
 use crate::widgets::{ArrayEditor, KeyValueEditor};
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -13,8 +14,8 @@ use klaw_acp::{
     AcpPermissionRequest, AcpRuntimeSnapshot, AcpSessionEvent, AcpSessionEventKind, AcpSyncResult,
 };
 use klaw_config::{AcpAgentConfig, AppConfig, ConfigError, ConfigSnapshot, ConfigStore};
-use klaw_ui_kit::label_with_hint;
-use std::collections::{BTreeMap, BTreeSet};
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -62,6 +63,7 @@ impl AcpAgentForm {
         }
     }
 
+    #[allow(dead_code)]
     fn title(&self) -> &'static str {
         if self.original_id.is_some() {
             "Edit ACP Agent"
@@ -148,6 +150,10 @@ pub struct AcpPanel {
 }
 
 impl AcpPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -158,9 +164,16 @@ impl AcpPanel {
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
                 self.schedule_status_refresh(false);
-                notifications.success("ACP config loaded from disk");
+                let t = Self::translator();
+                notifications.success(t.text("acp-notify-config-loaded"));
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => {
+                let t = Self::translator();
+                notifications.error(t.text_args(
+                    "acp-notify-load-config-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
+            }
         }
     }
 
@@ -258,7 +271,8 @@ impl AcpPanel {
                     .collect();
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
-                    notifications.success("ACP status refreshed");
+                    let t = Self::translator();
+                    notifications.success(t.text("acp-notify-status-refreshed"));
                 }
                 self.status_refresh_announce = false;
                 self.status_refresh_manual = false;
@@ -266,7 +280,11 @@ impl AcpPanel {
             Ok(Err(err)) => {
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
-                    notifications.error(format!("Failed to refresh ACP status: {err}"));
+                    let t = Self::translator();
+                    notifications.error(t.text_args(
+                        "acp-notify-status-refresh-failed",
+                        HashMap::from([("error", err)]),
+                    ));
                 }
                 self.status_refresh_announce = false;
                 self.status_refresh_manual = false;
@@ -275,8 +293,8 @@ impl AcpPanel {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
-                    notifications
-                        .error("Failed to refresh ACP status: background task disconnected");
+                    let t = Self::translator();
+                    notifications.error(t.text("acp-notify-status-refresh-disconnected"));
                 }
                 self.status_refresh_announce = false;
                 self.status_refresh_manual = false;
@@ -293,19 +311,23 @@ impl AcpPanel {
                 self.sync_fetch_rx = None;
                 self.schedule_status_refresh(false);
                 if self.sync_announce {
-                    notifications.success("ACP runtime synchronized");
+                    let t = Self::translator();
+                    notifications.success(t.text("acp-notify-sync-success"));
                 }
                 self.sync_announce = false;
             }
             Ok(Err(err)) => {
                 self.sync_fetch_rx = None;
-                notifications.error(format!("Failed to sync ACP runtime: {err}"));
+                let t = Self::translator();
+                notifications
+                    .error(t.text_args("acp-notify-sync-failed", HashMap::from([("error", err)])));
                 self.sync_announce = false;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.sync_fetch_rx = None;
-                notifications.error("Failed to sync ACP runtime: background task disconnected");
+                let t = Self::translator();
+                notifications.error(t.text("acp-notify-sync-disconnected"));
                 self.sync_announce = false;
             }
         }
@@ -341,13 +363,19 @@ impl AcpPanel {
             AcpSessionEventKind::AgentMessageChunk { content } => {
                 self.prompt_test
                     .output
-                    .push_str(&render_content_block(content));
+                    .push_str(&render_content_block(content, &Self::translator()));
             }
             AcpSessionEventKind::AgentThoughtChunk { content } => {
-                self.push_output_line(&format!("[thought] {}", render_content_block(content)));
+                self.push_output_line(&format!(
+                    "[thought] {}",
+                    render_content_block(content, &Self::translator())
+                ));
             }
             AcpSessionEventKind::UserMessageChunk { content } => {
-                self.push_output_line(&format!("[user] {}", render_content_block(content)));
+                self.push_output_line(&format!(
+                    "[user] {}",
+                    render_content_block(content, &Self::translator())
+                ));
             }
             _ => self.push_output_line(&format!("[{}]", event.summary)),
         }
@@ -383,7 +411,8 @@ impl AcpPanel {
                     self.prompt_test
                         .pending_permissions
                         .retain(|permission| permission.request_id != request_id);
-                    notifications.success("ACP permission response sent");
+                    notifications
+                        .success(Self::translator().text("acp-notify-permission-resolved"));
                     clear_receiver = true;
                 }
                 Ok((request_id, Err(err))) => {
@@ -393,7 +422,10 @@ impl AcpPanel {
                     ) {
                         permission.resolving = false;
                     }
-                    notifications.error(format!("Failed to resolve ACP permission: {err}"));
+                    notifications.error(Self::translator().text_args(
+                        "acp-notify-permission-resolve-failed",
+                        HashMap::from([("error", err)]),
+                    ));
                     clear_receiver = true;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -401,7 +433,9 @@ impl AcpPanel {
                     for permission in &mut self.prompt_test.pending_permissions {
                         permission.resolving = false;
                     }
-                    notifications.error("ACP permission response task disconnected unexpectedly");
+                    notifications.error(
+                        Self::translator().text("acp-notify-permission-resolve-disconnected"),
+                    );
                     clear_receiver = true;
                     break;
                 }
@@ -439,7 +473,7 @@ impl AcpPanel {
                         });
                     self.prompt_test.permission_history.push(format!(
                         "permission requested: {}",
-                        permission_title(&request)
+                        permission_title(&request, &Self::translator())
                     ));
                     self.prompt_test.window_open = true;
                 }
@@ -511,7 +545,7 @@ impl AcpPanel {
         F: FnOnce(&mut AppConfig) -> Result<(), String>,
     {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("acp-notify-store-unavailable"));
             return false;
         };
         match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
@@ -522,7 +556,10 @@ impl AcpPanel {
                 true
             }
             Err(err) => {
-                notifications.error(format!("Save failed: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "acp-notify-save-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 false
             }
         }
@@ -530,16 +567,19 @@ impl AcpPanel {
 
     fn reload(&mut self, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("acp-notify-store-unavailable"));
             return;
         };
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
                 self.schedule_manager_sync(false);
-                notifications.success("Configuration reloaded from disk");
+                notifications.success(Self::translator().text("acp-notify-config-reloaded"));
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "acp-notify-reload-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -573,14 +613,15 @@ impl AcpPanel {
     fn delete_agent(&mut self, id: &str, notifications: &mut NotificationCenter) {
         let id = id.to_string();
         let id_for_config = id.clone();
-        self.save_config(
-            notifications,
-            &format!("ACP agent '{id}' deleted"),
-            move |config| {
-                config.acp.agents.retain(|agent| agent.id != id_for_config);
-                Ok(())
-            },
+        let t = Self::translator();
+        let success_msg = t.text_args(
+            "acp-notify-server-deleted",
+            HashMap::from([("id", id.clone())]),
         );
+        self.save_config(notifications, &success_msg, move |config| {
+            config.acp.agents.retain(|agent| agent.id != id_for_config);
+            Ok(())
+        });
         self.runtime_statuses.remove(&id);
         if self.selected_agent.as_deref() == Some(id.as_str()) {
             self.selected_agent = None;
@@ -599,11 +640,16 @@ impl AcpPanel {
         let Some(form) = self.form.clone() else {
             return;
         };
-        if self.save_config(notifications, "ACP agent saved", move |config| {
-            let next = Self::apply_form(config.clone(), &form)?;
-            *config = next;
-            Ok(())
-        }) {
+        let t = Self::translator();
+        if self.save_config(
+            notifications,
+            &t.text("acp-notify-server-saved"),
+            move |config| {
+                let next = Self::apply_form(config.clone(), &form)?;
+                *config = next;
+                Ok(())
+            },
+        ) {
             self.form = None;
         }
     }
@@ -802,31 +848,33 @@ impl AcpPanel {
     }
 
     fn render_stats(&self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         ui.horizontal_wrapped(|ui| {
             ui.group(|ui| {
                 ui.set_min_width(140.0);
-                ui.label(RichText::new("Enabled Agents").strong());
+                ui.label(RichText::new(t.text("acp-stats-enabled")).strong());
                 ui.label(self.enabled_agents_count().to_string());
             });
             ui.group(|ui| {
                 ui.set_min_width(140.0);
-                ui.label(RichText::new("Running Agents").strong());
+                ui.label(RichText::new(t.text("acp-stats-running")).strong());
                 ui.label(self.running_agents_count().to_string());
             });
             ui.group(|ui| {
                 ui.set_min_width(140.0);
-                ui.label(RichText::new("Failed Agents").strong());
+                ui.label(RichText::new(t.text("acp-stats-failed")).strong());
                 ui.label(self.failed_agents_count().to_string());
             });
             ui.group(|ui| {
                 ui.set_min_width(160.0);
-                ui.label(RichText::new("Registered ACP Tools").strong());
+                ui.label(RichText::new(t.text("acp-stats-tools")).strong());
                 ui.label(self.registered_tools_count().to_string());
             });
         });
     }
 
     fn render_agent_table(&mut self, ui: &mut egui::Ui, max_height: f32) {
+        let t = Self::translator();
         ui.group(|ui| {
             ui.label(RichText::new("ACP Agents").strong());
             ui.label("Manage external ACP-compatible agents and inspect their runtime state.");
@@ -872,16 +920,16 @@ impl AcpPanel {
                         .sense(egui::Sense::click())
                         .header(row_height, |mut header| {
                             header.col(|ui| {
-                                ui.strong("Enabled");
+                                ui.strong(t.text("acp-col-on"));
                             });
                             header.col(|ui| {
-                                ui.strong("ID");
+                                ui.strong(t.text("acp-col-id"));
                             });
                             header.col(|ui| {
-                                ui.strong("Adapter Command");
+                                ui.strong(t.text("acp-col-command"));
                             });
                             header.col(|ui| {
-                                ui.strong("Tool");
+                                ui.strong(t.text("acp-col-tools"));
                             });
                             header.col(|ui| {
                                 ui.strong("Last Error");
@@ -906,7 +954,7 @@ impl AcpPanel {
                                 let status = self.runtime_statuses.get(agent_id);
 
                                 row.col(|ui| {
-                                    render_acp_enabled_status(ui, agent.enabled);
+                                    render_acp_enabled_status(ui, agent.enabled, &t);
                                 });
                                 row.col(|ui| {
                                     ui.label(agent_id);
@@ -1006,19 +1054,18 @@ impl AcpPanel {
             return;
         }
 
+        let t = Self::translator();
         let mut open = true;
-        egui::Window::new("ACP Test Prompt")
+        egui::Window::new(t.text("acp-test-prompt-title"))
             .open(&mut open)
             .default_size([820.0, 620.0])
             .resizable(true)
             .show(ctx, |ui| {
-                ui.label(
-                    "Run one real ACP prompt against a selected external agent and inspect the live stream below.",
-                );
+                ui.label(t.text("acp-test-prompt-description"));
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
-                    ui.label("Target Agent");
+                    ui.label(t.text("acp-test-prompt-target-agent"));
                     if self.config.acp.agents.is_empty() {
                         ui.monospace("(no agent configured)");
                     } else {
@@ -1037,12 +1084,12 @@ impl AcpPanel {
                 });
 
                 ui.add_space(6.0);
-                ui.label("Prompt");
+                ui.label(t.text("acp-test-prompt-label"));
                 ui.add(
                     egui::TextEdit::multiline(&mut self.prompt_test.prompt)
                         .desired_rows(5)
                         .desired_width(f32::INFINITY)
-                        .hint_text("Ask the external ACP agent to do something small"),
+                        .hint_text(t.text("acp-test-prompt-input-placeholder")),
                 );
 
                 ui.add_space(6.0);
@@ -1050,11 +1097,11 @@ impl AcpPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Working Directory");
+                        ui.label(t.text("acp-test-prompt-working-directory"));
                         ui.text_edit_singleline(&mut self.prompt_test.working_directory);
                         ui.end_row();
 
-                        ui.label("Timeout Seconds");
+                        ui.label(t.text("acp-test-prompt-timeout-seconds"));
                         ui.text_edit_singleline(&mut self.prompt_test.timeout_seconds);
                         ui.end_row();
                     });
@@ -1074,14 +1121,18 @@ impl AcpPanel {
                         .add_enabled(
                             self.prompt_test.running,
                             egui::Button::new(
-                                RichText::new(format!("{} Stop", regular::STOP)).color(Color32::RED),
+                                RichText::new(t.text_args(
+                                    "acp-test-prompt-stop-button",
+                                    HashMap::from([("icon", regular::STOP.to_string())]),
+                                ))
+                                .color(Color32::RED),
                             ),
                         )
                         .clicked()
                     {
                         self.stop_test_prompt(notifications);
                     }
-                    if ui.button("Clear Stream").clicked() {
+                    if ui.button(t.text("acp-test-prompt-clear-stream")).clicked() {
                         self.prompt_test.output.clear();
                         self.prompt_test.last_error = None;
                         self.prompt_test.stopped = false;
@@ -1105,16 +1156,19 @@ impl AcpPanel {
                 });
 
                 if !self.prompt_test.working_directory.trim().is_empty() {
-                    ui.small(format!(
-                        "working_directory: {}",
-                        self.prompt_test.working_directory.trim()
+                    ui.small(t.text_args(
+                        "acp-test-prompt-working-directory-info",
+                        HashMap::from([(
+                            "path",
+                            self.prompt_test.working_directory.trim().to_string(),
+                        )]),
                     ));
                 }
 
                 if let Some(error) = self.prompt_test.last_error.as_deref() {
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new("Last Error")
+                        RichText::new(t.text("acp-test-prompt-last-error"))
                             .strong()
                             .color(Color32::LIGHT_RED),
                     );
@@ -1122,41 +1176,41 @@ impl AcpPanel {
                 }
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Session Snapshot").strong());
+                ui.label(RichText::new(t.text("acp-test-prompt-session-snapshot")).strong());
                 egui::Grid::new("acp-test-prompt-snapshot-grid")
                     .num_columns(2)
                     .spacing([12.0, 6.0])
                     .show(ui, |ui| {
-                        ui.label("Title");
+                        ui.label(t.text("acp-test-prompt-snapshot-title"));
                         ui.label(
                             self.prompt_test
                                 .session_title
                                 .as_deref()
-                                .unwrap_or("(not set)"),
+                                .unwrap_or(&t.text("acp-value-not-set")),
                         );
                         ui.end_row();
 
-                        ui.label("Mode");
+                        ui.label(t.text("acp-test-prompt-snapshot-mode"));
                         ui.label(
                             self.prompt_test
                                 .current_mode_id
                                 .as_deref()
-                                .unwrap_or("(unknown)"),
+                                .unwrap_or(&t.text("acp-value-unknown")),
                         );
                         ui.end_row();
 
-                        ui.label("Updated At");
+                        ui.label(t.text("acp-test-prompt-snapshot-updated-at"));
                         ui.label(
                             self.prompt_test
                                 .session_updated_at
                                 .as_deref()
-                                .unwrap_or("(not set)"),
+                                .unwrap_or(&t.text("acp-value-not-set")),
                         );
                         ui.end_row();
 
-                        ui.label("Commands");
+                        ui.label(t.text("acp-test-prompt-snapshot-commands"));
                         if self.prompt_test.available_commands.is_empty() {
-                            ui.weak("(none)");
+                            ui.weak(t.text("acp-value-none"));
                         } else {
                             ui.label(
                                 self.prompt_test
@@ -1172,7 +1226,7 @@ impl AcpPanel {
 
                 if !self.prompt_test.config_options.is_empty() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Config Options").strong());
+                    ui.label(RichText::new(t.text("acp-test-prompt-config-options")).strong());
                     egui::Grid::new("acp-test-prompt-config-options-grid")
                         .num_columns(2)
                         .spacing([12.0, 6.0])
@@ -1193,42 +1247,55 @@ impl AcpPanel {
 
                 if !self.prompt_test.pending_permissions.is_empty() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Pending Permissions").strong());
+                    ui.label(RichText::new(t.text("acp-test-prompt-pending-permissions")).strong());
                     let pending_permissions = self.prompt_test.pending_permissions.clone();
                     for permission in pending_permissions {
                         ui.group(|ui| {
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new(format!(
-                                    "#{} {}",
-                                    permission.request_id,
-                                    permission_title(&permission.request)
-                                ))
-                                .strong());
+                                ui.label(
+                                    RichText::new(t.text_args(
+                                        "acp-permission-label",
+                                        HashMap::from([
+                                            ("request_id", permission.request_id.to_string()),
+                                            ("title", permission_title(&permission.request, &t)),
+                                        ]),
+                                    ))
+                                    .strong(),
+                                );
                                 if permission.resolving {
                                     ui.spinner();
-                                    ui.weak("sending response...");
+                                    ui.weak(t.text("acp-permission-sending-response"));
                                 }
                             });
                             if let Some(kind) = permission.request.kind.as_deref() {
-                                ui.small(format!("tool kind: {kind}"));
+                                ui.small(t.text_args(
+                                    "acp-permission-tool-kind",
+                                    HashMap::from([("kind", kind.to_string())]),
+                                ));
                             }
                             if let Some(status) = permission.request.status.as_deref() {
-                                ui.small(format!("tool status: {status}"));
+                                ui.small(t.text_args(
+                                    "acp-permission-tool-status",
+                                    HashMap::from([("status", status.to_string())]),
+                                ));
                             }
                             if let Some(raw_input) = permission.request.raw_input.as_deref() {
-                                ui.small(format!("raw input: {raw_input}"));
+                                ui.small(t.text_args(
+                                    "acp-permission-raw-input",
+                                    HashMap::from([("raw_input", raw_input.to_string())]),
+                                ));
                             }
                             ui.add_space(4.0);
                             ui.horizontal_wrapped(|ui| {
                                 for option in &permission.request.options {
-                                    let button = egui::Button::new(format!(
-                                        "{} ({})",
-                                        option.label, option.kind
+                                    let button = egui::Button::new(t.text_args(
+                                        "acp-permission-option-button",
+                                        HashMap::from([
+                                            ("label", option.label.clone()),
+                                            ("kind", option.kind.clone()),
+                                        ]),
                                     ));
-                                    if ui
-                                        .add_enabled(!permission.resolving, button)
-                                        .clicked()
-                                    {
+                                    if ui.add_enabled(!permission.resolving, button).clicked() {
                                         self.resolve_permission(
                                             permission.request_id,
                                             AcpPermissionDecision::SelectOption {
@@ -1241,7 +1308,8 @@ impl AcpPanel {
                                 if ui
                                     .add_enabled(
                                         !permission.resolving,
-                                        egui::Button::new("Cancel").fill(Color32::DARK_RED),
+                                        egui::Button::new(t.text("acp-permission-cancel"))
+                                            .fill(Color32::DARK_RED),
                                     )
                                     .clicked()
                                 {
@@ -1258,14 +1326,14 @@ impl AcpPanel {
 
                 if !self.prompt_test.permission_history.is_empty() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Permission Timeline").strong());
+                    ui.label(RichText::new(t.text("acp-test-prompt-permission-timeline")).strong());
                     for item in self.prompt_test.permission_history.iter().rev().take(8) {
                         ui.small(item);
                     }
                 }
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Structured Events").strong());
+                ui.label(RichText::new(t.text("acp-test-prompt-structured-events")).strong());
                 egui::ScrollArea::vertical()
                     .id_salt("acp-test-prompt-events-window")
                     .max_height(180.0)
@@ -1273,16 +1341,17 @@ impl AcpPanel {
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
                         if self.prompt_test.session_events.is_empty() {
-                            ui.weak("Waiting for ACP session updates...");
+                            ui.weak(t.text("acp-waiting-for-session-updates"));
                         } else {
-                            for event in self.prompt_test.session_events.iter().rev().take(32).rev() {
+                            for event in self.prompt_test.session_events.iter().rev().take(32).rev()
+                            {
                                 ui.small(event.summary.as_str());
                             }
                         }
                     });
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Raw Stream").strong());
+                ui.label(RichText::new(t.text("acp-test-prompt-raw-stream")).strong());
                 egui::ScrollArea::vertical()
                     .id_salt("acp-test-prompt-stream-window")
                     .auto_shrink([false, false])
@@ -1290,7 +1359,7 @@ impl AcpPanel {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         if self.prompt_test.output.trim().is_empty() {
-                            ui.weak("Waiting for ACP session updates...");
+                            ui.weak(t.text("acp-waiting-for-session-updates"));
                         } else {
                             ui.add(
                                 egui::Label::new(
@@ -1314,35 +1383,42 @@ impl AcpPanel {
             return;
         };
 
-        egui::Window::new(form.title())
+        let t = Self::translator();
+        let form_title = if form.original_id.is_some() {
+            t.text("acp-form-title-edit")
+        } else {
+            t.text("acp-form-title-add")
+        };
+
+        egui::Window::new(&form_title)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 ui.set_min_width(560.0);
-                ui.label("ACP agent configuration is persisted to config.toml.");
+                ui.label(t.text("acp-form-config-persisted-info"));
                 ui.separator();
                 egui::Grid::new("acp-form-grid")
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("ID");
+                        ui.label(t.text("acp-form-label-id"));
                         ui.text_edit_singleline(&mut form.id);
                         ui.end_row();
 
-                        ui.label("Enabled");
+                        ui.label(t.text("acp-form-label-enabled"));
                         ui.checkbox(&mut form.enabled, "");
                         ui.end_row();
 
-                        ui.label("Command");
+                        ui.label(t.text("acp-form-label-command"));
                         ui.text_edit_singleline(&mut form.command);
                         ui.end_row();
                     });
 
                 ui.add_space(6.0);
-                ui.small("Runtime working directory comes from the tool/test prompt `working_directory` input.");
+                ui.small(t.text("acp-form-working-directory-info"));
                 ui.add_space(6.0);
-                ui.label("Description");
+                ui.label(t.text("acp-form-label-description"));
                 ui.add(
                     egui::TextEdit::multiline(&mut form.description)
                         .desired_rows(3)
@@ -1354,10 +1430,10 @@ impl AcpPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("acp-form-button-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("acp-form-button-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -1383,25 +1459,27 @@ impl AcpPanel {
         let mut save_clicked = false;
         let mut close = false;
 
-        egui::Window::new("ACP Settings")
+        let t = Self::translator();
+
+        egui::Window::new(t.text("acp-settings-window-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 ui.set_width(360.0);
-                ui.label("ACP calls external ACP-compatible coding agents over stdio.");
+                ui.label(t.text("acp-settings-description"));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.label("startup_timeout_seconds:");
+                    ui.label(t.text("acp-settings-startup-timeout-label"));
                     ui.add(egui::TextEdit::singleline(timeout_text).desired_width(90.0));
                 });
                 ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("acp-settings-button-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("acp-settings-button-cancel")).clicked() {
                         close = true;
                     }
                 });
@@ -1411,15 +1489,19 @@ impl AcpPanel {
             let timeout = match timeout_text.trim().parse::<u64>() {
                 Ok(value) => value,
                 Err(_) => {
-                    notifications.error("startup_timeout_seconds must be a positive integer");
+                    notifications.error(t.text("acp-settings-startup-timeout-invalid"));
                     return;
                 }
             };
 
-            if self.save_config(notifications, "ACP settings saved", move |config| {
-                config.acp.startup_timeout_seconds = timeout;
-                Ok(())
-            }) {
+            if self.save_config(
+                notifications,
+                &t.text("acp-notify-settings-saved"),
+                move |config| {
+                    config.acp.startup_timeout_seconds = timeout;
+                    Ok(())
+                },
+            ) {
                 self.global_settings_form = None;
             }
         }
@@ -1439,31 +1521,40 @@ impl AcpPanel {
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new("Delete ACP Agent")
+        let t = Self::translator();
+
+        egui::Window::new(t.text("acp-delete-dialog-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new(format!(
-                        "Are you sure you want to delete ACP agent '{agent_id}'?"
+                    RichText::new(t.text_args(
+                        "acp-delete-dialog-message",
+                        HashMap::from([("agent_id", agent_id.clone())]),
                     ))
                     .strong(),
                 );
                 ui.add_space(8.0);
-                ui.label("This removes the ACP agent from config.toml.");
+                ui.label(t.text("acp-delete-dialog-info"));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new(format!("{} Delete", regular::TRASH))
-                                .color(ui.visuals().warn_fg_color),
+                            RichText::new(t.text_args(
+                                "acp-delete-dialog-button-delete",
+                                HashMap::from([("icon", regular::TRASH.to_string())]),
+                            ))
+                            .color(ui.visuals().warn_fg_color),
                         ))
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button(t.text("acp-delete-dialog-button-cancel"))
+                        .clicked()
+                    {
                         cancelled = true;
                     }
                 });
@@ -1494,96 +1585,121 @@ impl AcpPanel {
         };
         let status = self.runtime_statuses.get(&detail_window.agent_id);
 
+        let t = Self::translator();
         let mut open = true;
-        egui::Window::new(format!("ACP Detail: {}", detail_window.agent_id))
-            .open(&mut open)
-            .resizable(true)
-            .default_width(720.0)
-            .default_height(460.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    egui::Grid::new("acp-detail-window-grid")
-                        .num_columns(2)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.label("ID");
-                            ui.monospace(&agent.id);
-                            ui.end_row();
+        egui::Window::new(t.text_args(
+            "acp-detail-window-title",
+            HashMap::from([("agent_id", detail_window.agent_id.clone())]),
+        ))
+        .open(&mut open)
+        .resizable(true)
+        .default_width(720.0)
+        .default_height(460.0)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                egui::Grid::new("acp-detail-window-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label(t.text("acp-detail-label-id"));
+                        ui.monospace(&agent.id);
+                        ui.end_row();
 
-                            ui.label("Enabled");
-                            render_acp_enabled_status(ui, agent.enabled);
-                            ui.end_row();
+                        ui.label(t.text("acp-detail-label-enabled"));
+                        render_acp_enabled_status(ui, agent.enabled, &t);
+                        ui.end_row();
 
-                            ui.label("Tool Name");
-                            ui.monospace(Self::tool_name_for_agent(&agent.id));
-                            ui.end_row();
+                        ui.label(t.text("acp-detail-label-tool-name"));
+                        ui.monospace(Self::tool_name_for_agent(&agent.id));
+                        ui.end_row();
 
-                            ui.label("Command");
-                            ui.monospace(Self::command_display(agent));
-                            ui.end_row();
+                        ui.label(t.text("acp-detail-label-command"));
+                        ui.monospace(Self::command_display(agent));
+                        ui.end_row();
 
-                            ui.label("Env Vars");
-                            ui.label(agent.env.len().to_string());
-                            ui.end_row();
-                        });
+                        ui.label(t.text("acp-detail-label-env-vars"));
+                        ui.label(agent.env.len().to_string());
+                        ui.end_row();
+                    });
 
-                    if !agent.description.trim().is_empty() {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Description").strong());
-                        ui.label(agent.description.trim());
+                if !agent.description.trim().is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(t.text("acp-detail-label-description")).strong());
+                    ui.label(agent.description.trim());
+                }
+                if let Some(last_error) = status.and_then(|item| item.last_error.as_deref()) {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(t.text("acp-detail-label-last-error"))
+                            .strong()
+                            .color(Color32::LIGHT_RED),
+                    );
+                    ui.colored_label(Color32::LIGHT_RED, last_error);
+                }
+                if self.prompt_test.agent_id == detail_window.agent_id
+                    && !self.prompt_test.session_events.is_empty()
+                {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(t.text("acp-detail-latest-prompt-snapshot")).strong());
+                    if let Some(mode) = self.prompt_test.current_mode_id.as_deref() {
+                        ui.small(t.text_args(
+                            "acp-detail-snapshot-mode",
+                            HashMap::from([("mode", mode.to_string())]),
+                        ));
                     }
-                    if let Some(last_error) = status.and_then(|item| item.last_error.as_deref()) {
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new("Last Error")
-                                .strong()
-                                .color(Color32::LIGHT_RED),
+                    if let Some(title) = self.prompt_test.session_title.as_deref() {
+                        ui.small(t.text_args(
+                            "acp-detail-snapshot-title",
+                            HashMap::from([("title", title.to_string())]),
+                        ));
+                    }
+                    if let Some(updated_at) = self.prompt_test.session_updated_at.as_deref() {
+                        ui.small(t.text_args(
+                            "acp-detail-snapshot-updated-at",
+                            HashMap::from([("updated_at", updated_at.to_string())]),
+                        ));
+                    }
+                    if !self.prompt_test.available_commands.is_empty() {
+                        ui.small(
+                            t.text_args(
+                                "acp-detail-snapshot-available-commands",
+                                HashMap::from([(
+                                    "commands",
+                                    self.prompt_test
+                                        .available_commands
+                                        .iter()
+                                        .map(|command| command.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(" , "),
+                                )]),
+                            ),
                         );
-                        ui.colored_label(Color32::LIGHT_RED, last_error);
                     }
-                    if self.prompt_test.agent_id == detail_window.agent_id
-                        && !self.prompt_test.session_events.is_empty()
-                    {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Latest Prompt Snapshot").strong());
-                        if let Some(mode) = self.prompt_test.current_mode_id.as_deref() {
-                            ui.small(format!("mode: {mode}"));
-                        }
-                        if let Some(title) = self.prompt_test.session_title.as_deref() {
-                            ui.small(format!("title: {title}"));
-                        }
-                        if let Some(updated_at) = self.prompt_test.session_updated_at.as_deref() {
-                            ui.small(format!("updated_at: {updated_at}"));
-                        }
-                        if !self.prompt_test.available_commands.is_empty() {
-                            ui.small(format!(
-                                "available commands: {}",
-                                self.prompt_test
-                                    .available_commands
-                                    .iter()
-                                    .map(|command| command.name.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ));
-                        }
-                        if !self.prompt_test.config_options.is_empty() {
-                            ui.small(format!(
-                                "config options: {}",
-                                self.prompt_test
-                                    .config_options
-                                    .iter()
-                                    .map(|option| format!("{}={}", option.id, option.current_value))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ));
-                        }
-                        ui.add_space(6.0);
-                        for event in self.prompt_test.session_events.iter().rev().take(12).rev() {
-                            ui.small(event.summary.as_str());
-                        }
+                    if !self.prompt_test.config_options.is_empty() {
+                        ui.small(
+                            t.text_args(
+                                "acp-detail-snapshot-config-options",
+                                HashMap::from([(
+                                    "options",
+                                    self.prompt_test
+                                        .config_options
+                                        .iter()
+                                        .map(|option| {
+                                            format!("{}={}", option.id, option.current_value)
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(" , "),
+                                )]),
+                            ),
+                        );
                     }
-                });
+                    ui.add_space(6.0);
+                    for event in self.prompt_test.session_events.iter().rev().take(12).rev() {
+                        ui.small(event.summary.as_str());
+                    }
+                }
             });
+        });
 
         if !open {
             self.detail_window = None;
@@ -1606,41 +1722,59 @@ impl PanelRenderer for AcpPanel {
         self.poll_permission_action(notifications);
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(ACP_STATUS_POLL_INTERVAL);
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
         label_with_hint(
             ui,
-            "ACP lets klaw call external ACP-compatible coding agents through adapter commands.",
-            "Default templates use `npx -y @zed-industries/claude-agent-acp` and `npx -y @zed-industries/codex-acp`; runtime cwd comes from `working_directory`.",
+            &t.text("acp-panel-description"),
+            &t.text("acp-panel-default-templates-hint"),
         );
         ui.add_space(8.0);
         self.render_stats(ui);
         ui.add_space(8.0);
 
         ui.horizontal_wrapped(|ui| {
-            if ui.button(format!("{} Config", regular::GEAR)).clicked()
+            if ui
+                .button(t.text_args(
+                    "acp-button-config",
+                    HashMap::from([("icon", regular::GEAR.to_string())]),
+                ))
+                .clicked()
                 && self.global_settings_form.is_none()
             {
                 self.open_global_settings();
             }
-            if ui.button("Add Agent").clicked() {
+            if ui.button(t.text("acp-button-add-agent")).clicked() {
                 self.open_add_agent();
             }
-            if ui.button("Reload").clicked() {
+            if ui.button(t.text("acp-button-reload")).clicked() {
                 self.reload(notifications);
             }
             if ui
-                .button(format!("{} Sync Runtime", regular::ARROWS_CLOCKWISE))
+                .button(t.text_args(
+                    "acp-button-sync-runtime",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
                 .clicked()
             {
                 self.schedule_manager_sync(true);
             }
             if ui
-                .button(format!("{} Refresh Status", regular::ARROW_CLOCKWISE))
+                .button(t.text_args(
+                    "acp-button-refresh-status",
+                    HashMap::from([("icon", regular::ARROW_CLOCKWISE.to_string())]),
+                ))
                 .clicked()
             {
                 self.schedule_status_refresh(true);
             }
-            if ui.button(format!("{} Test", regular::FLASK)).clicked() {
+            if ui
+                .button(t.text_args(
+                    "acp-button-test",
+                    HashMap::from([("icon", regular::FLASK.to_string())]),
+                ))
+                .clicked()
+            {
                 self.prompt_test.window_open = true;
             }
         });
@@ -1666,7 +1800,7 @@ fn pending_permission_mut(
         .find(|permission| permission.request_id == request_id)
 }
 
-fn render_content_block(content: &AcpContentBlockEvent) -> String {
+fn render_content_block(content: &AcpContentBlockEvent, translator: &Translator) -> String {
     match content {
         AcpContentBlockEvent::Text { text } => text.clone(),
         AcpContentBlockEvent::Image {
@@ -1674,62 +1808,122 @@ fn render_content_block(content: &AcpContentBlockEvent) -> String {
             uri,
             data_len,
         } => match uri {
-            Some(uri) => format!("[image {mime_type} {data_len} bytes {uri}]"),
-            None => format!("[image {mime_type} {data_len} bytes]"),
+            Some(uri) => translator.text_args(
+                "acp-content-block-image-with-uri",
+                HashMap::from([
+                    ("mime_type", mime_type.clone()),
+                    ("data_len", data_len.to_string()),
+                    ("uri", uri.clone()),
+                ]),
+            ),
+            None => translator.text_args(
+                "acp-content-block-image",
+                HashMap::from([
+                    ("mime_type", mime_type.clone()),
+                    ("data_len", data_len.to_string()),
+                ]),
+            ),
         },
         AcpContentBlockEvent::Audio {
             mime_type,
             data_len,
-        } => format!("[audio {mime_type} {data_len} bytes]"),
+        } => translator.text_args(
+            "acp-content-block-audio",
+            HashMap::from([
+                ("mime_type", mime_type.clone()),
+                ("data_len", data_len.to_string()),
+            ]),
+        ),
         AcpContentBlockEvent::ResourceLink {
             name, uri, title, ..
         } => match title {
-            Some(title) => format!("[resource {name} {title} {uri}]"),
-            None => format!("[resource {name} {uri}]"),
+            Some(title) => translator.text_args(
+                "acp-content-block-resource-with-title",
+                HashMap::from([
+                    ("name", name.clone()),
+                    ("title", title.clone()),
+                    ("uri", uri.clone()),
+                ]),
+            ),
+            None => translator.text_args(
+                "acp-content-block-resource",
+                HashMap::from([("name", name.clone()), ("uri", uri.clone())]),
+            ),
         },
         AcpContentBlockEvent::EmbeddedTextResource {
             uri,
             mime_type,
             text,
         } => match mime_type {
-            Some(mime_type) => format!("[embedded text {uri} {mime_type}] {text}"),
-            None => format!("[embedded text {uri}] {text}"),
+            Some(mime_type) => translator.text_args(
+                "acp-content-block-embedded-text-with-mime",
+                HashMap::from([
+                    ("uri", uri.clone()),
+                    ("mime_type", mime_type.clone()),
+                    ("text", text.clone()),
+                ]),
+            ),
+            None => translator.text_args(
+                "acp-content-block-embedded-text",
+                HashMap::from([("uri", uri.clone()), ("text", text.clone())]),
+            ),
         },
         AcpContentBlockEvent::EmbeddedBlobResource {
             uri,
             mime_type,
             byte_len,
         } => match mime_type {
-            Some(mime_type) => format!("[embedded blob {uri} {mime_type} {byte_len} bytes]"),
-            None => format!("[embedded blob {uri} {byte_len} bytes]"),
+            Some(mime_type) => translator.text_args(
+                "acp-content-block-embedded-blob-with-mime",
+                HashMap::from([
+                    ("uri", uri.clone()),
+                    ("mime_type", mime_type.clone()),
+                    ("byte_len", byte_len.to_string()),
+                ]),
+            ),
+            None => translator.text_args(
+                "acp-content-block-embedded-blob",
+                HashMap::from([("uri", uri.clone()), ("byte_len", byte_len.to_string())]),
+            ),
         },
-        AcpContentBlockEvent::Unsupported { description } => {
-            format!("[unsupported content {description}]")
-        }
+        AcpContentBlockEvent::Unsupported { description } => translator.text_args(
+            "acp-content-block-unsupported",
+            HashMap::from([("description", description.clone())]),
+        ),
     }
 }
 
-fn permission_title(request: &AcpPermissionRequest) -> String {
-    request
-        .title
-        .clone()
-        .unwrap_or_else(|| request.tool_call_id.clone())
+fn permission_title(request: &AcpPermissionRequest, translator: &Translator) -> String {
+    request.title.clone().unwrap_or_else(|| {
+        translator.text_args(
+            "acp-permission-label",
+            HashMap::from([
+                ("request_id", request.tool_call_id.clone()),
+                ("title", String::new()),
+            ]),
+        )
+    })
 }
 
 fn agent_table_row_height(default_interact_height: f32) -> f32 {
     default_interact_height
 }
 
-fn render_acp_enabled_status(ui: &mut egui::Ui, enabled: bool) {
-    let (icon, color, label) = if enabled {
+fn render_acp_enabled_status(ui: &mut egui::Ui, enabled: bool, translator: &Translator) {
+    let (icon, color, label_key) = if enabled {
         (
             regular::CHECK_CIRCLE,
             Color32::from_rgb(0x22, 0xC5, 0x5E),
-            "yes",
+            "acp-enabled-status-yes",
         )
     } else {
-        (regular::X_CIRCLE, Color32::from_rgb(0xEF, 0x44, 0x44), "no")
+        (
+            regular::X_CIRCLE,
+            Color32::from_rgb(0xEF, 0x44, 0x44),
+            "acp-enabled-status-no",
+        )
     };
+    let label = translator.text(label_key);
     ui.label(
         RichText::new(format!("{icon} {label}"))
             .color(color)
@@ -1740,6 +1934,7 @@ fn render_acp_enabled_status(ui: &mut egui::Ui, enabled: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_ui_kit::UiLanguage;
     use std::collections::BTreeMap;
 
     #[test]
@@ -1783,13 +1978,17 @@ mod tests {
 
     #[test]
     fn render_content_block_formats_resource_link() {
-        let rendered = super::render_content_block(&AcpContentBlockEvent::ResourceLink {
-            name: "README".to_string(),
-            uri: "file:///workspace/README.md".to_string(),
-            title: Some("Workspace README".to_string()),
-            description: None,
-            mime_type: Some("text/markdown".to_string()),
-        });
+        let t = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let rendered = super::render_content_block(
+            &AcpContentBlockEvent::ResourceLink {
+                name: "README".to_string(),
+                uri: "file:///workspace/README.md".to_string(),
+                title: Some("Workspace README".to_string()),
+                description: None,
+                mime_type: Some("text/markdown".to_string()),
+            },
+            &t,
+        );
 
         assert_eq!(
             rendered,
@@ -1810,6 +2009,12 @@ mod tests {
             options: Vec::new(),
         };
 
-        assert_eq!(super::permission_title(&request), "Write output.txt");
+        assert_eq!(
+            super::permission_title(
+                &request,
+                &Translator::new(LocaleDomain::Gui, UiLanguage::English),
+            ),
+            "Write output.txt"
+        );
     }
 }

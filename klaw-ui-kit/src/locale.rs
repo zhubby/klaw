@@ -679,4 +679,111 @@ mod tests {
             "日志 目录已清除"
         );
     }
+
+    #[test]
+    fn gui_acp_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("acp-panel-description"),
+            "ACP lets klaw call external ACP-compatible coding agents through adapter commands."
+        );
+        assert_eq!(
+            translator.text("acp-notify-config-loaded"),
+            "ACP config loaded from disk"
+        );
+        assert_eq!(translator.text("acp-stats-enabled"), "Enabled");
+        assert_eq!(translator.text("acp-col-id"), "ID");
+        assert_eq!(translator.text("acp-enabled-status-yes"), "yes");
+        assert_eq!(translator.text("acp-enabled-status-no"), "no");
+        assert_eq!(translator.text("acp-form-title-add"), "Add ACP Agent");
+        assert_eq!(translator.text("acp-form-label-id"), "ID");
+        assert_eq!(
+            translator.text("acp-delete-dialog-title"),
+            "Delete ACP Agent"
+        );
+        assert_eq!(translator.text("acp-value-not-set"), "(not set)");
+        assert_eq!(translator.text("acp-test-prompt-title"), "ACP Test Prompt");
+    }
+
+    #[test]
+    fn gui_acp_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("acp-stats-enabled"), "已启用");
+        assert_eq!(translator.text("acp-stats-running"), "运行中");
+        assert_eq!(translator.text("acp-col-id"), "ID");
+        assert_eq!(translator.text("acp-col-status"), "状态");
+        assert_eq!(translator.text("acp-enabled-status-yes"), "是");
+        assert_eq!(translator.text("acp-form-title-add"), "添加 ACP 代理");
+        assert_eq!(translator.text("acp-delete-dialog-title"), "删除 ACP 代理");
+        assert_eq!(translator.text("acp-value-not-set"), "(未设置)");
+        assert_eq!(translator.text("acp-test-prompt-title"), "ACP 测试提示");
+    }
+
+    #[test]
+    fn gui_llm_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("llm-btn-refresh"), "Refresh");
+        assert_eq!(translator.text("llm-filter-session"), "Session");
+        assert_eq!(translator.text("llm-filter-all"), "All");
+        assert_eq!(translator.text("llm-col-model"), "Model");
+        assert_eq!(translator.text("llm-col-status"), "Status");
+        assert_eq!(translator.text("llm-title-detail"), "LLM Audit Detail");
+        assert_eq!(translator.text("llm-tab-request"), "Request");
+        assert_eq!(translator.text("llm-status-loading"), "Loading...");
+        assert_eq!(translator.text("llm-sort-time-asc"), "Time ↑");
+    }
+
+    #[test]
+    fn gui_llm_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("llm-btn-refresh"), "刷新");
+        assert_eq!(translator.text("llm-filter-session"), "会话");
+        assert_eq!(translator.text("llm-filter-all"), "全部");
+        assert_eq!(translator.text("llm-col-model"), "模型");
+        assert_eq!(translator.text("llm-col-status"), "状态");
+        assert_eq!(translator.text("llm-title-detail"), "LLM 审计详情");
+        assert_eq!(translator.text("llm-tab-request"), "请求");
+        assert_eq!(translator.text("llm-status-loading"), "加载中...");
+        assert_eq!(translator.text("llm-sort-time-asc"), "时间 ↑");
+    }
+
+    #[test]
+    fn gui_mcp_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("mcp-notify-config-loaded"),
+            "MCP config loaded from disk"
+        );
+        assert_eq!(
+            translator.text("mcp-label-no-servers"),
+            "No MCP servers configured."
+        );
+        assert_eq!(translator.text("mcp-col-id"), "ID");
+        assert_eq!(translator.text("mcp-col-status"), "Status");
+        assert_eq!(translator.text("mcp-label-enabled-yes"), "yes");
+        assert_eq!(translator.text("mcp-form-title-add"), "Add MCP Server");
+        assert_eq!(translator.text("mcp-mode-stdio"), "stdio");
+        assert_eq!(translator.text("mcp-state-running"), "running");
+        assert_eq!(translator.text("mcp-detail-heading"), "MCP Server Detail");
+    }
+
+    #[test]
+    fn gui_mcp_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("mcp-notify-config-loaded"),
+            "MCP 配置已从磁盘加载"
+        );
+        assert_eq!(
+            translator.text("mcp-label-no-servers"),
+            "未配置 MCP 服务器。"
+        );
+        assert_eq!(translator.text("mcp-col-id"), "ID");
+        assert_eq!(translator.text("mcp-col-status"), "状态");
+        assert_eq!(translator.text("mcp-label-enabled-yes"), "是");
+        assert_eq!(translator.text("mcp-form-title-add"), "添加 MCP 服务器");
+        assert_eq!(translator.text("mcp-mode-stdio"), "stdio");
+        assert_eq!(translator.text("mcp-state-running"), "运行中");
+        assert_eq!(translator.text("mcp-detail-heading"), "MCP 服务器详情");
+    }
 }

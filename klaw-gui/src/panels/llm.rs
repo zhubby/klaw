@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::show_json_tree_with_id;
 use chrono::{Datelike, Local, NaiveDate};
@@ -11,6 +12,8 @@ use klaw_session::{
     LlmAuditFilterOptions, LlmAuditFilterOptionsQuery, LlmAuditQuery, LlmAuditRecord,
     LlmAuditSortOrder, LlmAuditStatus, LlmAuditSummaryRecord, SessionManager, SqliteSessionManager,
 };
+use klaw_ui_kit::{LocaleDomain, Translator};
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
@@ -148,6 +151,10 @@ impl Default for LlmPanel {
 }
 
 impl LlmPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -159,7 +166,10 @@ impl LlmPanel {
                 self.store = Some(store);
                 self.apply_config_snapshot(snapshot);
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "llm-error-config-load",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -174,7 +184,10 @@ impl LlmPanel {
 
         match store.reload() {
             Ok(snapshot) => self.apply_config_snapshot(snapshot),
-            Err(err) => notifications.error(format!("Failed to reload config: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "llm-error-config-reload",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -239,7 +252,10 @@ impl LlmPanel {
                 }
                 Err(err) => {
                     self.loading = false;
-                    notifications.error(format!("Failed to load LLM audit rows: {err}"));
+                    notifications.error(Self::translator().text_args(
+                        "llm-error-rows-load",
+                        HashMap::from([("error", err.to_string())]),
+                    ));
                     if self.refresh_queued {
                         self.refresh_queued = false;
                         self.refresh(notifications);
@@ -251,7 +267,7 @@ impl LlmPanel {
             }
             Err(TryRecvError::Disconnected) => {
                 self.loading = false;
-                notifications.error("LLM audit loader closed unexpectedly");
+                notifications.error(Self::translator().text("llm-error-loader-disconnected"));
             }
         }
     }
@@ -297,14 +313,18 @@ impl LlmPanel {
                     self.detail_record = Some(record);
                 }
                 Err(err) => {
-                    notifications.error(format!("Failed to load LLM audit detail: {err}"));
+                    notifications.error(Self::translator().text_args(
+                        "llm-error-detail-load",
+                        HashMap::from([("error", err.to_string())]),
+                    ));
                 }
             },
             Err(TryRecvError::Empty) => {
                 self.detail_request = Some(request);
             }
             Err(TryRecvError::Disconnected) => {
-                notifications.error("LLM audit detail loader closed unexpectedly");
+                notifications
+                    .error(Self::translator().text("llm-error-detail-loader-disconnected"));
             }
         }
     }
@@ -316,10 +336,10 @@ impl LlmPanel {
         };
     }
 
-    fn sort_label(&self) -> &'static str {
+    fn sort_label(&self, t: &Translator) -> String {
         match self.sort_order {
-            LlmAuditSortOrder::RequestedAtAsc => "Time ↑",
-            LlmAuditSortOrder::RequestedAtDesc => "Time ↓",
+            LlmAuditSortOrder::RequestedAtAsc => t.text("llm-sort-time-asc"),
+            LlmAuditSortOrder::RequestedAtDesc => t.text("llm-sort-time-desc"),
         }
     }
 
@@ -348,16 +368,21 @@ impl PanelRenderer for LlmPanel {
             ui.ctx().request_repaint_after(LLM_AUDIT_POLL_INTERVAL);
         }
 
+        let t = Self::translator();
+
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui.button(t.text("llm-btn-refresh")).clicked() {
                 self.reload_config(notifications);
                 self.refresh(notifications);
             }
-            ui.label(format!("Total: {}", self.total_count));
+            ui.label(t.text_args(
+                "llm-label-total",
+                HashMap::from([("count", self.total_count.to_string())]),
+            ));
             if self.loading {
                 ui.add(egui::Spinner::new());
-                ui.small("Loading...");
+                ui.small(t.text("llm-status-loading"));
             }
         });
 
@@ -368,14 +393,22 @@ impl PanelRenderer for LlmPanel {
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Session");
+                    ui.label(t.text("llm-filter-session"));
                     let combo_resp = egui::ComboBox::from_id_salt("llm-audit-session-filter")
-                        .selected_text(self.session_filter.as_deref().unwrap_or("All"))
+                        .selected_text(
+                            self.session_filter
+                                .as_deref()
+                                .unwrap_or(&t.text("llm-filter-all")),
+                        )
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.session_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.session_filter,
+                                    None,
+                                    t.text("llm-filter-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -399,19 +432,23 @@ impl PanelRenderer for LlmPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Provider");
+                    ui.label(t.text("llm-filter-provider"));
                     let combo_resp = egui::ComboBox::from_id_salt("llm-audit-provider-filter")
                         .selected_text(
                             self.provider_filter
                                 .as_deref()
                                 .map(|provider| self.provider_display_name(provider))
-                                .unwrap_or("All"),
+                                .unwrap_or(&t.text("llm-filter-all")),
                         )
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.provider_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.provider_filter,
+                                    None,
+                                    t.text("llm-filter-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -437,19 +474,19 @@ impl PanelRenderer for LlmPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Start Date");
+                    ui.label(t.text("llm-filter-start-date"));
                     if render_date_picker(ui, &mut self.start_date, "llm-audit-start-date") {
                         self.page = 1;
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("End Date");
+                    ui.label(t.text("llm-filter-end-date"));
                     if render_date_picker(ui, &mut self.end_date, "llm-audit-end-date") {
                         self.page = 1;
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Page");
+                    ui.label(t.text("llm-label-page"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -459,7 +496,7 @@ impl PanelRenderer for LlmPanel {
                     {
                         need_refresh = true;
                     }
-                    ui.label("Size");
+                    ui.label(t.text("llm-label-size"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -488,12 +525,12 @@ impl PanelRenderer for LlmPanel {
                     ui.vertical_centered(|ui| {
                         ui.add_space(16.0);
                         ui.add(egui::Spinner::new());
-                        ui.label("Loading LLM audit rows...");
+                        ui.label(t.text("llm-status-loading-rows"));
                     });
                     return;
                 }
                 if self.rows.is_empty() {
-                    ui.label("No LLM audit rows found.");
+                    ui.label(t.text("llm-status-no-rows"));
                     return;
                 }
 
@@ -511,31 +548,31 @@ impl PanelRenderer for LlmPanel {
                     .sense(egui::Sense::click())
                     .header(22.0, |mut header| {
                         header.col(|ui| {
-                            if ui.button(self.sort_label()).clicked() {
+                            if ui.button(self.sort_label(&t)).clicked() {
                                 self.toggle_sort_order();
                                 self.refresh(notifications);
                             }
                         });
                         header.col(|ui| {
-                            ui.strong("Session");
+                            ui.strong(t.text("llm-col-session"));
                         });
                         header.col(|ui| {
-                            ui.strong("Provider");
+                            ui.strong(t.text("llm-col-provider"));
                         });
                         header.col(|ui| {
-                            ui.strong("Model");
+                            ui.strong(t.text("llm-col-model"));
                         });
                         header.col(|ui| {
-                            ui.strong("Wire API");
+                            ui.strong(t.text("llm-col-wire-api"));
                         });
                         header.col(|ui| {
-                            ui.strong("Turn");
+                            ui.strong(t.text("llm-col-turn"));
                         });
                         header.col(|ui| {
-                            ui.strong("Seq");
+                            ui.strong(t.text("llm-col-seq"));
                         });
                         header.col(|ui| {
-                            ui.strong("Status");
+                            ui.strong(t.text("llm-col-status"));
                         });
                     })
                     .body(|body| {
@@ -569,11 +606,17 @@ impl PanelRenderer for LlmPanel {
                                 ui.label(item.request_seq.to_string());
                             });
                             row.col(|ui| {
-                                let (icon, color, text) = llm_status_display(item.status);
+                                let (icon, color, text) = llm_status_display(item.status, &t);
                                 ui.label(
-                                    egui::RichText::new(format!("{icon} {text}"))
-                                        .color(color)
-                                        .strong(),
+                                    egui::RichText::new(t.text_args(
+                                        "llm-detail-status",
+                                        HashMap::from([
+                                            ("icon", icon.to_string()),
+                                            ("text", text.clone()),
+                                        ]),
+                                    ))
+                                    .color(color)
+                                    .strong(),
                                 );
                             });
 
@@ -590,14 +633,20 @@ impl PanelRenderer for LlmPanel {
                             }
                             response.context_menu(|ui| {
                                 if ui
-                                    .button(format!("{} View Details", regular::EYE))
+                                    .button(t.text_args(
+                                        "llm-ctx-view-details",
+                                        HashMap::from([("icon", regular::EYE.to_string())]),
+                                    ))
                                     .clicked()
                                 {
                                     open_detail = Some(item.clone());
                                     ui.close();
                                 }
                                 if ui
-                                    .button(format!("{} Copy Session Key", regular::KEY))
+                                    .button(t.text_args(
+                                        "llm-ctx-copy-session-key",
+                                        HashMap::from([("icon", regular::KEY.to_string())]),
+                                    ))
                                     .clicked()
                                 {
                                     ui.ctx().output_mut(|o| {
@@ -608,7 +657,10 @@ impl PanelRenderer for LlmPanel {
                                     ui.close();
                                 }
                                 if ui
-                                    .button(format!("{} Copy Request ID", regular::FINGERPRINT))
+                                    .button(t.text_args(
+                                        "llm-ctx-copy-request-id",
+                                        HashMap::from([("icon", regular::FINGERPRINT.to_string())]),
+                                    ))
                                     .clicked()
                                 {
                                     ui.ctx().output_mut(|o| {
@@ -629,38 +681,67 @@ impl PanelRenderer for LlmPanel {
         if let Some(summary) = self.detail_summary.clone() {
             let mut open = true;
             let provider_display_name = self.provider_display_name(&summary.provider).to_string();
-            egui::Window::new("LLM Audit Detail")
+            egui::Window::new(t.text("llm-title-detail"))
                 .id(egui::Id::new("llm-audit-detail"))
                 .open(&mut open)
                 .resizable(true)
                 .default_width(860.0)
                 .default_height(500.0)
                 .show(ui.ctx(), |ui| {
-                    ui.label(format!("Session: {}", summary.session_key));
-                    ui.label(format!(
-                        "Time: {}",
-                        format_timestamp_millis(summary.requested_at_ms)
+                    ui.label(t.text_args(
+                        "llm-detail-session",
+                        HashMap::from([("session", summary.session_key.clone())]),
                     ));
-                    ui.label(format!("Provider: {provider_display_name}"));
-                    ui.label(format!("Model: {}", summary.model));
-                    ui.label(format!("Wire API: {}", summary.wire_api));
-                    let (icon, color, text) = llm_status_display(summary.status);
+                    ui.label(t.text_args(
+                        "llm-detail-time",
+                        HashMap::from([("time", format_timestamp_millis(summary.requested_at_ms))]),
+                    ));
+                    ui.label(t.text_args(
+                        "llm-detail-provider",
+                        HashMap::from([("provider", provider_display_name.clone())]),
+                    ));
+                    ui.label(t.text_args(
+                        "llm-detail-model",
+                        HashMap::from([("model", summary.model.clone())]),
+                    ));
+                    ui.label(t.text_args(
+                        "llm-detail-wire-api",
+                        HashMap::from([("wire_api", summary.wire_api.clone())]),
+                    ));
+                    let (icon, color, text) = llm_status_display(summary.status, &t);
                     ui.label(
-                        egui::RichText::new(format!("Status: {icon} {text}"))
-                            .color(color)
-                            .strong(),
+                        egui::RichText::new(t.text_args(
+                            "llm-detail-status",
+                            HashMap::from([("icon", icon.to_string()), ("text", text.clone())]),
+                        ))
+                        .color(color)
+                        .strong(),
                     );
                     if let Some(error_code) = &summary.error_code {
-                        ui.label(format!("Error Code: {error_code}"));
+                        ui.label(t.text_args(
+                            "llm-detail-error-code",
+                            HashMap::from([("error_code", error_code.clone())]),
+                        ));
                     }
                     if let Some(error_message) = &summary.error_message {
-                        ui.label(format!("Error Message: {error_message}"));
+                        ui.label(t.text_args(
+                            "llm-detail-error-message",
+                            HashMap::from([("error_message", error_message.clone())]),
+                        ));
                     }
                     ui.separator();
 
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.detail_tab, DetailTab::Request, "Request");
-                        ui.selectable_value(&mut self.detail_tab, DetailTab::Response, "Response");
+                        ui.selectable_value(
+                            &mut self.detail_tab,
+                            DetailTab::Request,
+                            t.text("llm-tab-request"),
+                        );
+                        ui.selectable_value(
+                            &mut self.detail_tab,
+                            DetailTab::Response,
+                            t.text("llm-tab-response"),
+                        );
                     });
                     ui.separator();
 
@@ -670,7 +751,7 @@ impl PanelRenderer for LlmPanel {
                                 render_json_payload(ui, &record.request_body_json);
                             } else {
                                 ui.add(egui::Spinner::new());
-                                ui.small("Loading request payload...");
+                                ui.small(t.text("llm-detail-loading-request"));
                             }
                         }
                         DetailTab::Response => {
@@ -678,11 +759,11 @@ impl PanelRenderer for LlmPanel {
                                 if let Some(body) = &record.response_body_json {
                                     render_json_payload(ui, body);
                                 } else {
-                                    ui.monospace("<empty>");
+                                    ui.monospace(t.text("llm-detail-empty-response"));
                                 }
                             } else {
                                 ui.add(egui::Spinner::new());
-                                ui.small("Loading response payload...");
+                                ui.small(t.text("llm-detail-loading-response"));
                             }
                         }
                     }
@@ -696,10 +777,21 @@ impl PanelRenderer for LlmPanel {
     }
 }
 
-fn llm_status_display(status: LlmAuditStatus) -> (&'static str, Color32, &'static str) {
+fn llm_status_display(
+    status: LlmAuditStatus,
+    translator: &Translator,
+) -> (&'static str, Color32, String) {
     match status {
-        LlmAuditStatus::Success => ("✓", Color32::from_rgb(50, 180, 80), "success"),
-        LlmAuditStatus::Failed => ("✗", Color32::from_rgb(220, 60, 60), "failed"),
+        LlmAuditStatus::Success => (
+            "\u{2713}",
+            Color32::from_rgb(50, 180, 80),
+            translator.text("llm-status-success"),
+        ),
+        LlmAuditStatus::Failed => (
+            "\u{2717}",
+            Color32::from_rgb(220, 60, 60),
+            translator.text("llm-status-failed"),
+        ),
     }
 }
 

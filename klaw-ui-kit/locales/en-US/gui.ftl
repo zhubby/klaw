@@ -319,6 +319,286 @@ setting-sync-item-user-workspace = User Workspace
 setting-sync-item-memory = Memory
 setting-sync-item-config = Config
 
+## LLM panel
+llm-error-config-load = Failed to load config: { $error }
+llm-error-config-reload = Failed to reload config: { $error }
+llm-error-rows-load = Failed to load LLM audit rows: { $error }
+llm-error-loader-disconnected = LLM audit loader closed unexpectedly
+llm-error-detail-load = Failed to load LLM audit detail: { $error }
+llm-error-detail-loader-disconnected = LLM audit detail loader closed unexpectedly
+
+llm-btn-refresh = Refresh
+llm-label-total = Total: { $count }
+llm-status-loading = Loading...
+llm-status-loading-rows = Loading LLM audit rows...
+llm-status-no-rows = No LLM audit rows found.
+
+llm-filter-session = Session
+llm-filter-provider = Provider
+llm-filter-all = All
+llm-filter-start-date = Start Date
+llm-filter-end-date = End Date
+llm-label-page = Page
+llm-label-size = Size
+
+llm-col-session = Session
+llm-col-provider = Provider
+llm-col-model = Model
+llm-col-wire-api = Wire API
+llm-col-turn = Turn
+llm-col-seq = Seq
+llm-col-status = Status
+
+llm-ctx-view-details = { $icon } View Details
+llm-ctx-copy-session-key = { $icon } Copy Session Key
+llm-ctx-copy-request-id = { $icon } Copy Request ID
+
+llm-title-detail = LLM Audit Detail
+llm-detail-session = Session: { $session }
+llm-detail-time = Time: { $time }
+llm-detail-provider = Provider: { $provider }
+llm-detail-model = Model: { $model }
+llm-detail-wire-api = Wire API: { $wire_api }
+llm-detail-status = { $icon } { $text }
+llm-detail-error-code = Error Code: { $error_code }
+llm-detail-error-message = Error Message: { $error_message }
+
+llm-tab-request = Request
+llm-tab-response = Response
+llm-detail-loading-request = Loading request payload...
+llm-detail-loading-response = Loading response payload...
+llm-detail-empty-response = empty
+
+llm-sort-time-asc = Time ↑
+llm-sort-time-desc = Time ↓
+
+llm-status-success = success
+llm-status-failed = failed
+
+## MCP panel
+mcp-notify-config-loaded = MCP config loaded from disk
+mcp-notify-load-config-failed = Failed to load config: { $error }
+mcp-notify-store-unavailable = Configuration store is not available
+mcp-notify-save-failed = Save failed: { $error }
+mcp-notify-server-saved = MCP server saved
+mcp-notify-server-deleted = MCP server '{ $id }' deleted
+mcp-notify-config-reloaded = Configuration reloaded from disk
+mcp-notify-reload-failed = Reload failed: { $error }
+mcp-notify-status-refreshed = MCP status refreshed
+mcp-notify-status-refresh-failed = Failed to refresh MCP status: { $error }
+mcp-notify-status-refresh-disconnected = Failed to refresh MCP status: background task disconnected
+mcp-notify-sync-success = MCP runtime synchronized
+mcp-notify-sync-failed = Failed to sync MCP runtime: { $error }
+mcp-notify-sync-disconnected = Failed to sync MCP runtime: background task disconnected
+mcp-notify-server-restarted = Restarted MCP server { $target }
+mcp-notify-restart-failed = Failed to restart { $target }: { $error }
+mcp-notify-restart-already-in-progress = An MCP server restart is already in progress
+mcp-notify-settings-saved = MCP settings saved
+
+mcp-label-servers-count = Servers: { $count }
+mcp-status-applying-changes = Applying MCP changes...
+mcp-status-refreshing = Refreshing runtime status...
+mcp-status-restarting = Restarting MCP server...
+mcp-label-no-servers = No MCP servers configured.
+
+mcp-col-id = ID
+mcp-col-on = On
+mcp-col-status = Status
+mcp-col-mode = Mode
+mcp-col-command-url = Command/URL
+mcp-col-args = Args
+mcp-col-tools = Tools
+
+mcp-mode-stdio = stdio
+mcp-mode-sse = sse
+mcp-label-enabled-yes = yes
+mcp-label-enabled-no = no
+
+mcp-form-title-edit = Edit MCP Server
+mcp-form-title-add = Add MCP Server
+mcp-form-id = ID
+mcp-form-enabled = Enabled
+mcp-form-mode = Mode
+mcp-form-tool-timeout-seconds = Tool Timeout Seconds
+mcp-form-command = Command
+mcp-form-cwd = CWD
+mcp-form-url = URL
+mcp-form-args = Args
+mcp-form-env = Env
+mcp-form-headers = Headers
+mcp-btn-save = Save
+mcp-btn-cancel = Cancel
+
+mcp-error-server-id-empty = MCP server ID cannot be empty
+mcp-error-server-id-duplicate = MCP server ID '{ $id }' already exists, choose another ID
+mcp-error-tool-timeout-invalid = tool_timeout_seconds must be a positive integer
+mcp-error-startup-timeout-invalid = startup_timeout_seconds must be a positive integer
+
+mcp-btn-config = { $icon } Config
+mcp-btn-add = Add
+mcp-btn-reload = Reload
+mcp-btn-refresh-status = { $icon } Refresh Status
+mcp-btn-detail = { $icon } Detail
+mcp-btn-edit = { $icon } Edit
+mcp-btn-restart = { $icon } Restart
+mcp-btn-delete = { $icon } Delete
+
+mcp-window-global-settings = MCP Settings
+mcp-form-startup-timeout-seconds = startup_timeout_seconds:
+
+mcp-window-detail-title = MCP Detail: { $server_id }
+
+mcp-detail-heading = MCP Server Detail
+mcp-detail-server = Server: { $server_id }
+mcp-detail-state = State: { $state }
+mcp-detail-tools = Tools: { $tool_count }
+mcp-detail-last-error = Last Error: { $last_error }
+mcp-detail-tools-list-heading = tools/list response
+mcp-detail-tools-list-null = null
+mcp-detail-json-render-error = { "error" : "failed to render json: { $error }" }
+
+mcp-state-starting = starting
+mcp-state-running = running
+mcp-state-stopped = stopped
+mcp-state-failed = failed
+
+mcp-placeholder-none = -
+
+## ACP panel
+acp-panel-description = ACP lets klaw call external ACP-compatible coding agents through adapter commands.
+acp-panel-default-templates-hint = Default templates use `npx -y @zed-industries/claude-agent-acp` and `npx -y @zed-industries/codex-acp`; runtime cwd comes from `working_directory`.
+
+acp-notify-config-loaded = ACP config loaded from disk
+acp-notify-load-config-failed = Failed to load config: { $error }
+acp-notify-store-unavailable = Configuration store is not available
+acp-notify-save-failed = Save failed: { $error }
+acp-notify-config-reloaded = Configuration reloaded from disk
+acp-notify-reload-failed = Reload failed: { $error }
+acp-notify-status-refreshed = ACP status refreshed
+acp-notify-status-refresh-failed = Failed to refresh ACP status: { $error }
+acp-notify-status-refresh-disconnected = Failed to refresh ACP status: background task disconnected
+acp-notify-sync-success = ACP runtime synchronized
+acp-notify-sync-failed = Failed to sync ACP runtime: { $error }
+acp-notify-sync-disconnected = Failed to sync ACP runtime: background task disconnected
+acp-notify-server-restarted = Restarted ACP agent { $target }
+acp-notify-restart-failed = Failed to restart { $target }: { $error }
+acp-notify-server-deleted = ACP agent '{ $id }' deleted
+acp-notify-server-saved = ACP agent saved
+acp-notify-agent-started = ACP agent { $agent_id } session started
+acp-notify-agent-start-failed = Failed to start ACP agent { $agent_id }: { $error }
+acp-notify-agent-stopped = ACP agent session stopped
+acp-notify-agent-stop-failed = Failed to stop ACP agent: { $error }
+acp-notify-agent-stopped-with-error = ACP agent session stopped with error: { $error }
+acp-notify-agent-stop-disconnected = Failed to stop ACP agent: background task disconnected
+acp-notify-permission-resolved = Permission response sent for request { $request_id }
+acp-notify-permission-resolve-failed = Failed to send permission response for request { $request_id }: { $error }
+acp-notify-prompt-opened = ACP test prompt opened
+acp-notify-prompt-failed = Failed to open test prompt: { $error }
+acp-notify-settings-saved = ACP settings saved
+acp-notify-restart-already-in-progress = An ACP agent restart is already in progress
+
+acp-stats-enabled = Enabled
+acp-stats-running = Running
+acp-stats-failed = Failed
+acp-stats-tools = Tools
+
+acp-col-id = ID
+acp-col-on = On
+acp-col-status = Status
+acp-col-command = Command
+acp-col-tools = Tools
+
+acp-enabled-status-yes = yes
+acp-enabled-status-no = no
+
+acp-value-not-set = (not set)
+acp-value-unknown = (unknown)
+acp-value-none = (none)
+
+acp-button-config = { $icon } Config
+acp-button-add-agent = Add Agent
+acp-button-reload = Reload
+acp-button-sync-runtime = { $icon } Sync Runtime
+acp-button-refresh-status = { $icon } Refresh Status
+acp-button-test = { $icon } Test
+
+acp-form-title-edit = Edit ACP Agent
+acp-form-title-add = Add ACP Agent
+acp-form-config-persisted-info = ACP agent configuration is persisted to config.toml.
+acp-form-label-id = ID
+acp-form-label-enabled = Enabled
+acp-form-label-command = Command
+acp-form-working-directory-info = Runtime working directory comes from the tool/test prompt `working_directory` input.
+acp-form-label-description = Description
+acp-form-button-save = Save
+acp-form-button-cancel = Cancel
+
+acp-settings-window-title = ACP Settings
+acp-settings-description = ACP calls external ACP-compatible coding agents over stdio.
+acp-settings-startup-timeout-label = startup_timeout_seconds:
+acp-settings-button-save = Save
+acp-settings-button-cancel = Cancel
+acp-settings-startup-timeout-invalid = startup_timeout_seconds must be a positive integer
+
+acp-delete-dialog-title = Delete ACP Agent
+acp-delete-dialog-message = Are you sure you want to delete ACP agent '{ $agent_id }'?
+acp-delete-dialog-info = This removes the ACP agent from config.toml.
+acp-delete-dialog-button-delete = { $icon } Delete
+acp-delete-dialog-button-cancel = Cancel
+
+acp-detail-window-title = ACP Detail: { $agent_id }
+acp-detail-label-id = ID
+acp-detail-label-enabled = Enabled
+acp-detail-label-tool-name = Tool Name
+acp-detail-label-command = Command
+acp-detail-label-env-vars = Env Vars
+acp-detail-label-description = Description
+acp-detail-label-last-error = Last Error
+acp-detail-latest-prompt-snapshot = Latest Prompt Snapshot
+acp-detail-snapshot-mode = mode: { $mode }
+acp-detail-snapshot-title = title: { $title }
+acp-detail-snapshot-updated-at = updated_at: { $updated_at }
+acp-detail-snapshot-available-commands = available commands: { $commands }
+acp-detail-snapshot-config-options = config options: { $options }
+
+acp-test-prompt-title = ACP Test Prompt
+acp-test-prompt-working-directory-info = working_directory: { $working_directory }
+acp-test-prompt-input-hint = Type a message and press Enter to send to the ACP agent.
+acp-test-prompt-input-placeholder = Type a message...
+acp-test-prompt-stop-button = { $icon } Stop
+acp-test-prompt-output-section = Output
+acp-test-prompt-last-error = Last Error
+acp-test-prompt-session-snapshot = Session Snapshot
+acp-test-prompt-snapshot-title = Title
+acp-test-prompt-snapshot-mode = Mode
+acp-test-prompt-snapshot-updated-at = Updated At
+acp-test-prompt-snapshot-commands = Commands
+acp-test-prompt-config-options = Config Options
+acp-test-prompt-pending-permissions = Pending Permissions
+acp-test-prompt-permission-timeline = Permission Timeline
+acp-test-prompt-structured-events = Structured Events
+acp-test-prompt-raw-stream = Raw Stream
+acp-waiting-for-session-updates = Waiting for ACP session updates...
+
+acp-permission-label = #{ $request_id } { $title }
+acp-permission-sending-response = sending response...
+acp-permission-tool-kind = tool kind: { $kind }
+acp-permission-tool-status = tool status: { $status }
+acp-permission-raw-input = raw input: { $raw_input }
+acp-permission-option-button = { $label } ({ $kind })
+acp-permission-cancel = Cancel
+
+acp-content-block-image-with-uri = [image { $mime_type } { $data_len } bytes { $uri }]
+acp-content-block-image = [image { $mime_type } { $data_len } bytes]
+acp-content-block-audio = [audio { $mime_type } { $data_len } bytes]
+acp-content-block-resource-with-title = [resource { $name } { $title } { $uri }]
+acp-content-block-resource = [resource { $name } { $uri }]
+acp-content-block-embedded-text-with-mime = [embedded text { $uri } { $mime_type }] { $text }
+acp-content-block-embedded-text = [embedded text { $uri }] { $text }
+acp-content-block-embedded-blob-with-mime = [embedded blob { $uri } { $mime_type } { $byte_len } bytes]
+acp-content-block-embedded-blob = [embedded blob { $uri } { $byte_len } bytes]
+acp-content-block-unsupported = [unsupported content { $description }]
+
 ## System panel
 system-view-host-information = Host Information
 system-view-program-disk-usage = Program Disk Usage
