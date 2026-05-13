@@ -242,143 +242,140 @@ impl ProfilePanel {
         let mut edit_target = None;
         let mut preview_target = None;
         let t = Self::translator();
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_min_height(ui.available_height());
-            ui.set_max_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.strong(t.text("profile-workspace-markdown-files"));
-                ui.label(format!("({})", self.docs.len()));
-            });
-            ui.add_space(6.0);
+        ui.set_min_height(ui.available_height());
+        ui.horizontal(|ui| {
+            ui.strong(t.text("profile-workspace-markdown-files"));
+            ui.label(format!("({})", self.docs.len()));
+        });
+        ui.add_space(6.0);
 
-            if self.docs.is_empty() {
-                ui.label(t.text("profile-no-markdown-files"));
-                return;
-            }
+        if self.docs.is_empty() {
+            ui.label(t.text("profile-no-markdown-files"));
+            return;
+        }
 
-            let available_height = ui.available_height();
-            TableBuilder::new(ui)
-                .striped(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::auto().at_least(140.0))
-                .column(Column::remainder().at_least(220.0))
-                .column(Column::auto().at_least(90.0))
-                .column(Column::auto().at_least(110.0))
-                .column(Column::remainder().at_least(260.0))
-                .min_scrolled_height(0.0)
-                .max_scroll_height(available_height)
-                .sense(egui::Sense::click())
-                .header(22.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong(t.text("profile-name"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(t.text("profile-summary"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(t.text("profile-size"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(t.text("profile-modified"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(t.text("profile-path"));
-                    });
-                })
-                .body(|body| {
-                    body.rows(22.0, self.docs.len(), |mut row| {
-                        let idx = row.index();
-                        let doc = &self.docs[idx];
-                        let is_selected = self.selected_doc.as_deref() == Some(&doc.file_name);
-                        row.set_selected(is_selected);
+        let available_height = ui.available_height();
+        TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto().at_least(140.0))
+            .column(Column::remainder().at_least(220.0))
+            .column(Column::auto().at_least(90.0))
+            .column(Column::auto().at_least(110.0))
+            .column(Column::remainder().at_least(260.0))
+            .min_scrolled_height(0.0)
+            .max_scroll_height(available_height)
+            .sense(egui::Sense::click())
+            .header(22.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong(t.text("profile-name"));
+                });
+                header.col(|ui| {
+                    ui.strong(t.text("profile-summary"));
+                });
+                header.col(|ui| {
+                    ui.strong(t.text("profile-size"));
+                });
+                header.col(|ui| {
+                    ui.strong(t.text("profile-modified"));
+                });
+                header.col(|ui| {
+                    ui.strong(t.text("profile-path"));
+                });
+            })
+            .body(|body| {
+                body.rows(22.0, self.docs.len(), |mut row| {
+                    let idx = row.index();
+                    let doc = &self.docs[idx];
+                    let is_selected = self.selected_doc.as_deref() == Some(&doc.file_name);
+                    row.set_selected(is_selected);
 
-                        row.col(|ui| {
-                            ui.label(&doc.file_name);
-                        });
-                        row.col(|ui| {
-                            ui.label(&doc.summary);
-                        });
-                        row.col(|ui| {
-                            ui.label(format_bytes(doc.size_bytes));
-                        });
-                        row.col(|ui| {
-                            ui.label(&doc.modified_label);
-                        });
-                        row.col(|ui| {
-                            ui.label(doc.path.display().to_string());
-                        });
+                    row.col(|ui| {
+                        ui.label(&doc.file_name);
+                    });
+                    row.col(|ui| {
+                        ui.label(&doc.summary);
+                    });
+                    row.col(|ui| {
+                        ui.label(format_bytes(doc.size_bytes));
+                    });
+                    row.col(|ui| {
+                        ui.label(&doc.modified_label);
+                    });
+                    row.col(|ui| {
+                        ui.label(doc.path.display().to_string());
+                    });
 
-                        let response = row.response();
-                        let interaction = handle_workspace_doc_row_interaction(
-                            is_selected,
-                            doc.file_name.clone(),
-                            response.clicked(),
-                            response.double_clicked(),
-                        );
-                        self.selected_doc = interaction.selected_doc;
-                        if interaction.open_preview {
-                            preview_target = Some(doc.clone());
+                    let response = row.response();
+                    let interaction = handle_workspace_doc_row_interaction(
+                        is_selected,
+                        doc.file_name.clone(),
+                        response.clicked(),
+                        response.double_clicked(),
+                    );
+                    self.selected_doc = interaction.selected_doc;
+                    if interaction.open_preview {
+                        preview_target = Some(doc.clone());
+                    }
+
+                    let doc_clone = doc.clone();
+                    let has_default_template =
+                        klaw_core::get_default_template_content(&doc.file_name).is_some();
+                    response.context_menu(|ui| {
+                        if ui
+                            .button(format!("{} {}", regular::EYE, t.text("profile-preview")))
+                            .clicked()
+                        {
+                            preview_target = Some(doc_clone.clone());
+                            ui.close();
                         }
-
-                        let doc_clone = doc.clone();
-                        let has_default_template =
-                            klaw_core::get_default_template_content(&doc.file_name).is_some();
-                        response.context_menu(|ui| {
-                            if ui
-                                .button(format!("{} {}", regular::EYE, t.text("profile-preview")))
-                                .clicked()
-                            {
-                                preview_target = Some(doc_clone.clone());
-                                ui.close();
-                            }
-                            if ui
-                                .button(format!(
-                                    "{} {}",
-                                    regular::PENCIL_SIMPLE,
-                                    t.text("profile-edit")
-                                ))
-                                .clicked()
-                            {
-                                edit_target = Some(doc_clone.clone());
-                                ui.close();
-                            }
-                            if has_default_template
-                                && ui
-                                    .add(egui::Button::new(
-                                        RichText::new(format!(
-                                            "{} {}",
-                                            regular::ARROW_COUNTER_CLOCKWISE,
-                                            t.text("profile-reset")
-                                        ))
-                                        .color(RESET_BUTTON_COLOR),
-                                    ))
-                                    .clicked()
-                            {
-                                self.pending_default_confirm = Some(PendingDefaultReset {
-                                    file_name: doc_clone.file_name.clone(),
-                                    target: DefaultResetTarget::File(doc_clone.path.clone()),
-                                });
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui
+                        if ui
+                            .button(format!(
+                                "{} {}",
+                                regular::PENCIL_SIMPLE,
+                                t.text("profile-edit")
+                            ))
+                            .clicked()
+                        {
+                            edit_target = Some(doc_clone.clone());
+                            ui.close();
+                        }
+                        if has_default_template
+                            && ui
                                 .add(egui::Button::new(
                                     RichText::new(format!(
                                         "{} {}",
-                                        regular::TRASH,
-                                        t.text("profile-delete")
+                                        regular::ARROW_COUNTER_CLOCKWISE,
+                                        t.text("profile-reset")
                                     ))
-                                    .color(egui::Color32::RED),
+                                    .color(RESET_BUTTON_COLOR),
                                 ))
                                 .clicked()
-                            {
-                                self.pending_delete_doc = Some(doc_clone.clone());
-                                ui.close();
-                            }
-                        });
+                        {
+                            self.pending_default_confirm = Some(PendingDefaultReset {
+                                file_name: doc_clone.file_name.clone(),
+                                target: DefaultResetTarget::File(doc_clone.path.clone()),
+                            });
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui
+                            .add(egui::Button::new(
+                                RichText::new(format!(
+                                    "{} {}",
+                                    regular::TRASH,
+                                    t.text("profile-delete")
+                                ))
+                                .color(egui::Color32::RED),
+                            ))
+                            .clicked()
+                        {
+                            self.pending_delete_doc = Some(doc_clone.clone());
+                            ui.close();
+                        }
                     });
                 });
-        });
+            });
 
         if let Some(doc) = edit_target {
             self.open_editor(&doc, notifications);
@@ -390,31 +387,28 @@ impl ProfilePanel {
 
     fn render_system_prompt_preview(&mut self, ui: &mut egui::Ui) {
         let t = Self::translator();
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_min_height(ui.available_height());
-            ui.set_max_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.strong(t.text("profile-system-prompt-preview"));
-                if self.system_prompt_preview_loading {
-                    ui.add(egui::Spinner::new());
-                    ui.small(t.text("profile-loading"));
-                }
-            });
-            ui.small(t.text("profile-system-prompt-desc"));
-            ui.add_space(6.0);
-
-            egui::ScrollArea::vertical()
-                .id_salt("system-prompt-preview-scroll")
-                .max_height(ui.available_height())
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    markdown::render(
-                        ui,
-                        &mut self.system_prompt_preview_cache,
-                        &self.system_prompt_preview,
-                    );
-                });
+        ui.set_min_height(ui.available_height());
+        ui.horizontal(|ui| {
+            ui.strong(t.text("profile-system-prompt-preview"));
+            if self.system_prompt_preview_loading {
+                ui.add(egui::Spinner::new());
+                ui.small(t.text("profile-loading"));
+            }
         });
+        ui.small(t.text("profile-system-prompt-desc"));
+        ui.add_space(6.0);
+
+        egui::ScrollArea::vertical()
+            .id_salt("system-prompt-preview-scroll")
+            .max_height(ui.available_height())
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                markdown::render(
+                    ui,
+                    &mut self.system_prompt_preview_cache,
+                    &self.system_prompt_preview,
+                );
+            });
     }
 
     fn render_editor_window(
@@ -966,13 +960,20 @@ impl PanelRenderer for ProfilePanel {
         });
         ui.separator();
         let docs_height = Self::docs_section_height(ui.available_height());
-        StripBuilder::new(ui)
-            .size(Size::exact(docs_height))
-            .size(Size::remainder().at_least(SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT))
-            .vertical(|mut strip| {
-                strip.cell(|ui| self.render_docs_section(ui, notifications));
-                strip.cell(|ui| self.render_system_prompt_preview(ui));
-            });
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_height(ui.available_height());
+            StripBuilder::new(ui)
+                .size(Size::exact(docs_height))
+                .size(Size::exact(1.0)) // separator
+                .size(Size::remainder().at_least(SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT))
+                .vertical(|mut strip| {
+                    strip.cell(|ui| self.render_docs_section(ui, notifications));
+                    strip.cell(|ui| {
+                        ui.separator();
+                    });
+                    strip.cell(|ui| self.render_system_prompt_preview(ui));
+                });
+        });
 
         self.render_editor_window(ui.ctx(), notifications);
         self.render_default_confirm_dialog(ui.ctx(), notifications);
