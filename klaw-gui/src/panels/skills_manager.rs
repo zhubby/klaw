@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::markdown;
 use egui::{Color32, RichText};
@@ -12,6 +13,8 @@ use klaw_skill::{
     FileSystemSkillStore, RegistrySkillSummary, SkillRecord, SkillSourceKind, SkillSummary,
     SkillUninstallResult, SkillsManager, open_default_skills_manager,
 };
+use klaw_ui_kit::{LocaleDomain, Translator};
+use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -60,9 +63,16 @@ impl Default for SkillsManagerPanel {
 }
 
 impl SkillsManagerPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn request_runtime_skills_reload(notifications: &mut NotificationCenter) {
         if let Err(err) = runtime_bridge::request_reload_skills_prompt() {
-            notifications.warning(format!("Runtime skills prompt reload not sent: {err}"));
+            notifications.warning(Self::translator().text_args(
+                "skills-mgr-notify-reload-not-sent",
+                HashMap::from([("error", err.to_string())]),
+            ));
         }
     }
 
@@ -76,7 +86,10 @@ impl SkillsManagerPanel {
                 self.config_store = Some(store);
                 self.apply_snapshot(snapshot);
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "skills-mgr-notify-load-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -103,7 +116,10 @@ impl SkillsManagerPanel {
                 true
             }
             Err(err) => {
-                notifications.error(format!("Failed to reload config: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "skills-mgr-notify-reload-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 false
             }
         }
@@ -119,7 +135,10 @@ impl SkillsManagerPanel {
             match store.reload() {
                 Ok(snapshot) => snapshot,
                 Err(err) => {
-                    notifications.error(format!("Failed to reload config: {err}"));
+                    notifications.error(Self::translator().text_args(
+                        "skills-mgr-notify-reload-failed",
+                        HashMap::from([("error", err.to_string())]),
+                    ));
                     return;
                 }
             }
@@ -141,7 +160,10 @@ impl SkillsManagerPanel {
                     self.detail_window_open = false;
                 }
             }
-            Err(err) => notifications.error(format!("Failed to load installed skills: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "skills-mgr-notify-load-skills-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -155,7 +177,13 @@ impl SkillsManagerPanel {
             Err(err) => {
                 self.detail_record = None;
                 self.detail_window_open = false;
-                notifications.error(format!("Failed to load skill `{skill_name}`: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "skills-mgr-notify-load-detail-failed",
+                    HashMap::from([
+                        ("skill_name", skill_name.to_string()),
+                        ("error", err.to_string()),
+                    ]),
+                ));
             }
         }
     }
@@ -164,7 +192,7 @@ impl SkillsManagerPanel {
         let _ = self.reload_config_snapshot(notifications);
 
         if self.config.skills.registries.is_empty() {
-            notifications.warning("No skills registry configured");
+            notifications.warning(Self::translator().text("skills-mgr-notify-no-registry"));
             return;
         }
 
@@ -199,21 +227,27 @@ impl SkillsManagerPanel {
             Ok(result) => {
                 self.load_items(notifications, false);
                 Self::request_runtime_skills_reload(notifications);
-                notifications.success(format!(
-                    "Installed local skill `{}` from {} to {}",
-                    result.skill_name,
-                    result.source_dir.display(),
-                    result.target_dir.display()
+                notifications.success(Self::translator().text_args(
+                    "skills-mgr-notify-local-install-success",
+                    HashMap::from([
+                        ("skill_name", result.skill_name.clone()),
+                        ("source_dir", result.source_dir.display().to_string()),
+                        ("target_dir", result.target_dir.display().to_string()),
+                    ]),
                 ));
             }
-            Err(err) => notifications.error(format!("Failed to install local skill: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "skills-mgr-notify-local-install-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn reload_install_window_catalog(&self, window: &mut InstallSkillWindow) {
         if window.selected_registry.is_empty() {
             window.skills.clear();
-            window.error = Some("Select a registry first".to_string());
+            window.error =
+                Some(Self::translator().text("skills-mgr-install-select-registry-error"));
             return;
         }
 
@@ -255,14 +289,18 @@ impl SkillsManagerPanel {
                 changed
             }
             Err(err) => {
-                notifications.error(format!(
-                    "Failed to save installed skill `{skill_id}` to config: {err}"
+                notifications.error(Self::translator().text_args(
+                    "skills-mgr-notify-install-config-save-failed",
+                    HashMap::from([("skill_id", skill_id.clone()), ("error", err.to_string())]),
                 ));
                 return;
             }
         };
         if !changed {
-            notifications.info(format!("`{skill_id}` is already installed"));
+            notifications.info(Self::translator().text_args(
+                "skills-mgr-notify-already-installed",
+                HashMap::from([("skill_id", skill_id.clone())]),
+            ));
             return;
         }
 
@@ -274,14 +312,19 @@ impl SkillsManagerPanel {
                     self.install_window = Some(window);
                 }
                 Self::request_runtime_skills_reload(notifications);
-                notifications.success(format!(
-                    "Installed `{skill_id}` from registry `{registry_name}`"
+                notifications.success(Self::translator().text_args(
+                    "skills-mgr-notify-install-success",
+                    HashMap::from([
+                        ("skill_id", skill_id.clone()),
+                        ("registry_name", registry_name.clone()),
+                    ]),
                 ));
             }
             Err(err) => {
                 Self::request_runtime_skills_reload(notifications);
-                notifications.warning(format!(
-                    "Saved `{skill_id}` in config, but install did not complete immediately: {err}"
+                notifications.warning(Self::translator().text_args(
+                    "skills-mgr-notify-install-partial",
+                    HashMap::from([("skill_id", skill_id.clone()), ("error", err.to_string())]),
                 ));
             }
         }
@@ -313,14 +356,18 @@ impl SkillsManagerPanel {
                 changed
             }
             Err(err) => {
-                notifications.error(format!(
-                    "Failed to update config while uninstalling `{skill_id}`: {err}"
+                notifications.error(Self::translator().text_args(
+                    "skills-mgr-notify-uninstall-config-update-failed",
+                    HashMap::from([("skill_id", skill_id.clone()), ("error", err.to_string())]),
                 ));
                 return;
             }
         };
         if !changed {
-            notifications.info(format!("`{skill_id}` is not installed"));
+            notifications.info(Self::translator().text_args(
+                "skills-mgr-notify-not-installed",
+                HashMap::from([("skill_id", skill_id.clone())]),
+            ));
             return;
         }
 
@@ -337,14 +384,19 @@ impl SkillsManagerPanel {
                     self.install_window = Some(window);
                 }
                 Self::request_runtime_skills_reload(notifications);
-                notifications.success(format!(
-                    "Uninstalled `{skill_id}` from registry `{registry_name}`"
+                notifications.success(Self::translator().text_args(
+                    "skills-mgr-notify-uninstall-success",
+                    HashMap::from([
+                        ("skill_id", skill_id.clone()),
+                        ("registry_name", registry_name.clone()),
+                    ]),
                 ));
             }
             Err(err) => {
                 Self::request_runtime_skills_reload(notifications);
-                notifications.warning(format!(
-                    "Removed `{skill_id}` from config, but registry uninstall did not complete immediately: {err}"
+                notifications.warning(Self::translator().text_args(
+                    "skills-mgr-notify-uninstall-partial",
+                    HashMap::from([("skill_id", skill_id.clone()), ("error", err.to_string())]),
                 ));
             }
         }
@@ -377,8 +429,12 @@ impl SkillsManagerPanel {
                     config_updated = changed;
                 }
                 Err(err) => {
-                    notifications.error(format!(
-                        "Failed to remove `{skill_name}` from registry config: {err}"
+                    notifications.error(Self::translator().text_args(
+                        "skills-mgr-notify-remove-config-failed",
+                        HashMap::from([
+                            ("skill_name", skill_name.to_string()),
+                            ("error", err.to_string()),
+                        ]),
                     ));
                     return;
                 }
@@ -399,11 +455,21 @@ impl SkillsManagerPanel {
             Err(err) => {
                 self.load_items(notifications, false);
                 if config_updated {
-                    notifications.warning(format!(
-                        "Removed `{skill_name}` from config, but local cleanup failed: {err}"
+                    notifications.warning(Self::translator().text_args(
+                        "skills-mgr-notify-uninstall-local-cleanup-failed",
+                        HashMap::from([
+                            ("skill_name", skill_name.to_string()),
+                            ("error", err.to_string()),
+                        ]),
                     ));
                 } else {
-                    notifications.error(format!("Failed to uninstall `{skill_name}`: {err}"));
+                    notifications.error(Self::translator().text_args(
+                        "skills-mgr-notify-uninstall-failed",
+                        HashMap::from([
+                            ("skill_name", skill_name.to_string()),
+                            ("error", err.to_string()),
+                        ]),
+                    ));
                 }
             }
         }
@@ -447,22 +513,30 @@ impl SkillsManagerPanel {
         (config, true)
     }
 
-    fn source_label(summary: &SkillSummary) -> &'static str {
+    fn source_label(summary: &SkillSummary) -> String {
         match summary.source_kind {
-            SkillSourceKind::Local => "local",
-            SkillSourceKind::Registry => "registry",
+            SkillSourceKind::Local => Self::translator().text("skills-mgr-source-local"),
+            SkillSourceKind::Registry => Self::translator().text("skills-mgr-source-registry"),
         }
     }
 
-    fn stale_display(summary: &SkillSummary) -> (&'static str, Color32, &'static str) {
+    fn stale_display(summary: &SkillSummary) -> (&'static str, Color32, String) {
         match summary.stale {
-            Some(true) => (regular::WARNING, Color32::from_rgb(200, 150, 50), "stale"),
+            Some(true) => (
+                regular::WARNING,
+                Color32::from_rgb(200, 150, 50),
+                Self::translator().text("skills-mgr-state-stale"),
+            ),
             Some(false) => (
                 regular::CHECK_CIRCLE,
                 Color32::from_rgb(50, 180, 80),
-                "fresh",
+                Self::translator().text("skills-mgr-state-fresh"),
             ),
-            None => (regular::MINUS, Color32::from_rgb(140, 140, 140), "-"),
+            None => (
+                regular::MINUS,
+                Color32::from_rgb(140, 140, 140),
+                Self::translator().text("skills-mgr-state-none"),
+            ),
         }
     }
 
@@ -486,59 +560,78 @@ impl SkillsManagerPanel {
         let window_max_height = (viewport_height - 96.0).clamp(360.0, 680.0);
         let markdown_height = (window_max_height - 180.0).clamp(180.0, 360.0);
 
+        let t = Self::translator();
         let mut open = self.detail_window_open;
-        egui::Window::new(format!("Skill Detail: {}", record.name))
-            .open(&mut open)
-            .resizable(true)
-            .default_width(820.0)
-            .default_height(window_max_height.min(540.0))
-            .max_height(window_max_height)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(format!("Name: {}", record.name));
-                    ui.label(format!(
-                        "Source: {}",
+        egui::Window::new(t.text_args(
+            "skills-mgr-detail-title",
+            HashMap::from([("name", record.name.clone())]),
+        ))
+        .open(&mut open)
+        .resizable(true)
+        .default_width(820.0)
+        .default_height(window_max_height.min(540.0))
+        .max_height(window_max_height)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(t.text_args(
+                    "skills-mgr-detail-name",
+                    HashMap::from([("name", record.name.clone())]),
+                ));
+                ui.label(t.text_args(
+                    "skills-mgr-detail-source",
+                    HashMap::from([(
+                        "source",
                         match record.source_kind {
-                            SkillSourceKind::Local => "local",
-                            SkillSourceKind::Registry => "registry",
-                        }
-                    ));
-                    ui.label(format!(
-                        "Registry: {}",
-                        record.registry.as_deref().unwrap_or("-")
-                    ));
-                    let (icon, color, text) = skill_stale_display(record.stale);
-                    ui.label(
-                        RichText::new(format!("State: {icon} {text}"))
-                            .color(color)
-                            .strong(),
+                            SkillSourceKind::Local => t.text("skills-mgr-source-local"),
+                            SkillSourceKind::Registry => t.text("skills-mgr-source-registry"),
+                        },
+                    )]),
+                ));
+                ui.label(t.text_args(
+                    "skills-mgr-detail-registry",
+                    HashMap::from([(
+                        "registry",
+                        record.registry.as_deref().unwrap_or("-").to_string(),
+                    )]),
+                ));
+                let (icon, color, text) = skill_stale_display(record.stale);
+                ui.label(
+                    RichText::new(t.text_args(
+                        "skills-mgr-detail-state",
+                        HashMap::from([("icon", icon.to_string()), ("state", text.to_string())]),
+                    ))
+                    .color(color)
+                    .strong(),
+                );
+            });
+            ui.label(t.text_args(
+                "skills-mgr-detail-path",
+                HashMap::from([("path", record.local_path.display().to_string())]),
+            ));
+            ui.label(t.text_args(
+                "skills-mgr-detail-updated",
+                HashMap::from([("time", format_timestamp_millis(record.updated_at_ms))]),
+            ));
+            ui.separator();
+
+            let mut content = record.content.clone();
+            let mut layouter = markdown::text_layouter;
+            egui::ScrollArea::vertical()
+                .id_salt(("skill-detail-markdown", &record.name))
+                .max_height(markdown_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_sized(
+                        [ui.available_width(), markdown_height],
+                        egui::TextEdit::multiline(&mut content)
+                            .desired_width(f32::INFINITY)
+                            .font(egui::TextStyle::Monospace)
+                            .interactive(false)
+                            .code_editor()
+                            .layouter(&mut layouter),
                     );
                 });
-                ui.label(format!("Path: {}", record.local_path.display()));
-                ui.label(format!(
-                    "Updated: {}",
-                    format_timestamp_millis(record.updated_at_ms)
-                ));
-                ui.separator();
-
-                let mut content = record.content.clone();
-                let mut layouter = markdown::text_layouter;
-                egui::ScrollArea::vertical()
-                    .id_salt(("skill-detail-markdown", &record.name))
-                    .max_height(markdown_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add_sized(
-                            [ui.available_width(), markdown_height],
-                            egui::TextEdit::multiline(&mut content)
-                                .desired_width(f32::INFINITY)
-                                .font(egui::TextStyle::Monospace)
-                                .interactive(false)
-                                .code_editor()
-                                .layouter(&mut layouter),
-                        );
-                    });
-            });
+        });
         self.detail_window_open = open;
         if !self.detail_window_open {
             self.detail_name = None;
@@ -554,6 +647,8 @@ impl SkillsManagerPanel {
         let Some(window) = self.install_window.as_mut() else {
             return;
         };
+
+        let t = Self::translator();
 
         let mut open = true;
         let mut selected_registry = window.selected_registry.clone();
@@ -573,7 +668,7 @@ impl SkillsManagerPanel {
             .map(|registry| registry.installed.clone())
             .unwrap_or_default();
 
-        egui::Window::new("Install Skill")
+        egui::Window::new(t.text("skills-mgr-install-title"))
             .open(&mut open)
             .resizable(true)
             .default_width(900.0)
@@ -581,12 +676,12 @@ impl SkillsManagerPanel {
             .max_width(960.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Registry");
+                    ui.label(t.text("skills-mgr-install-registry"));
                     egui::ComboBox::from_id_salt("skill-install-registry")
                         .selected_text(if selected_registry.is_empty() {
-                            "(select registry)"
+                            t.text("skills-mgr-install-select-registry")
                         } else {
-                            selected_registry.as_str()
+                            selected_registry.clone()
                         })
                         .show_ui(ui, |ui| {
                             for name in &registry_names {
@@ -614,10 +709,10 @@ impl SkillsManagerPanel {
                             .striped(true)
                             .min_col_width(120.0)
                             .show(ui, |ui| {
-                                ui.strong("Action");
-                                ui.strong("Skill");
-                                ui.strong("ID");
-                                ui.strong("Path");
+                                ui.strong(t.text("skills-mgr-install-col-action"));
+                                ui.strong(t.text("skills-mgr-install-col-skill"));
+                                ui.strong(t.text("skills-mgr-install-col-id"));
+                                ui.strong(t.text("skills-mgr-install-col-path"));
                                 ui.end_row();
 
                                 for skill in &window.skills {
@@ -627,7 +722,11 @@ impl SkillsManagerPanel {
                                         .iter()
                                         .any(|name| name == &skill_selector || name == &skill.name);
                                     if ui
-                                        .button(if installed { "Uninstall" } else { "Install" })
+                                        .button(if installed {
+                                            t.text("skills-mgr-install-btn-uninstall")
+                                        } else {
+                                            t.text("skills-mgr-install-btn-install")
+                                        })
                                         .clicked()
                                     {
                                         toggle_action = Some((
@@ -686,31 +785,42 @@ impl SkillsManagerPanel {
             return;
         };
 
+        let t = Self::translator();
+
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new("Confirm Remove")
+        egui::Window::new(t.text("skills-mgr-delete-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .resizable(false)
             .collapsible(false)
             .default_width(320.0)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "Are you sure you want to remove skill `{}`?",
-                    skill_name
+                ui.label(t.text_args(
+                    "skills-mgr-delete-message",
+                    HashMap::from([("name", skill_name.clone())]),
                 ));
                 if let Some(reg) = registry.as_ref() {
-                    ui.label(format!("Registry: {}", reg));
+                    ui.label(t.text_args(
+                        "skills-mgr-delete-registry",
+                        HashMap::from([("registry", reg.clone())]),
+                    ));
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .button(RichText::new("Remove").color(ui.visuals().warn_fg_color))
+                        .button(
+                            RichText::new(t.text_args(
+                                "skills-mgr-delete-btn-remove",
+                                HashMap::from([("icon", regular::TRASH.to_string())]),
+                            ))
+                            .color(ui.visuals().warn_fg_color),
+                        )
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("skills-mgr-delete-cancel")).clicked() {
                         cancelled = true;
                     }
                 });
@@ -737,30 +847,54 @@ impl PanelRenderer for SkillsManagerPanel {
         self.local_install_dialog.update(ui.ctx());
         self.handle_local_install_selection(notifications);
 
+        let t = Self::translator();
+
         ui.heading(ctx.tab_title);
+        ui.label(t.text("skills-mgr-subtitle"));
         ui.horizontal(|ui| {
-            ui.label(format!("Installed: {}", self.items.len()));
-            ui.label(format!(
-                "Registries: {}",
-                self.config.skills.registries.len()
+            ui.label(t.text_args(
+                "skills-mgr-label-installed-count",
+                HashMap::from([("count", self.items.len().to_string())]),
+            ));
+            ui.label(t.text_args(
+                "skills-mgr-label-registries-count",
+                HashMap::from([("count", self.config.skills.registries.len().to_string())]),
             ));
         });
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(t.text_args(
+                    "skills-mgr-btn-refresh",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.load_items(notifications, true);
             }
-            if ui.button("Install").clicked() {
+            if ui
+                .button(t.text_args(
+                    "skills-mgr-btn-install",
+                    HashMap::from([("icon", regular::DOWNLOAD_SIMPLE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_install_window(notifications);
             }
-            if ui.button("Install Local").clicked() {
+            if ui
+                .button(t.text_args(
+                    "skills-mgr-btn-install-local",
+                    HashMap::from([("icon", regular::FOLDER_OPEN.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_local_install_dialog();
             }
         });
         ui.separator();
 
         if self.items.is_empty() {
-            ui.label("No installed skills found.");
+            ui.label(t.text("skills-mgr-no-skills"));
         } else {
             let mut view_skill: Option<String> = None;
 
@@ -779,22 +913,22 @@ impl PanelRenderer for SkillsManagerPanel {
                 .sense(egui::Sense::click())
                 .header(20.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("Name");
+                        ui.strong(t.text("skills-mgr-col-name"));
                     });
                     header.col(|ui| {
-                        ui.strong("Source");
+                        ui.strong(t.text("skills-mgr-col-source"));
                     });
                     header.col(|ui| {
-                        ui.strong("Registry");
+                        ui.strong(t.text("skills-mgr-col-registry"));
                     });
                     header.col(|ui| {
-                        ui.strong("State");
+                        ui.strong(t.text("skills-mgr-col-state"));
                     });
                     header.col(|ui| {
-                        ui.strong("Updated");
+                        ui.strong(t.text("skills-mgr-col-updated"));
                     });
                     header.col(|ui| {
-                        ui.strong("Path");
+                        ui.strong(t.text("skills-mgr-col-path"));
                     });
                 })
                 .body(|body| {
@@ -842,14 +976,23 @@ impl PanelRenderer for SkillsManagerPanel {
                         let skill_name = item.name.clone();
                         let skill_registry = item.registry.clone();
                         response.context_menu(|ui| {
-                            if ui.button(format!("{} View", regular::EYE)).clicked() {
+                            if ui
+                                .button(t.text_args(
+                                    "skills-mgr-menu-view",
+                                    HashMap::from([("icon", regular::EYE.to_string())]),
+                                ))
+                                .clicked()
+                            {
                                 view_skill = Some(skill_name.clone());
                                 ui.close();
                             }
                             if ui
                                 .button(
-                                    RichText::new(format!("{} Remove", regular::TRASH))
-                                        .color(ui.visuals().warn_fg_color),
+                                    RichText::new(t.text_args(
+                                        "skills-mgr-menu-remove",
+                                        HashMap::from([("icon", regular::TRASH.to_string())]),
+                                    ))
+                                    .color(ui.visuals().warn_fg_color),
                                 )
                                 .clicked()
                             {
@@ -857,7 +1000,13 @@ impl PanelRenderer for SkillsManagerPanel {
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button(format!("{} Copy Name", regular::COPY)).clicked() {
+                            if ui
+                                .button(t.text_args(
+                                    "skills-mgr-menu-copy-name",
+                                    HashMap::from([("icon", regular::COPY.to_string())]),
+                                ))
+                                .clicked()
+                            {
                                 ui.ctx().output_mut(|o| {
                                     o.commands
                                         .push(egui::OutputCommand::CopyText(item.name.clone()));
@@ -941,13 +1090,27 @@ fn format_uninstall_result(
     registry: Option<&str>,
     result: &SkillUninstallResult,
 ) -> String {
+    let t = Translator::new(LocaleDomain::Gui, current_ui_language());
     let scope = match registry {
-        Some(registry_name) => format!("registry skill `{skill_name}` from `{registry_name}`"),
-        None => format!("local skill `{skill_name}`"),
+        Some(registry_name) => t.text_args(
+            "skills-mgr-notify-uninstall-scope-registry",
+            HashMap::from([
+                ("skill_name", skill_name.to_string()),
+                ("registry_name", registry_name.to_string()),
+            ]),
+        ),
+        None => t.text_args(
+            "skills-mgr-notify-uninstall-scope-local",
+            HashMap::from([("skill_name", skill_name.to_string())]),
+        ),
     };
-    format!(
-        "Removed {} (managed index: {}, local files: {})",
-        scope, result.removed_managed, result.removed_local
+    t.text_args(
+        "skills-mgr-notify-uninstall-result",
+        HashMap::from([
+            ("scope", scope),
+            ("managed", result.removed_managed.to_string()),
+            ("local", result.removed_local.to_string()),
+        ]),
     )
 }
 
@@ -1099,15 +1262,24 @@ fn copy_directory_recursive(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn skill_stale_display(stale: Option<bool>) -> (&'static str, Color32, &'static str) {
+fn skill_stale_display(stale: Option<bool>) -> (&'static str, Color32, String) {
+    let t = Translator::new(LocaleDomain::Gui, current_ui_language());
     match stale {
-        Some(true) => (regular::WARNING, Color32::from_rgb(200, 150, 50), "stale"),
+        Some(true) => (
+            regular::WARNING,
+            Color32::from_rgb(200, 150, 50),
+            t.text("skills-mgr-state-stale"),
+        ),
         Some(false) => (
             regular::CHECK_CIRCLE,
             Color32::from_rgb(50, 180, 80),
-            "fresh",
+            t.text("skills-mgr-state-fresh"),
         ),
-        None => (regular::MINUS, Color32::from_rgb(140, 140, 140), "-"),
+        None => (
+            regular::MINUS,
+            Color32::from_rgb(140, 140, 140),
+            t.text("skills-mgr-state-none"),
+        ),
     }
 }
 

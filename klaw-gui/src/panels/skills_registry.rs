@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use crate::settings::current_ui_language;
 use crate::widgets::ArrayEditor;
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
@@ -10,6 +11,8 @@ use klaw_skill::{
     FileSystemSkillStore, InstalledSkill, RegistrySource, open_default_skills_manager,
 };
 use klaw_skill::{RegistrySyncReport, RegistrySyncStatus};
+use klaw_ui_kit::{LocaleDomain, Translator};
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -45,11 +48,12 @@ impl SkillsRegistryForm {
         }
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        let t = Translator::new(LocaleDomain::Gui, current_ui_language());
         if self.original_name.is_some() {
-            "Edit Skills Registry"
+            t.text("skills-reg-form-title-edit")
         } else {
-            "Add Skills Registry"
+            t.text("skills-reg-form-title-add")
         }
     }
 
@@ -80,9 +84,16 @@ pub struct SkillsRegistryPanel {
 }
 
 impl SkillsRegistryPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn request_runtime_skills_reload(notifications: &mut NotificationCenter) {
         if let Err(err) = runtime_bridge::request_reload_skills_prompt() {
-            notifications.warning(format!("Runtime skills prompt reload not sent: {err}"));
+            notifications.warning(Self::translator().text_args(
+                "skills-reg-notify-reload-not-sent",
+                HashMap::from([("error", err.to_string())]),
+            ));
         }
     }
 
@@ -96,9 +107,12 @@ impl SkillsRegistryPanel {
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
                 self.load_registry_statuses();
-                notifications.success("Skills registry config loaded from disk");
+                notifications.success(Self::translator().text("skills-reg-notify-config-loaded"));
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "skills-reg-notify-load-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -117,7 +131,7 @@ impl SkillsRegistryPanel {
         F: FnOnce(&mut AppConfig) -> Result<(), String>,
     {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("skills-reg-notify-store-unavailable"));
             return false;
         };
         match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
@@ -128,7 +142,10 @@ impl SkillsRegistryPanel {
                 true
             }
             Err(err) => {
-                notifications.error(format!("Save failed: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "skills-reg-notify-save-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 false
             }
         }
@@ -136,15 +153,18 @@ impl SkillsRegistryPanel {
 
     fn reload(&mut self, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("skills-reg-notify-store-unavailable"));
             return;
         };
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
-                notifications.success("Configuration reloaded from disk");
+                notifications.success(Self::translator().text("skills-reg-notify-config-reloaded"));
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "skills-reg-notify-reload-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -180,15 +200,20 @@ impl SkillsRegistryPanel {
         let timeout = match self.sync_timeout_text.trim().parse::<u64>() {
             Ok(value) => value,
             Err(_) => {
-                notifications.error("skills.sync_timeout must be a positive integer");
+                notifications
+                    .error(Self::translator().text("skills-reg-error-sync-timeout-invalid"));
                 return false;
             }
         };
 
-        self.save_config(notifications, "skills.sync_timeout saved", move |config| {
-            config.skills.sync_timeout = timeout;
-            Ok(())
-        })
+        self.save_config(
+            notifications,
+            &Self::translator().text("skills-reg-notify-sync-timeout-saved"),
+            move |config| {
+                config.skills.sync_timeout = timeout;
+                Ok(())
+            },
+        )
     }
 
     fn render_config_window(
@@ -200,10 +225,11 @@ impl SkillsRegistryPanel {
             return;
         }
 
+        let t = Self::translator();
         let mut save_clicked = false;
         let mut cancel_clicked = false;
 
-        egui::Window::new("Skills Registry Config")
+        egui::Window::new(t.text("skills-reg-config-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -213,7 +239,7 @@ impl SkillsRegistryPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("sync_timeout (seconds)");
+                        ui.label(t.text("skills-reg-config-sync-timeout"));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.sync_timeout_text)
                                 .desired_width(120.0),
@@ -223,10 +249,10 @@ impl SkillsRegistryPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save Timeout").clicked() {
+                    if ui.button(t.text("skills-reg-config-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("skills-reg-config-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -243,19 +269,24 @@ impl SkillsRegistryPanel {
 
     fn sync_registry(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
         if self.syncing_registry.is_some() {
-            notifications.warning("A skills registry sync is already running");
+            notifications
+                .warning(Self::translator().text("skills-reg-notify-sync-already-running"));
             return;
         }
 
         let Some(registry) = self.config.skills.registries.get(registry_name) else {
-            notifications.error(format!("Skills registry `{registry_name}` not found"));
+            notifications.error(Self::translator().text_args(
+                "skills-reg-notify-registry-not-found",
+                HashMap::from([("registry_name", registry_name.to_string())]),
+            ));
             return;
         };
 
         let timeout = match self.sync_timeout_text.trim().parse::<u64>() {
             Ok(value) => value,
             Err(_) => {
-                notifications.error("skills.sync_timeout must be a positive integer");
+                notifications
+                    .error(Self::translator().text("skills-reg-error-sync-timeout-invalid"));
                 return;
             }
         };
@@ -282,9 +313,9 @@ impl SkillsRegistryPanel {
             let result = run_skill_sync_task(source, installed, timeout);
             let _ = tx.send((registry_name, result));
         });
-        notifications.info(format!(
-            "Started syncing registry `{}`",
-            status_registry_name
+        notifications.info(Self::translator().text_args(
+            "skills-reg-notify-sync-started",
+            HashMap::from([("registry_name", status_registry_name)]),
         ));
     }
 
@@ -303,15 +334,23 @@ impl SkillsRegistryPanel {
                             notifications.warning(err);
                         }
                         Self::request_runtime_skills_reload(notifications);
-                        notifications.success(format!(
-                            "Registry `{registry_name}` synced: added {}, removed {}",
-                            report.installed_skills.len(),
-                            report.removed_skills.len()
+                        notifications.success(Self::translator().text_args(
+                            "skills-reg-notify-sync-success",
+                            HashMap::from([
+                                ("registry_name", registry_name.clone()),
+                                ("added", report.installed_skills.len().to_string()),
+                                ("removed", report.removed_skills.len().to_string()),
+                            ]),
                         ));
                     }
                     Err(err) => {
-                        notifications
-                            .error(format!("Failed to sync registry `{registry_name}`: {err}"));
+                        notifications.error(Self::translator().text_args(
+                            "skills-reg-notify-sync-failed",
+                            HashMap::from([
+                                ("registry_name", registry_name.clone()),
+                                ("error", err.to_string()),
+                            ]),
+                        ));
                     }
                 }
             }
@@ -319,7 +358,7 @@ impl SkillsRegistryPanel {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.sync_result_rx = None;
                 self.syncing_registry = None;
-                notifications.error("Skill registry sync worker disconnected");
+                notifications.error(Self::translator().text("skills-reg-notify-sync-disconnected"));
             }
         }
     }
@@ -336,7 +375,10 @@ impl SkillsRegistryPanel {
 
     fn delete_registry(&mut self, name: &str, notifications: &mut NotificationCenter) {
         if !self.config.skills.registries.contains_key(name) {
-            notifications.error(format!("Skills registry `{name}` not found"));
+            notifications.error(Self::translator().text_args(
+                "skills-reg-notify-registry-not-found",
+                HashMap::from([("registry_name", name.to_string())]),
+            ));
             return;
         }
 
@@ -344,7 +386,10 @@ impl SkillsRegistryPanel {
         let name_for_config = name.clone();
         if self.save_config(
             notifications,
-            &format!("Skills registry `{name}` deleted"),
+            &Self::translator().text_args(
+                "skills-reg-notify-registry-deleted",
+                HashMap::from([("registry_name", name.clone())]),
+            ),
             move |config| {
                 config.skills.registries.remove(&name_for_config);
                 Ok(())
@@ -366,12 +411,16 @@ impl SkillsRegistryPanel {
         ) {
             Ok(count) => {
                 if count > 0 {
-                    notifications.info(format!("Cleaned {count} installed skills from manifest"));
+                    notifications.info(Self::translator().text_args(
+                        "skills-reg-notify-cleaned-skills",
+                        HashMap::from([("count", count.to_string())]),
+                    ));
                 }
             }
-            Err(err) => {
-                notifications.warning(format!("Failed to cleanup registry manifest: {err}"))
-            }
+            Err(err) => notifications.warning(Self::translator().text_args(
+                "skills-reg-notify-cleanup-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -380,40 +429,45 @@ impl SkillsRegistryPanel {
             return;
         };
 
-        if self.save_config(notifications, "Skills registry saved", move |config| {
-            let next = Self::apply_form(config.clone(), &form)?;
-            *config = next;
-            Ok(())
-        }) {
+        if self.save_config(
+            notifications,
+            &Self::translator().text("skills-reg-notify-registry-saved"),
+            move |config| {
+                let next = Self::apply_form(config.clone(), &form)?;
+                *config = next;
+                Ok(())
+            },
+        ) {
             self.form = None;
         }
     }
 
     fn apply_form(mut config: AppConfig, form: &SkillsRegistryForm) -> Result<AppConfig, String> {
+        let t = Self::translator();
         let name = form.normalized_name();
         if name.is_empty() {
-            return Err("Skills registry name cannot be empty".to_string());
+            return Err(t.text("skills-reg-error-name-empty"));
         }
 
         let registry = form.to_config();
         if registry.address.trim().is_empty() {
-            return Err("Skills registry address cannot be empty".to_string());
+            return Err(t.text("skills-reg-error-address-empty"));
         }
 
         if let Some(original_name) = form.original_name.as_ref() {
             if original_name != &name {
                 if config.skills.registries.contains_key(&name) {
-                    return Err(format!(
-                        "Skills registry '{}' already exists, choose another name",
-                        name
+                    return Err(t.text_args(
+                        "skills-reg-error-name-duplicate",
+                        HashMap::from([("name", name.clone())]),
                     ));
                 }
                 config.skills.registries.remove(original_name);
             }
         } else if config.skills.registries.contains_key(&name) {
-            return Err(format!(
-                "Skills registry '{}' already exists, choose another name",
-                name
+            return Err(t.text_args(
+                "skills-reg-error-name-duplicate",
+                HashMap::from([("name", name.clone())]),
             ));
         }
 
@@ -422,6 +476,7 @@ impl SkillsRegistryPanel {
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let mut save_clicked = false;
         let mut cancel_clicked = false;
 
@@ -439,11 +494,11 @@ impl SkillsRegistryPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Name");
+                        ui.label(t.text("skills-reg-form-label-name"));
                         ui.text_edit_singleline(&mut form.name);
                         ui.end_row();
 
-                        ui.label("Address");
+                        ui.label(t.text("skills-reg-form-label-address"));
                         ui.text_edit_singleline(&mut form.address);
                         ui.end_row();
                     });
@@ -453,10 +508,10 @@ impl SkillsRegistryPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("skills-reg-form-btn-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("skills-reg-form-btn-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -479,30 +534,35 @@ impl SkillsRegistryPanel {
             return;
         };
 
+        let t = Self::translator();
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new("Delete Skills Registry")
+        egui::Window::new(t.text("skills-reg-delete-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "Are you sure you want to delete registry '{}'?",
-                    registry_name
+                ui.label(t.text_args(
+                    "skills-reg-delete-message",
+                    HashMap::from([("registry_name", registry_name.clone())]),
                 ));
-                ui.label("This will remove the registry from configuration and clean up installed skills from the manifest.");
+                ui.label(t.text("skills-reg-delete-description"));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
                         .button(
-                            RichText::new("Delete").color(ui.visuals().warn_fg_color),
+                            RichText::new(t.text_args(
+                                "skills-reg-delete-btn",
+                                HashMap::from([("icon", regular::TRASH.to_string())]),
+                            ))
+                            .color(ui.visuals().warn_fg_color),
                         )
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("skills-reg-delete-cancel")).clicked() {
                         cancelled = true;
                     }
                 });
@@ -531,24 +591,44 @@ impl PanelRenderer for SkillsRegistryPanel {
             ui.ctx().request_repaint_after(SYNC_POLL_INTERVAL);
         }
 
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
+        ui.label(t.text("skills-reg-subtitle"));
         ui.horizontal(|ui| {
-            ui.label(format!(
-                "Registries: {}",
-                self.config.skills.registries.len()
+            ui.label(t.text_args(
+                "skills-reg-label-registries-count",
+                HashMap::from([("count", self.config.skills.registries.len().to_string())]),
             ));
         });
         ui.separator();
 
         ui.horizontal(|ui| {
-            if ui.button("Config").clicked() {
+            if ui
+                .button(t.text_args(
+                    "skills-reg-btn-config",
+                    HashMap::from([("icon", regular::GEAR.to_string())]),
+                ))
+                .clicked()
+            {
                 self.sync_timeout_text = self.config.skills.sync_timeout.to_string();
                 self.config_window_open = true;
             }
-            if ui.button("Reload").clicked() {
+            if ui
+                .button(t.text_args(
+                    "skills-reg-btn-reload",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.reload(notifications);
             }
-            if ui.button("Add Skills Registry").clicked() {
+            if ui
+                .button(t.text_args(
+                    "skills-reg-btn-add",
+                    HashMap::from([("icon", regular::PLUS.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_add_registry();
             }
         });
@@ -556,7 +636,7 @@ impl PanelRenderer for SkillsRegistryPanel {
         ui.add_space(8.0);
 
         if self.config.skills.registries.is_empty() {
-            ui.label("No skill registries configured.");
+            ui.label(t.text("skills-reg-no-registries"));
         } else {
             let mut edit_registry_name: Option<String> = None;
             let mut sync_registry_name: Option<String> = None;
@@ -584,19 +664,19 @@ impl PanelRenderer for SkillsRegistryPanel {
                 .sense(egui::Sense::click())
                 .header(20.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("Name");
+                        ui.strong(t.text("skills-reg-col-name"));
                     });
                     header.col(|ui| {
-                        ui.strong("Address");
+                        ui.strong(t.text("skills-reg-col-address"));
                     });
                     header.col(|ui| {
-                        ui.strong("Synced");
+                        ui.strong(t.text("skills-reg-col-synced"));
                     });
                     header.col(|ui| {
-                        ui.strong("Commit");
+                        ui.strong(t.text("skills-reg-col-commit"));
                     });
                     header.col(|ui| {
-                        ui.strong("Installed");
+                        ui.strong(t.text("skills-reg-col-installed"));
                     });
                 })
                 .body(|body| {
@@ -629,13 +709,19 @@ impl PanelRenderer for SkillsRegistryPanel {
                             } else if let Some(s) = &status {
                                 if s.is_stale {
                                     ui.label(
-                                        RichText::new(format!("{} Outdated", regular::WARNING))
-                                            .color(ui.visuals().warn_fg_color),
+                                        RichText::new(t.text_args(
+                                            "skills-reg-status-outdated",
+                                            HashMap::from([("icon", regular::WARNING.to_string())]),
+                                        ))
+                                        .color(ui.visuals().warn_fg_color),
                                     );
                                 } else {
                                     ui.label(
-                                        RichText::new(format!("{} Synced", regular::CHECK))
-                                            .color(egui::Color32::from_rgb(0x22, 0xC5, 0x5E)),
+                                        RichText::new(t.text_args(
+                                            "skills-reg-status-synced",
+                                            HashMap::from([("icon", regular::CHECK.to_string())]),
+                                        ))
+                                        .color(egui::Color32::from_rgb(0x22, 0xC5, 0x5E)),
                                     );
                                 }
                             } else {
@@ -677,7 +763,13 @@ impl PanelRenderer for SkillsRegistryPanel {
                             if ui
                                 .add_enabled(
                                     !is_syncing,
-                                    egui::Button::new(format!("{} Sync", regular::ARROW_CLOCKWISE)),
+                                    egui::Button::new(t.text_args(
+                                        "skills-reg-ctx-sync",
+                                        HashMap::from([(
+                                            "icon",
+                                            regular::ARROW_CLOCKWISE.to_string(),
+                                        )]),
+                                    )),
                                 )
                                 .clicked()
                             {
@@ -685,14 +777,23 @@ impl PanelRenderer for SkillsRegistryPanel {
                                 ui.close();
                             }
                             if ui
-                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .button(t.text_args(
+                                    "skills-reg-ctx-edit",
+                                    HashMap::from([("icon", regular::PENCIL_SIMPLE.to_string())]),
+                                ))
                                 .clicked()
                             {
                                 edit_registry_name = Some(name_clone.clone());
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button(format!("{} Copy Name", regular::COPY)).clicked() {
+                            if ui
+                                .button(t.text_args(
+                                    "skills-reg-ctx-copy-name",
+                                    HashMap::from([("icon", regular::COPY.to_string())]),
+                                ))
+                                .clicked()
+                            {
                                 ui.ctx().output_mut(|o| {
                                     o.commands.push(egui::OutputCommand::CopyText(name.clone()));
                                 });
@@ -701,8 +802,11 @@ impl PanelRenderer for SkillsRegistryPanel {
                             ui.separator();
                             if ui
                                 .button(
-                                    RichText::new(format!("{} Delete", regular::TRASH))
-                                        .color(ui.visuals().warn_fg_color),
+                                    RichText::new(t.text_args(
+                                        "skills-reg-ctx-delete",
+                                        HashMap::from([("icon", regular::TRASH.to_string())]),
+                                    ))
+                                    .color(ui.visuals().warn_fg_color),
                                 )
                                 .clicked()
                             {

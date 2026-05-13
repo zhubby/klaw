@@ -1,11 +1,14 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::{RuntimeRequestHandle, begin_env_check_request};
 use egui::RichText;
 use egui_phosphor::regular;
 use klaw_config::ConfigStore;
 use klaw_storage::StoragePaths;
+use klaw_ui_kit::{LocaleDomain, Translator};
 use klaw_util::{DependencyCategory, EnvironmentCheckReport, KLAW_DIR_NAME, default_data_dir};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -210,8 +213,13 @@ fn host_info_row(ui: &mut egui::Ui, key: &str, value: String) {
     ui.end_row();
 }
 
+#[allow(dead_code)]
 fn host_optional_text(value: Option<String>) -> String {
     value.unwrap_or_else(|| "N/A".to_string())
+}
+
+fn host_optional_text_with_na(value: Option<String>, na: &str) -> String {
+    value.unwrap_or_else(|| na.to_string())
 }
 
 fn format_host_duration(seconds: u64) -> String {
@@ -255,6 +263,7 @@ enum DirKind {
 }
 
 impl DirKind {
+    #[allow(dead_code)]
     fn title(self) -> &'static str {
         match self {
             DirKind::Tmp => "Temporary",
@@ -265,6 +274,19 @@ impl DirKind {
             DirKind::Skills => "Skills",
             DirKind::SkillsRegistry => "Skills Registry",
             DirKind::Models => "Models",
+        }
+    }
+
+    fn title_with_translator(self, t: &Translator) -> String {
+        match self {
+            DirKind::Tmp => t.text("system-dir-tmp"),
+            DirKind::Workspace => t.text("system-dir-workspace"),
+            DirKind::Sessions => t.text("system-dir-sessions"),
+            DirKind::Archives => t.text("system-dir-archives"),
+            DirKind::Logs => t.text("system-dir-logs"),
+            DirKind::Skills => t.text("system-dir-skills"),
+            DirKind::SkillsRegistry => t.text("system-dir-skills-registry"),
+            DirKind::Models => t.text("system-dir-models"),
         }
     }
 
@@ -322,6 +344,10 @@ pub struct SystemPanel {
 }
 
 impl SystemPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn dir_index(kind: DirKind) -> usize {
         match kind {
             DirKind::Tmp => 0,
@@ -348,12 +374,16 @@ impl SystemPanel {
             return;
         }
 
+        let t = Self::translator();
         match StoragePaths::from_home_dir() {
             Ok(paths) => {
                 self.paths = Some(paths);
             }
             Err(err) => {
-                let message = format!("Failed to resolve data directories: {err}");
+                let message = t.text_args(
+                    "system-notify-failed-resolve",
+                    HashMap::from([("error", err.to_string())]),
+                );
                 self.dirs[0].usage_error = Some(message.clone());
                 notifications.error(message);
             }
@@ -436,6 +466,7 @@ impl SystemPanel {
     }
 
     fn render_host_information(&self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         let cpu_usage = self.host_info.system.global_cpu_usage();
         let logical_cpus = self.host_info.system.cpus().len();
         let physical_cores = System::physical_core_count().unwrap_or_default();
@@ -457,7 +488,7 @@ impl SystemPanel {
 
         ui.columns(2, |cols| {
             cols[0].vertical(|ui| {
-                ui.strong("CPU Usage");
+                ui.strong(t.text("system-cpu-usage"));
                 ui.horizontal(|ui| {
                     let bar = egui::ProgressBar::new((cpu_usage / 100.0).clamp(0.0, 1.0))
                         .show_percentage()
@@ -465,14 +496,17 @@ impl SystemPanel {
                     ui.add(bar);
                     ui.monospace(format!("{cpu_usage:.1}%"));
                 });
-                ui.label(format!(
-                    "{} logical / {} physical cores",
-                    logical_cpus, physical_cores
+                ui.label(t.text_args(
+                    "system-cpu-cores-info",
+                    HashMap::from([
+                        ("logical", logical_cpus.to_string()),
+                        ("physical", physical_cores.to_string()),
+                    ]),
                 ));
             });
 
             cols[1].vertical(|ui| {
-                ui.strong("Memory Usage");
+                ui.strong(t.text("system-memory-usage"));
                 ui.horizontal(|ui| {
                     let bar = egui::ProgressBar::new((memory_usage / 100.0).clamp(0.0, 1.0))
                         .show_percentage()
@@ -485,16 +519,22 @@ impl SystemPanel {
                         format_bytes_si(total_memory),
                     ));
                 });
-                ui.label(format!("Free: {}", format_bytes_si(free_memory)));
+                ui.label(t.text_args(
+                    "system-memory-free",
+                    HashMap::from([("free", format_bytes_si(free_memory))]),
+                ));
             });
         });
 
         ui.separator();
-        ui.strong("System Information");
+        ui.strong(t.text("system-system-information"));
         ui.add_space(6.0);
 
         let info_width = ui.available_width();
         let col_width = info_width / 2.0;
+
+        let na = t.text("system-host-na");
+        let loading = t.text("system-host-loading");
 
         egui::ScrollArea::vertical()
             .id_salt("system-host-info-scroll")
@@ -506,125 +546,178 @@ impl SystemPanel {
                     .spacing([14.0, 6.0])
                     .striped(true)
                     .show(ui, |ui| {
-                        host_info_row(ui, "App Uptime", format_host_duration(uptime_secs));
-                        host_info_row(ui, "Host Name", host_optional_text(System::host_name()));
-                        host_info_row(ui, "OS Name", host_optional_text(System::name()));
-                        host_info_row(ui, "OS Version", host_optional_text(System::os_version()));
                         host_info_row(
                             ui,
-                            "Long OS Version",
-                            host_optional_text(System::long_os_version()),
+                            &t.text("system-host-app-uptime"),
+                            format_host_duration(uptime_secs),
                         );
                         host_info_row(
                             ui,
-                            "Kernel Version",
-                            host_optional_text(System::kernel_version()),
+                            &t.text("system-host-name"),
+                            host_optional_text_with_na(System::host_name(), &na),
                         );
-                        host_info_row(ui, "CPU Architecture", std::env::consts::ARCH.to_string());
-                        host_info_row(ui, "Logical CPU Count", logical_cpus.to_string());
-                        host_info_row(ui, "Physical Core Count", physical_cores.to_string());
                         host_info_row(
                             ui,
-                            "Primary CPU Brand",
+                            &t.text("system-host-os-name"),
+                            host_optional_text_with_na(System::name(), &na),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-os-version"),
+                            host_optional_text_with_na(System::os_version(), &na),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-long-os-version"),
+                            host_optional_text_with_na(System::long_os_version(), &na),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-kernel-version"),
+                            host_optional_text_with_na(System::kernel_version(), &na),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-cpu-architecture"),
+                            std::env::consts::ARCH.to_string(),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-logical-cpu-count"),
+                            logical_cpus.to_string(),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-physical-core-count"),
+                            physical_cores.to_string(),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-primary-cpu-brand"),
                             self.host_info
                                 .system
                                 .cpus()
                                 .first()
                                 .map(|cpu| cpu.brand().to_string())
                                 .filter(|value| !value.is_empty())
-                                .unwrap_or_else(|| "N/A".to_string()),
+                                .unwrap_or_else(|| na.clone()),
                         );
                         host_info_row(
                             ui,
-                            "Primary CPU Frequency",
+                            &t.text("system-host-primary-cpu-frequency"),
                             self.host_info
                                 .system
                                 .cpus()
                                 .first()
-                                .map(|cpu| format!("{} MHz", cpu.frequency()))
-                                .unwrap_or_else(|| "N/A".to_string()),
+                                .map(|cpu| {
+                                    t.text_args(
+                                        "system-cpu-frequency-mhz",
+                                        HashMap::from([("freq", cpu.frequency().to_string())]),
+                                    )
+                                })
+                                .unwrap_or_else(|| na.clone()),
                         );
-                        host_info_row(ui, "Total Memory", format_bytes_si(total_memory));
-                        host_info_row(ui, "Used Memory", format_bytes_si(used_memory));
-                        host_info_row(ui, "Free Memory", format_bytes_si(free_memory));
                         host_info_row(
                             ui,
-                            "Total Swap",
+                            &t.text("system-host-total-memory"),
+                            format_bytes_si(total_memory),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-used-memory"),
+                            format_bytes_si(used_memory),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-free-memory"),
+                            format_bytes_si(free_memory),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-total-swap"),
                             format_bytes_si(self.host_info.system.total_swap()),
                         );
                         host_info_row(
                             ui,
-                            "Used Swap",
+                            &t.text("system-host-used-swap"),
                             format_bytes_si(self.host_info.system.used_swap()),
                         );
                         host_info_row(
                             ui,
-                            "System Uptime",
+                            &t.text("system-host-system-uptime"),
                             format_host_duration(system_uptime_secs),
                         );
                         host_info_row(
                             ui,
-                            "System Boot Time",
+                            &t.text("system-host-system-boot-time"),
                             crate::time_format::format_timestamp_seconds(System::boot_time()),
                         );
-                        host_info_row(ui, "Load Average", format_host_load_avg(load_avg));
                         host_info_row(
                             ui,
-                            "Data Directory",
+                            &t.text("system-host-load-average"),
+                            format_host_load_avg(load_avg),
+                        );
+                        host_info_row(
+                            ui,
+                            &t.text("system-host-data-directory"),
                             self.host_info.data_dir_path.display().to_string(),
                         );
 
                         if let Some(stats) = self.host_info.data_dir_stats.as_ref() {
                             host_info_row(
                                 ui,
-                                "Data Directory Size",
+                                &t.text("system-host-data-dir-size"),
                                 format_bytes_si(stats.used_bytes),
                             );
                             host_info_row(
                                 ui,
-                                "Data Directory File Count",
+                                &t.text("system-host-data-dir-file-count"),
                                 stats.file_count.to_string(),
                             );
                             host_info_row(
                                 ui,
-                                "Data Directory Mount Point",
+                                &t.text("system-host-data-dir-mount-point"),
                                 stats
                                     .mount_point
                                     .as_ref()
                                     .map(|path| path.display().to_string())
-                                    .unwrap_or_else(|| "N/A".to_string()),
+                                    .unwrap_or_else(|| na.clone()),
                             );
                             host_info_row(
                                 ui,
-                                "Data Directory Disk Capacity",
+                                &t.text("system-host-data-dir-disk-capacity"),
                                 format_bytes_si(stats.disk_total_bytes),
                             );
                             host_info_row(
                                 ui,
-                                "Data Directory Disk Available",
+                                &t.text("system-host-data-dir-disk-available"),
                                 format_bytes_si(stats.disk_available_bytes),
                             );
                         } else {
-                            host_info_row(ui, "Data Directory Size", "Loading...".to_string());
                             host_info_row(
                                 ui,
-                                "Data Directory File Count",
-                                "Loading...".to_string(),
+                                &t.text("system-host-data-dir-size"),
+                                loading.clone(),
                             );
                             host_info_row(
                                 ui,
-                                "Data Directory Mount Point",
-                                "Loading...".to_string(),
+                                &t.text("system-host-data-dir-file-count"),
+                                loading.clone(),
                             );
                             host_info_row(
                                 ui,
-                                "Data Directory Disk Capacity",
-                                "Loading...".to_string(),
+                                &t.text("system-host-data-dir-mount-point"),
+                                loading.clone(),
                             );
                             host_info_row(
                                 ui,
-                                "Data Directory Disk Available",
-                                "Loading...".to_string(),
+                                &t.text("system-host-data-dir-disk-capacity"),
+                                loading.clone(),
+                            );
+                            host_info_row(
+                                ui,
+                                &t.text("system-host-data-dir-disk-available"),
+                                loading.clone(),
                             );
                         }
                     });
@@ -632,11 +725,12 @@ impl SystemPanel {
     }
 
     fn render_env_check_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Environment Dependencies");
+        let t = Self::translator();
+        ui.strong(t.text("system-env-dependencies"));
         ui.add_space(4.0);
 
         let Some(report) = &self.env_check else {
-            ui.label("Loading...");
+            ui.label(t.text("system-env-loading"));
             return;
         };
 
@@ -668,13 +762,13 @@ impl SystemPanel {
                 if let Some(version) = &check.version {
                     ui.label(RichText::new(version).weak());
                 } else {
-                    ui.label(RichText::new("not found").weak());
+                    ui.label(RichText::new(t.text("system-env-not-found")).weak());
                 }
 
                 let label = match check.category {
-                    DependencyCategory::Required => "Required",
-                    DependencyCategory::Preferred => "Preferred",
-                    DependencyCategory::OptionalWithFallback => "Optional",
+                    DependencyCategory::Required => t.text("system-env-required"),
+                    DependencyCategory::Preferred => t.text("system-env-preferred"),
+                    DependencyCategory::OptionalWithFallback => t.text("system-env-optional"),
                 };
                 ui.label(
                     RichText::new(label)
@@ -686,7 +780,7 @@ impl SystemPanel {
             ui.label(RichText::new(&check.description).small().weak().italics());
             if let Some(project_url) = &check.project_url {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Project:").small().weak());
+                    ui.label(RichText::new(t.text("system-env-project")).small().weak());
                     ui.hyperlink_to(RichText::new(project_url).small(), project_url);
                 });
             }
@@ -694,24 +788,18 @@ impl SystemPanel {
         }
 
         if all_required_ok && preferred_ok && tm_ok {
-            ui.label(RichText::new("All dependencies available").color(success_color));
+            ui.label(RichText::new(t.text("system-env-all-available")).color(success_color));
         } else if all_required_ok && preferred_ok {
-            ui.label(
-                RichText::new("Note: Terminal multiplexer (zellij/tmux) not available")
-                    .color(warn_color),
-            );
+            ui.label(RichText::new(t.text("system-env-tm-missing")).color(warn_color));
         } else if all_required_ok {
-            ui.label(
-                RichText::new("Note: Some preferred dependencies are missing").color(warn_color),
-            );
+            ui.label(RichText::new(t.text("system-env-preferred-missing")).color(warn_color));
         } else {
-            ui.label(
-                RichText::new("Warning: Some required dependencies are missing").color(error_color),
-            );
+            ui.label(RichText::new(t.text("system-env-required-missing")).color(error_color));
         }
     }
 
     fn poll_tasks(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         for kind in [
             DirKind::Tmp,
             DirKind::Workspace,
@@ -723,6 +811,7 @@ impl SystemPanel {
             DirKind::Models,
         ] {
             let dir = self.get_dir_mut(kind);
+            let title = kind.title_with_translator(&t);
 
             if let Some(rx) = dir.usage_rx.as_ref()
                 && let Ok(result) = rx.try_recv()
@@ -736,8 +825,10 @@ impl SystemPanel {
                     Err(err) => {
                         dir.usage_bytes = None;
                         dir.usage_error = Some(err.clone());
-                        notifications
-                            .error(format!("Failed to collect {} usage: {err}", kind.title()));
+                        notifications.error(t.text_args(
+                            "system-notify-failed-collect-usage",
+                            HashMap::from([("title", title.clone()), ("error", err.to_string())]),
+                        ));
                     }
                 }
             }
@@ -749,12 +840,17 @@ impl SystemPanel {
                 match result {
                     Ok(()) => {
                         dir.usage_bytes = Some(0);
-                        notifications.success(format!("{} directory cleared", kind.title()));
+                        notifications.success(t.text_args(
+                            "system-notify-dir-cleared",
+                            HashMap::from([("title", title.clone())]),
+                        ));
                         self.refresh_usage(kind);
                     }
                     Err(err) => {
-                        notifications
-                            .error(format!("Failed to clear {} directory: {err}", kind.title()));
+                        notifications.error(t.text_args(
+                            "system-notify-failed-clear-dir",
+                            HashMap::from([("title", title.clone()), ("error", err.to_string())]),
+                        ));
                     }
                 }
             }
@@ -770,28 +866,34 @@ impl SystemPanel {
             return;
         };
 
+        let t = Self::translator();
+        let title = kind.title_with_translator(&t);
+
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new(format!("Clear {} directory", kind.title()))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.label(format!(
-                    "Are you sure you want to clear the {} directory?",
-                    kind.title()
-                ));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Clear").clicked() {
-                        confirmed = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancelled = true;
-                    }
-                });
+        egui::Window::new(t.text_args(
+            "system-confirm-clear-title",
+            HashMap::from([("title", title.clone())]),
+        ))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(t.text_args(
+                "system-confirm-clear-message",
+                HashMap::from([("title", title.clone())]),
+            ));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(t.text("system-clear")).clicked() {
+                    confirmed = true;
+                }
+                if ui.button(t.text("system-cancel")).clicked() {
+                    cancelled = true;
+                }
             });
+        });
 
         if confirmed {
             self.clear_dir(kind);
@@ -808,16 +910,21 @@ impl SystemPanel {
         kind: DirKind,
         notifications: &mut NotificationCenter,
     ) {
-        ui.strong(kind.title());
+        let t = Self::translator();
+        let title = kind.title_with_translator(&t);
+        ui.strong(&title);
         ui.add_space(4.0);
 
         let Some(paths) = self.paths.as_ref() else {
-            ui.label("Path unavailable.");
+            ui.label(t.text("system-dir-path-unavailable"));
             return;
         };
 
         let path = kind.path(paths);
-        ui.label(format!("Path: {}", path.display()));
+        ui.label(t.text_args(
+            "system-dir-path",
+            HashMap::from([("path", path.display().to_string())]),
+        ));
         ui.add_space(6.0);
 
         let dir = self.get_dir(kind);
@@ -827,13 +934,18 @@ impl SystemPanel {
         let usage_error = dir.usage_error.clone();
 
         ui.horizontal(|ui| {
-            let usage_text = usage_text(usage_loading, usage_bytes, usage_error.as_deref());
-            ui.label(RichText::new(usage_text).strong());
+            let usage_str =
+                usage_text_with_translator(&t, usage_loading, usage_bytes, usage_error.as_deref());
+            ui.label(RichText::new(usage_str).strong());
 
             if ui
                 .add_enabled(
                     !usage_loading && !clear_loading,
-                    egui::Button::new(format!("{} Refresh", regular::ARROW_CLOCKWISE)),
+                    egui::Button::new(format!(
+                        "{} {}",
+                        regular::ARROW_CLOCKWISE,
+                        t.text("system-refresh")
+                    )),
                 )
                 .clicked()
             {
@@ -842,11 +954,17 @@ impl SystemPanel {
 
             if ui
                 .button(regular::FOLDER_OPEN)
-                .on_hover_text(format!("Open {} directory in Finder", kind.title()))
+                .on_hover_text(t.text_args(
+                    "system-open-dir-hint",
+                    HashMap::from([("title", title.clone())]),
+                ))
                 .clicked()
                 && let Err(err) = open_directory_in_file_manager(&path)
             {
-                notifications.error(format!("Failed to open {} directory: {err}", kind.title()));
+                notifications.error(t.text_args(
+                    "system-notify-failed-open-dir",
+                    HashMap::from([("title", title.clone()), ("error", err.to_string())]),
+                ));
             }
 
             if ui
@@ -855,7 +973,10 @@ impl SystemPanel {
                     egui::Button::new(regular::TRASH)
                         .fill(ui.visuals().warn_fg_color.gamma_multiply(0.12)),
                 )
-                .on_hover_text(format!("Clear {} directory", kind.title()))
+                .on_hover_text(t.text_args(
+                    "system-clear-dir-hint",
+                    HashMap::from([("title", title.clone())]),
+                ))
                 .clicked()
             {
                 self.clear_confirm = Some(kind);
@@ -864,9 +985,9 @@ impl SystemPanel {
 
         ui.add_space(2.0);
         ui.label(
-            RichText::new(format!(
-                "Clearing removes files inside `{}/`; the directory itself is kept.",
-                kind.dir_name()
+            RichText::new(t.text_args(
+                "system-dir-clearing-hint",
+                HashMap::from([("dir", kind.dir_name().to_string())]),
             ))
             .weak()
             .small(),
@@ -895,6 +1016,7 @@ impl PanelRenderer for SystemPanel {
         self.host_info.poll_data_dir_stats();
         ui.ctx().request_repaint_after(HOST_INFO_REFRESH_INTERVAL);
 
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
 
         ui.horizontal(|ui| {
@@ -903,18 +1025,21 @@ impl PanelRenderer for SystemPanel {
             let env_selected = self.current_view == SystemView::Environment;
 
             if ui
-                .selectable_label(host_selected, "Host Information")
+                .selectable_label(host_selected, t.text("system-view-host-information"))
                 .clicked()
             {
                 self.current_view = SystemView::HostInformation;
             }
             if ui
-                .selectable_label(disk_selected, "Program Disk Usage")
+                .selectable_label(disk_selected, t.text("system-view-program-disk-usage"))
                 .clicked()
             {
                 self.current_view = SystemView::ProgramDiskUsage;
             }
-            if ui.selectable_label(env_selected, "Environment").clicked() {
+            if ui
+                .selectable_label(env_selected, t.text("system-view-environment"))
+                .clicked()
+            {
                 self.current_view = SystemView::Environment;
             }
         });
@@ -928,7 +1053,7 @@ impl PanelRenderer for SystemPanel {
                     self.render_host_information(ui);
                 }
                 SystemView::ProgramDiskUsage => {
-                    ui.label("Inspect and clear data under the Klaw data directory.");
+                    ui.label(t.text("system-disk-usage-description"));
                     ui.add_space(8.0);
                     self.render_section(ui, DirKind::Tmp, notifications);
                     ui.separator();
@@ -955,15 +1080,23 @@ impl PanelRenderer for SystemPanel {
     }
 }
 
-fn usage_text(loading: bool, bytes: Option<u64>, error: Option<&str>) -> String {
+fn usage_text_with_translator(
+    t: &Translator,
+    loading: bool,
+    bytes: Option<u64>,
+    error: Option<&str>,
+) -> String {
     if loading {
-        "Calculating...".to_string()
+        t.text("system-usage-calculating")
     } else if let Some(b) = bytes {
-        format!("Usage: {}", format_bytes(b))
+        t.text_args("system-usage", HashMap::from([("usage", format_bytes(b))]))
     } else if let Some(err) = error {
-        format!("Usage: unavailable ({err})")
+        t.text_args(
+            "system-usage-unavailable-error",
+            HashMap::from([("error", err.to_string())]),
+        )
     } else {
-        "Usage: unavailable".to_string()
+        t.text("system-usage-unavailable")
     }
 }
 

@@ -4,11 +4,14 @@ use crate::runtime_bridge::{
     ProviderRuntimeSnapshot, RuntimeRequestHandle, begin_provider_status_request,
     begin_sync_providers_request,
 };
+use crate::settings::current_ui_language;
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{AppConfig, ConfigError, ConfigSnapshot, ConfigStore, ModelProviderConfig};
 use klaw_llm::OpenAiWireApi;
+use klaw_ui_kit::{LocaleDomain, Translator};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -63,11 +66,12 @@ impl ProviderForm {
         }
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        let t = Translator::new(LocaleDomain::Gui, current_ui_language());
         if self.original_id.is_some() {
-            "Edit Provider"
+            t.text("provider-form-title-edit")
         } else {
-            "Add Provider"
+            t.text("provider-form-title-add")
         }
     }
 
@@ -110,6 +114,10 @@ pub struct ProviderPanel {
 }
 
 impl ProviderPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn refresh_runtime_status(&mut self) {
         if let Some(request) = self.runtime_status_request.as_mut()
             && let Some(result) = request.try_take_result()
@@ -386,31 +394,33 @@ impl ProviderPanel {
             return;
         };
 
+        let t = Self::translator();
+
         egui::Window::new(form.title())
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 ui.set_min_width(460.0);
-                ui.label("Provider configuration is persisted to config.toml.");
+                ui.label(t.text("provider-form-persisted-info"));
                 ui.separator();
                 egui::Grid::new("provider-form-grid")
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Provider ID");
+                        ui.label(t.text("provider-form-id"));
                         ui.text_edit_singleline(&mut form.id);
                         ui.end_row();
 
-                        ui.label("Display Name");
+                        ui.label(t.text("provider-form-name"));
                         ui.text_edit_singleline(&mut form.name);
                         ui.end_row();
 
-                        ui.label("Base URL");
+                        ui.label(t.text("provider-form-base-url"));
                         ui.text_edit_singleline(&mut form.base_url);
                         ui.end_row();
 
-                        ui.label("Wire API");
+                        ui.label(t.text("provider-form-wire-api"));
                         egui::ComboBox::from_id_salt("wire_api")
                             .selected_text(&form.wire_api)
                             .show_ui(ui, |ui| {
@@ -424,35 +434,35 @@ impl ProviderPanel {
                             });
                         ui.end_row();
 
-                        ui.label("Default Model");
+                        ui.label(t.text("provider-form-default-model"));
                         ui.text_edit_singleline(&mut form.default_model);
                         ui.end_row();
 
-                        ui.label("Tokenizer Path");
+                        ui.label(t.text("provider-form-tokenizer"));
                         ui.text_edit_singleline(&mut form.tokenizer_path);
                         ui.end_row();
 
-                        ui.label("Use System Proxy");
+                        ui.label(t.text("provider-form-proxy"));
                         ui.checkbox(&mut form.proxy, "");
                         ui.end_row();
 
-                        ui.label("Enable Streaming");
+                        ui.label(t.text("provider-form-stream"));
                         ui.checkbox(&mut form.stream, "");
                         ui.end_row();
 
-                        ui.label("API Key");
+                        ui.label(t.text("provider-form-api-key"));
                         ui.text_edit_singleline(&mut form.api_key);
                         ui.end_row();
                     });
                 ui.add_space(6.0);
-                ui.checkbox(&mut form.set_as_active, "Set as active model provider");
+                ui.checkbox(&mut form.set_as_active, t.text("provider-form-set-active"));
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("provider-form-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("provider-form-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -475,36 +485,39 @@ impl ProviderPanel {
             return;
         };
 
+        let t = Self::translator();
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new("Delete Provider")
+        egui::Window::new(t.text("provider-delete-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new(format!(
-                        "Are you sure you want to delete provider '{provider_id}'?"
+                    RichText::new(t.text_args(
+                        "provider-delete-message",
+                        HashMap::from([("provider_id", provider_id.clone())]),
                     ))
                     .strong(),
                 );
                 ui.add_space(8.0);
-                ui.label(
-                    "This removes the provider from config.toml. Active or in-use providers cannot be deleted.",
-                );
+                ui.label(t.text("provider-delete-info"));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new(format!("{} Delete", regular::TRASH))
-                                .color(ui.visuals().warn_fg_color),
+                            RichText::new(t.text_args(
+                                "provider-delete-btn",
+                                HashMap::from([("icon", regular::TRASH.to_string())]),
+                            ))
+                            .color(ui.visuals().warn_fg_color),
                         ))
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("provider-delete-cancel")).clicked() {
                         cancelled = true;
                     }
                 });
@@ -531,27 +544,47 @@ impl PanelRenderer for ProviderPanel {
         self.refresh_runtime_status();
         self.poll_runtime_sync(notifications);
 
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
+        ui.label(t.text("provider-subtitle"));
         ui.horizontal(|ui| {
             ui.colored_label(
                 egui::Color32::LIGHT_GREEN,
-                format!("Config default: {}", self.config.model_provider),
+                t.text_args(
+                    "provider-label-config-default",
+                    HashMap::from([("provider", self.config.model_provider.clone())]),
+                ),
             );
             if let Some(runtime_status) = &self.runtime_status {
                 ui.separator();
                 ui.colored_label(
                     egui::Color32::from_rgb(0x60, 0xA5, 0xFA),
-                    format!("Runtime active: {}", runtime_status.active_provider_id),
+                    t.text_args(
+                        "provider-label-runtime-active",
+                        HashMap::from([("provider", runtime_status.active_provider_id.clone())]),
+                    ),
                 );
             }
         });
         ui.separator();
 
         ui.horizontal(|ui| {
-            if ui.button("Add Provider").clicked() {
+            if ui
+                .button(t.text_args(
+                    "provider-btn-add",
+                    HashMap::from([("icon", regular::PLUS.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_add_provider();
             }
-            if ui.button("Reload").clicked() {
+            if ui
+                .button(t.text_args(
+                    "provider-btn-reload",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.reload(notifications);
             }
         });
@@ -559,7 +592,7 @@ impl PanelRenderer for ProviderPanel {
         ui.add_space(8.0);
 
         if self.config.model_providers.is_empty() {
-            ui.label("No providers configured.");
+            ui.label(t.text("provider-no-providers"));
         } else {
             let mut edit_provider_id: Option<String> = None;
             let mut set_active_provider_id: Option<String> = None;
@@ -597,28 +630,28 @@ impl PanelRenderer for ProviderPanel {
                         .sense(egui::Sense::click())
                         .header(20.0, |mut header| {
                             header.col(|ui| {
-                                ui.strong("ID");
+                                ui.strong(t.text("provider-col-id"));
                             });
                             header.col(|ui| {
-                                ui.strong("Name");
+                                ui.strong(t.text("provider-col-name"));
                             });
                             header.col(|ui| {
-                                ui.strong("Base URL");
+                                ui.strong(t.text("provider-col-base-url"));
                             });
                             header.col(|ui| {
-                                ui.strong("Wire API");
+                                ui.strong(t.text("provider-col-wire-api"));
                             });
                             header.col(|ui| {
-                                ui.strong("Default Model");
+                                ui.strong(t.text("provider-col-default-model"));
                             });
                             header.col(|ui| {
-                                ui.strong("Stream");
+                                ui.strong(t.text("provider-col-stream"));
                             });
                             header.col(|ui| {
-                                ui.strong("Tokenizer");
+                                ui.strong(t.text("provider-col-tokenizer"));
                             });
                             header.col(|ui| {
-                                ui.strong("Auth");
+                                ui.strong(t.text("provider-col-auth"));
                             });
                         })
                         .body(|body| {
@@ -641,14 +674,19 @@ impl PanelRenderer for ProviderPanel {
                                     });
                                 let auth =
                                     if provider.api_key.as_deref().is_some_and(|v| !v.is_empty()) {
-                                        "api_key".to_string()
+                                        t.text("provider-auth-api-key")
                                     } else {
                                         provider
                                             .env_key
                                             .as_deref()
                                             .filter(|v| !v.is_empty())
-                                            .map(|v| format!("env:{v}"))
-                                            .unwrap_or_else(|| "none".to_string())
+                                            .map(|v| {
+                                                t.text_args(
+                                                    "provider-auth-env",
+                                                    HashMap::from([("key", v.to_string())]),
+                                                )
+                                            })
+                                            .unwrap_or_else(|| t.text("provider-auth-none"))
                                     };
 
                                 row.col(|ui| {
@@ -661,9 +699,11 @@ impl PanelRenderer for ProviderPanel {
                                                 ),
                                             );
                                             ui.label(
-                                                RichText::new("config").small().color(
-                                                    egui::Color32::from_rgb(0x22, 0xC5, 0x5E),
-                                                ),
+                                                RichText::new(t.text("provider-badge-config"))
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(
+                                                        0x22, 0xC5, 0x5E,
+                                                    )),
                                             );
                                         }
                                         if is_runtime_active {
@@ -673,9 +713,11 @@ impl PanelRenderer for ProviderPanel {
                                                 ),
                                             );
                                             ui.label(
-                                                RichText::new("runtime").small().color(
-                                                    egui::Color32::from_rgb(0x60, 0xA5, 0xFA),
-                                                ),
+                                                RichText::new(t.text("provider-badge-runtime"))
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(
+                                                        0x60, 0xA5, 0xFA,
+                                                    )),
                                             );
                                         }
                                     });
@@ -693,7 +735,11 @@ impl PanelRenderer for ProviderPanel {
                                     ui.label(&provider.default_model);
                                 });
                                 row.col(|ui| {
-                                    ui.label(if provider.stream { "yes" } else { "no" });
+                                    ui.label(if provider.stream {
+                                        t.text("provider-stream-yes")
+                                    } else {
+                                        t.text("provider-stream-no")
+                                    });
                                 });
                                 row.col(|ui| {
                                     ui.label(provider.tokenizer_path.as_deref().unwrap_or("-"));
@@ -715,7 +761,13 @@ impl PanelRenderer for ProviderPanel {
                                 let provider_id_clone = provider_id.clone();
                                 response.context_menu(|ui| {
                                     if ui
-                                        .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                        .button(t.text_args(
+                                            "provider-ctx-edit",
+                                            HashMap::from([(
+                                                "icon",
+                                                regular::PENCIL_SIMPLE.to_string(),
+                                            )]),
+                                        ))
                                         .clicked()
                                     {
                                         edit_provider_id = Some(provider_id_clone.clone());
@@ -724,9 +776,12 @@ impl PanelRenderer for ProviderPanel {
                                     if ui
                                         .add_enabled(
                                             !is_config_default,
-                                            egui::Button::new(format!(
-                                                "{} Set Config Default",
-                                                regular::CHECK_CIRCLE
+                                            egui::Button::new(t.text_args(
+                                                "provider-ctx-set-default",
+                                                HashMap::from([(
+                                                    "icon",
+                                                    regular::CHECK_CIRCLE.to_string(),
+                                                )]),
                                             )),
                                         )
                                         .clicked()
@@ -737,8 +792,14 @@ impl PanelRenderer for ProviderPanel {
                                     ui.separator();
                                     if ui
                                         .add(egui::Button::new(
-                                            RichText::new(format!("{} Delete", regular::TRASH))
-                                                .color(ui.visuals().warn_fg_color),
+                                            RichText::new(t.text_args(
+                                                "provider-ctx-delete",
+                                                HashMap::from([(
+                                                    "icon",
+                                                    regular::TRASH.to_string(),
+                                                )]),
+                                            ))
+                                            .color(ui.visuals().warn_fg_color),
                                         ))
                                         .clicked()
                                     {
@@ -746,7 +807,13 @@ impl PanelRenderer for ProviderPanel {
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                    if ui
+                                        .button(t.text_args(
+                                            "provider-ctx-copy-id",
+                                            HashMap::from([("icon", regular::COPY.to_string())]),
+                                        ))
+                                        .clicked()
+                                    {
                                         ui.ctx().output_mut(|o| {
                                             o.commands.push(egui::OutputCommand::CopyText(
                                                 provider_id.clone(),

@@ -2,8 +2,8 @@ use crate::autostart;
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::settings::{
-    AppSettings, ProxyMode, S3SyncConfig, SyncItem, SyncMode, SyncProvider, load_settings,
-    save_settings, save_ui_language,
+    AppSettings, ProxyMode, S3SyncConfig, SyncItem, SyncMode, SyncProvider, current_ui_language,
+    load_settings, save_settings, save_ui_language,
 };
 use crate::state::persistence;
 use crate::state::{DarkThemePreset, LightThemePreset, UiState};
@@ -21,6 +21,7 @@ use klaw_storage::{
     SnapshotMode,
 };
 use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage, label_with_hint};
+use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
@@ -36,12 +37,12 @@ enum SettingsSection {
 }
 
 impl SettingsSection {
-    fn title(&self) -> &'static str {
+    fn title(&self, t: &Translator) -> String {
         match self {
-            SettingsSection::General => "General",
-            SettingsSection::SecurityPrivacy => "Security & Privacy",
-            SettingsSection::Network => "Network",
-            SettingsSection::Sync => "Sync",
+            SettingsSection::General => t.text("setting-section-general"),
+            SettingsSection::SecurityPrivacy => t.text("setting-section-security"),
+            SettingsSection::Network => t.text("setting-section-network"),
+            SettingsSection::Sync => t.text("setting-section-sync"),
         }
     }
 
@@ -108,15 +109,19 @@ impl PanelRenderer for SettingPanel {
         let runtime = self.refresh_settings_from_runtime();
         const MIN_CONTENT_HEIGHT: f32 = 320.0;
 
+        let t = Self::translator();
         let mut render_body = |ui: &mut egui::Ui, this: &mut SettingPanel| {
             ui.heading(ctx.tab_title);
-            ui.label("Configure application preferences");
+            ui.label(t.text("setting-subtitle"));
             ui.separator();
 
             if let Some(err) = &this.save_error {
                 ui.colored_label(
                     ui.style().visuals.error_fg_color,
-                    format!("Save error: {err}"),
+                    t.text_args(
+                        "setting-save-error",
+                        HashMap::from([("error", err.to_string())]),
+                    ),
                 );
             }
 
@@ -141,7 +146,7 @@ impl PanelRenderer for SettingPanel {
                                         ] {
                                             let is_active = this.active_section == section;
                                             let text =
-                                                format!("{} {}", section.icon(), section.title());
+                                                format!("{} {}", section.icon(), section.title(&t));
                                             if ui.selectable_label(is_active, text).clicked() {
                                                 this.active_section = section;
                                             }
@@ -192,6 +197,10 @@ impl PanelRenderer for SettingPanel {
 }
 
 impl SettingPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn sync_theme_state(&mut self) {
         let persisted = persistence::load_ui_state();
         self.theme_state.theme_mode = persisted.theme_mode;
@@ -242,18 +251,22 @@ impl SettingPanel {
             return;
         }
 
+        let t = Self::translator();
         if let Err(err) = autostart::apply(desired) {
             self.settings.general.launch_at_startup = previous;
             self.save_error = Some(err.to_string());
-            notifications.error(format!("Failed to update launch at startup: {err}"));
+            notifications.error(t.text_args(
+                "setting-notify-launch-update-failed",
+                HashMap::from([("error", err.to_string())]),
+            ));
             return;
         }
 
         if self.try_save() {
             let message = if desired {
-                "Launch at startup enabled."
+                t.text("setting-notify-launch-enabled")
             } else {
-                "Launch at startup disabled."
+                t.text("setting-notify-launch-disabled")
             };
             notifications.success(message);
             return;
@@ -267,23 +280,26 @@ impl SettingPanel {
 
         match autostart::apply(previous) {
             Ok(()) => {
-                notifications.error(format!(
-                    "Failed to save launch at startup setting: {save_error}"
+                notifications.error(t.text_args(
+                    "setting-notify-launch-save-failed",
+                    HashMap::from([("error", save_error)]),
                 ));
             }
             Err(rollback_err) => {
-                let message = format!(
+                let rollback_message = format!(
                     "{save_error}; also failed to restore the previous macOS login item state: {rollback_err}"
                 );
-                self.save_error = Some(message.clone());
-                notifications.error(format!(
-                    "Failed to save launch at startup setting and rollback macOS login item: {message}"
+                self.save_error = Some(rollback_message.clone());
+                notifications.error(t.text_args(
+                    "setting-notify-launch-save-and-rollback-failed",
+                    HashMap::from([("message", rollback_message)]),
                 ));
             }
         }
     }
 
     fn poll_sync_tasks(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let mut clear_task = false;
         while let Some(rx) = self.sync_task_rx.as_ref() {
             match rx.try_recv() {
@@ -295,22 +311,26 @@ impl SettingPanel {
                     self.settings.sync.last_sync_at = Some(created_at);
                     sync_runtime_set_last_snapshot(Some(manifest_id.clone()), Some(created_at));
                     let _ = self.try_save();
-                    notifications.success(format!("Manifest {manifest_id} uploaded to S3."));
+                    notifications.success(t.text_args(
+                        "setting-notify-sync-backup-done",
+                        HashMap::from([("id", manifest_id)]),
+                    ));
                     clear_task = true;
                 }
                 Ok(SyncTaskMessage::ListDone { snapshots }) => {
                     sync_runtime_set_remote_snapshots(snapshots);
-                    notifications.success("Remote manifests refreshed.");
+                    notifications.success(t.text("setting-notify-sync-list-done"));
                     clear_task = true;
                 }
                 Ok(SyncTaskMessage::RestoreDone { manifest_id }) => {
-                    notifications.warning(format!(
-                        "Manifest {manifest_id} restored. Restart Klaw before continuing."
+                    notifications.warning(t.text_args(
+                        "setting-notify-sync-restore-done",
+                        HashMap::from([("id", manifest_id)]),
                     ));
                     clear_task = true;
                 }
                 Ok(SyncTaskMessage::CleanupDone) => {
-                    notifications.success("Remote manifest retention cleanup completed.");
+                    notifications.success(t.text("setting-notify-sync-cleanup-done"));
                     clear_task = true;
                 }
                 Ok(SyncTaskMessage::Failed(err)) => {
@@ -388,7 +408,7 @@ impl SettingPanel {
         }
     }
 
-    fn spawn_sync_task<F>(&mut self, kind: SyncRuntimeTaskKind, label: &'static str, task: F)
+    fn spawn_sync_task<F>(&mut self, kind: SyncRuntimeTaskKind, label: String, task: F)
     where
         F: FnOnce() -> Result<SyncTaskMessage, String> + Send + 'static,
     {
@@ -409,61 +429,56 @@ impl SettingPanel {
         let plan = self.backup_plan();
         let device_id = self.settings.sync.device_id.clone();
         let keep_last = self.settings.sync.retention.keep_last;
-        self.spawn_sync_task(
-            SyncRuntimeTaskKind::ManualBackup,
-            "Uploading manifest sync",
-            move || {
-                let runtime = Builder::new_current_thread()
-                    .enable_all()
-                    .build()
+        let t_label = Self::translator().text("setting-sync-task-label-backup");
+        self.spawn_sync_task(SyncRuntimeTaskKind::ManualBackup, t_label, move || {
+            let t = Translator::new(LocaleDomain::Gui, current_ui_language());
+            let runtime = Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| err.to_string())?;
+            runtime.block_on(async move {
+                sync_runtime_set_task_progress(
+                    SyncRuntimeTaskKind::ManualBackup,
+                    Some(SyncRuntimeProgress {
+                        fraction: 0.02,
+                        stage: t.text("setting-sync-stage-connecting"),
+                        detail: Some(t.text("setting-sync-stage-validating")),
+                    }),
+                );
+                let service = BackupService::open_s3_default(config, device_id)
+                    .await
                     .map_err(|err| err.to_string())?;
-                runtime.block_on(async move {
+                let mut report = |progress: BackupProgress| {
                     sync_runtime_set_task_progress(
                         SyncRuntimeTaskKind::ManualBackup,
-                        Some(SyncRuntimeProgress {
-                            fraction: 0.02,
-                            stage: "Connecting to remote storage".to_string(),
-                            detail: Some("Validating sync configuration".to_string()),
-                        }),
+                        Some(runtime_progress_from_backup(progress)),
                     );
-                    let service = BackupService::open_s3_default(config, device_id)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    let mut report = |progress: BackupProgress| {
-                        sync_runtime_set_task_progress(
-                            SyncRuntimeTaskKind::ManualBackup,
-                            Some(runtime_progress_from_backup(progress)),
-                        );
-                    };
-                    let result = service
-                        .create_upload_and_cleanup_snapshot_with_progress(
-                            &plan,
-                            keep_last,
-                            &mut report,
-                        )
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    let snapshots = service
-                        .list_remote_snapshots()
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    sync_runtime_set_remote_snapshots(snapshots);
-                    sync_runtime_set_remote_update(None);
-                    Ok(SyncTaskMessage::BackupDone {
-                        manifest_id: result.manifest_id,
-                        created_at: result.manifest.created_at,
-                    })
+                };
+                let result = service
+                    .create_upload_and_cleanup_snapshot_with_progress(&plan, keep_last, &mut report)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                let snapshots = service
+                    .list_remote_snapshots()
+                    .await
+                    .map_err(|err| err.to_string())?;
+                sync_runtime_set_remote_snapshots(snapshots);
+                sync_runtime_set_remote_update(None);
+                Ok(SyncTaskMessage::BackupDone {
+                    manifest_id: result.manifest_id,
+                    created_at: result.manifest.created_at,
                 })
-            },
-        );
+            })
+        });
     }
 
     fn refresh_remote_snapshots(&mut self) {
         let config = self.sync_config();
         let device_id = self.settings.sync.device_id.clone();
+        let t_label = Self::translator().text("setting-sync-task-label-refresh");
         self.spawn_sync_task(
             SyncRuntimeTaskKind::RefreshRemoteSnapshots,
-            "Loading manifests",
+            t_label,
             move || {
                 let runtime = Builder::new_current_thread()
                     .enable_all()
@@ -487,58 +502,52 @@ impl SettingPanel {
     fn restore_snapshot(&mut self, manifest_id: String) {
         let config = self.sync_config();
         let device_id = self.settings.sync.device_id.clone();
-        self.spawn_sync_task(
-            SyncRuntimeTaskKind::RestoreSnapshot,
-            "Restoring manifest",
-            move || {
-                let runtime = Builder::new_current_thread()
-                    .enable_all()
-                    .build()
+        let t_label = Self::translator().text("setting-sync-task-label-restore");
+        self.spawn_sync_task(SyncRuntimeTaskKind::RestoreSnapshot, t_label, move || {
+            let runtime = Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| err.to_string())?;
+            runtime.block_on(async move {
+                let service = BackupService::open_s3_default(config, device_id)
+                    .await
                     .map_err(|err| err.to_string())?;
-                runtime.block_on(async move {
-                    let service = BackupService::open_s3_default(config, device_id)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    service
-                        .restore_snapshot(&manifest_id)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    Ok(SyncTaskMessage::RestoreDone { manifest_id })
-                })
-            },
-        );
+                service
+                    .restore_snapshot(&manifest_id)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                Ok(SyncTaskMessage::RestoreDone { manifest_id })
+            })
+        });
     }
 
     fn run_retention_cleanup(&mut self) {
         let config = self.sync_config();
         let device_id = self.settings.sync.device_id.clone();
         let keep_last = self.settings.sync.retention.keep_last;
-        self.spawn_sync_task(
-            SyncRuntimeTaskKind::RetentionCleanup,
-            "Cleaning up remote manifests",
-            move || {
-                let runtime = Builder::new_current_thread()
-                    .enable_all()
-                    .build()
+        let t_label = Self::translator().text("setting-sync-task-label-cleanup");
+        self.spawn_sync_task(SyncRuntimeTaskKind::RetentionCleanup, t_label, move || {
+            let runtime = Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| err.to_string())?;
+            runtime.block_on(async move {
+                let service = BackupService::open_s3_default(config, device_id)
+                    .await
                     .map_err(|err| err.to_string())?;
-                runtime.block_on(async move {
-                    let service = BackupService::open_s3_default(config, device_id)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    service
-                        .cleanup_remote_snapshots(keep_last)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    let snapshots = service
-                        .list_remote_snapshots()
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    sync_runtime_set_remote_snapshots(snapshots);
-                    sync_runtime_set_remote_update(None);
-                    Ok(SyncTaskMessage::CleanupDone)
-                })
-            },
-        );
+                service
+                    .cleanup_remote_snapshots(keep_last)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                let snapshots = service
+                    .list_remote_snapshots()
+                    .await
+                    .map_err(|err| err.to_string())?;
+                sync_runtime_set_remote_snapshots(snapshots);
+                sync_runtime_set_remote_update(None);
+                Ok(SyncTaskMessage::CleanupDone)
+            })
+        });
     }
 
     fn refresh_settings_from_runtime(&mut self) -> SyncRuntimeSnapshot {
@@ -559,7 +568,7 @@ impl SettingPanel {
     ) {
         self.sync_theme_state();
         let translator = Translator::new(LocaleDomain::Gui, self.settings.general.ui_language);
-        ui.strong("General Settings");
+        ui.strong(translator.text("setting-general-title"));
         ui.add_space(12.0);
 
         // ── Block 1: Language ──
@@ -596,11 +605,14 @@ impl SettingPanel {
                 Ok(settings) => {
                     self.settings = settings;
                     self.save_error = None;
-                    notifications.success("Language updated.");
+                    notifications.success(translator.text("setting-notify-language-updated"));
                 }
                 Err(err) => {
                     self.save_error = Some(err.to_string());
-                    notifications.error(format!("Failed to update language: {err}"));
+                    notifications.error(translator.text_args(
+                        "setting-notify-language-update-failed",
+                        HashMap::from([("error", err.to_string())]),
+                    ));
                 }
             }
         }
@@ -616,25 +628,38 @@ impl SettingPanel {
             .map(str::to_owned);
         let mut startup_setting_changed = false;
         let hint_text = if let Some(reason) = &enable_unavailable_reason {
-            format!(
-                "Automatically start Klaw when you log in to your computer.\n{reason} You can still turn the setting off from here."
+            translator.text_args(
+                "setting-launch-at-startup-hint-unavailable",
+                HashMap::from([("reason", reason.clone())]),
             )
         } else {
-            "Automatically start Klaw when you log in to your computer.".to_owned()
+            translator.text("setting-launch-at-startup-hint")
         };
         egui::Grid::new("general-startup-grid")
             .num_columns(2)
             .spacing([8.0, 8.0])
             .show(ui, |ui| {
-                label_with_hint(ui, "Launch at startup:", &hint_text);
+                label_with_hint(
+                    ui,
+                    &translator.text("setting-launch-at-startup"),
+                    &hint_text,
+                );
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(enable_unavailable_reason.is_none(), |ui| {
                         startup_setting_changed = ui
-                            .radio_value(&mut self.settings.general.launch_at_startup, true, "Yes")
+                            .radio_value(
+                                &mut self.settings.general.launch_at_startup,
+                                true,
+                                translator.text("setting-yes"),
+                            )
                             .changed();
                     });
                     startup_setting_changed |= ui
-                        .radio_value(&mut self.settings.general.launch_at_startup, false, "No")
+                        .radio_value(
+                            &mut self.settings.general.launch_at_startup,
+                            false,
+                            translator.text("setting-no"),
+                        )
                         .changed();
                 });
                 ui.end_row();
@@ -648,9 +673,9 @@ impl SettingPanel {
         ui.add_space(12.0);
 
         // ── Block 3: Theme ──
-        ui.label(format!(
-            "Current theme mode: {} (change from the bottom status bar).",
-            self.theme_state.theme_mode.label()
+        ui.label(translator.text_args(
+            "setting-theme-mode-current",
+            HashMap::from([("mode", self.theme_state.theme_mode.label().to_string())]),
         ));
         ui.add_space(8.0);
 
@@ -659,7 +684,7 @@ impl SettingPanel {
             .num_columns(2)
             .spacing([8.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Light Theme:");
+                ui.label(translator.text("setting-light-theme"));
                 egui::ComboBox::from_id_salt("settings-light-theme")
                     .width(160.0)
                     .selected_text(self.theme_state.light_theme.label())
@@ -684,7 +709,7 @@ impl SettingPanel {
                     });
                 ui.end_row();
 
-                ui.label("Dark Theme:");
+                ui.label(translator.text("setting-dark-theme"));
                 egui::ComboBox::from_id_salt("settings-dark-theme")
                     .width(160.0)
                     .selected_text(self.theme_state.dark_theme.label())
@@ -713,7 +738,7 @@ impl SettingPanel {
             });
 
         ui.add_space(8.0);
-        ui.small("Default keeps the existing egui light/dark visuals.");
+        ui.small(translator.text("setting-theme-default-hint"));
 
         if theme_changed {
             self.save_theme_state(ui.ctx());
@@ -725,38 +750,43 @@ impl SettingPanel {
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
-        ui.strong("Security & Privacy Settings");
+        let t = Self::translator();
+        ui.strong(t.text("setting-security-title"));
         ui.add_space(12.0);
 
         // ── Block 1: Location Services ──
         ui.add_space(4.0);
-        ui.strong("Location Services");
+        ui.strong(t.text("setting-location-services"));
         ui.add_space(8.0);
         let location_status = current_location_status();
         egui::Grid::new("security-location-grid")
             .num_columns(2)
             .spacing([8.0, 8.0])
             .show(ui, |ui| {
-                ui.label("System location services:");
-                ui.label(bool_status_label(location_status.services_enabled));
+                ui.label(t.text("setting-system-location-services"));
+                ui.label(bool_status_label(location_status.services_enabled, &t));
                 ui.end_row();
 
-                ui.label("App authorization:");
-                ui.label(location_status.authorization_label());
+                ui.label(t.text("setting-app-authorization"));
+                ui.label(location_status.authorization_label(&t));
                 ui.end_row();
 
-                if let Some(detail) = location_status.detail_message() {
-                    ui.label("Detail:");
+                if let Some(detail) = location_status.detail_message(&t) {
+                    ui.label(t.text("setting-detail"));
                     ui.small(detail);
                     ui.end_row();
                 }
             });
         ui.add_space(8.0);
-        if ui.button("Open Location Settings").clicked() {
+        if ui
+            .button(t.text("setting-open-location-settings"))
+            .clicked()
+        {
             match open_location_settings() {
-                Ok(()) => notifications.info("Opened macOS Location Services settings."),
-                Err(err) => notifications.error(format!(
-                    "Failed to open macOS Location Services settings: {err}"
+                Ok(()) => notifications.info(t.text("setting-notify-location-settings-opened")),
+                Err(err) => notifications.error(t.text_args(
+                    "setting-notify-location-settings-failed",
+                    HashMap::from([("error", err.to_string())]),
                 )),
             }
         }
@@ -767,7 +797,7 @@ impl SettingPanel {
 
         // ── Block 2: Danger Zone ──
         ui.add_space(4.0);
-        ui.strong("Danger Zone");
+        ui.strong(t.text("setting-danger-zone"));
         ui.add_space(8.0);
         egui::Grid::new("security-danger-grid")
             .num_columns(2)
@@ -775,13 +805,13 @@ impl SettingPanel {
             .show(ui, |ui| {
                 label_with_hint(
                     ui,
-                    "Delete All App Data",
-                    "Permanently remove the entire .klaw directory including configs, sessions, skills, memory, databases, and all other application data. This cannot be undone.",
+                    &t.text("setting-delete-all-app-data"),
+                    &t.text("setting-delete-all-app-data-hint"),
                 );
                 ui.horizontal(|ui| {
                     ui.style_mut().visuals.widgets.noninteractive.fg_stroke =
                         egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 50, 50));
-                    if ui.button("Delete All Data").clicked() {
+                    if ui.button(t.text("setting-delete-all-data-btn")).clicked() {
                         self.pending_delete_all_data = true;
                     }
                 });
@@ -791,45 +821,62 @@ impl SettingPanel {
         // ── Confirmation modal ──
         if self.pending_delete_all_data {
             let mut keep_open = true;
-            egui::Window::new("Confirm Delete All Data")
+            egui::Window::new(t.text("setting-confirm-delete-title"))
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut keep_open)
                 .show(ui.ctx(), |ui| {
                     ui.colored_label(
                         ui.style().visuals.error_fg_color,
-                        "This will permanently delete all Klaw data!",
+                        t.text("setting-confirm-delete-warning"),
                     );
                     ui.add_space(8.0);
-                    ui.label("The entire ~/.klaw directory will be removed, including:");
-                    ui.label("\u{2022} Config and settings");
-                    ui.label("\u{2022} Sessions and archives");
-                    ui.label("\u{2022} Skills and registry");
-                    ui.label("\u{2022} Memory and knowledge");
-                    ui.label("\u{2022} Databases and logs");
+                    ui.label(t.text("setting-confirm-delete-description"));
+                    ui.label(format!(
+                        "\u{2022} {}",
+                        t.text("setting-confirm-delete-item-config")
+                    ));
+                    ui.label(format!(
+                        "\u{2022} {}",
+                        t.text("setting-confirm-delete-item-sessions")
+                    ));
+                    ui.label(format!(
+                        "\u{2022} {}",
+                        t.text("setting-confirm-delete-item-skills")
+                    ));
+                    ui.label(format!(
+                        "\u{2022} {}",
+                        t.text("setting-confirm-delete-item-memory")
+                    ));
+                    ui.label(format!(
+                        "\u{2022} {}",
+                        t.text("setting-confirm-delete-item-databases")
+                    ));
                     ui.add_space(8.0);
-                    ui.strong("This action cannot be undone.");
+                    ui.strong(t.text("setting-confirm-delete-irreversible"));
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(t.text("setting-cancel")).clicked() {
                             self.pending_delete_all_data = false;
                         }
                         ui.style_mut().visuals.widgets.noninteractive.fg_stroke =
                             egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 50, 50));
-                        if ui.button("Delete Everything").clicked() {
+                        if ui.button(t.text("setting-delete-everything-btn")).clicked() {
                             self.pending_delete_all_data = false;
                             match klaw_util::default_data_dir() {
                                 Some(dir) => {
                                     if let Err(err) = std::fs::remove_dir_all(&dir) {
-                                        notifications.error(format!(
-                                            "Failed to delete data directory: {err}\n"
+                                        notifications.error(t.text_args(
+                                            "setting-notify-delete-data-failed",
+                                            HashMap::from([("error", err.to_string())]),
                                         ));
                                     } else {
                                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                                     }
                                 }
                                 None => {
-                                    notifications.error("Cannot locate the data directory.");
+                                    notifications
+                                        .error(t.text("setting-notify-data-dir-unavailable"));
                                 }
                             }
                         }
@@ -842,31 +889,32 @@ impl SettingPanel {
     }
 
     fn render_network_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Network Settings");
+        let t = Self::translator();
+        ui.strong(t.text("setting-network-title"));
         ui.add_space(8.0);
 
-        ui.label("Proxy Configuration:");
+        ui.label(t.text("setting-proxy-configuration"));
         ui.add_space(4.0);
 
         if ui
             .radio_value(
                 &mut self.settings.network.proxy_mode,
                 ProxyMode::NoProxy,
-                "No proxy",
+                t.text("setting-proxy-no-proxy"),
             )
             .changed()
             || ui
                 .radio_value(
                     &mut self.settings.network.proxy_mode,
                     ProxyMode::SystemProxy,
-                    "Use system proxy",
+                    t.text("setting-proxy-system"),
                 )
                 .changed()
             || ui
                 .radio_value(
                     &mut self.settings.network.proxy_mode,
                     ProxyMode::ManualProxy,
-                    "Manual proxy configuration",
+                    t.text("setting-proxy-manual"),
                 )
                 .changed()
         {
@@ -879,8 +927,8 @@ impl SettingPanel {
             ui.add_space(8.0);
 
             ui.group(|ui| {
-                ui.strong("HTTP Proxy");
-                if render_proxy_fields(ui, &mut self.settings.network.http_proxy) {
+                ui.strong(t.text("setting-http-proxy"));
+                if render_proxy_fields(ui, &mut self.settings.network.http_proxy, &t) {
                     self.try_save();
                 }
             });
@@ -888,8 +936,8 @@ impl SettingPanel {
             ui.add_space(8.0);
 
             ui.group(|ui| {
-                ui.strong("HTTPS Proxy");
-                if render_proxy_fields(ui, &mut self.settings.network.https_proxy) {
+                ui.strong(t.text("setting-https-proxy"));
+                if render_proxy_fields(ui, &mut self.settings.network.https_proxy, &t) {
                     self.try_save();
                 }
             });
@@ -897,8 +945,8 @@ impl SettingPanel {
             ui.add_space(8.0);
 
             ui.group(|ui| {
-                ui.strong("SOCKS5 Proxy");
-                if render_proxy_fields(ui, &mut self.settings.network.socks5_proxy) {
+                ui.strong(t.text("setting-socks5-proxy"));
+                if render_proxy_fields(ui, &mut self.settings.network.socks5_proxy, &t) {
                     self.try_save();
                 }
             });
@@ -911,7 +959,8 @@ impl SettingPanel {
         notifications: &mut NotificationCenter,
         runtime: &SyncRuntimeSnapshot,
     ) {
-        ui.strong("Sync Settings");
+        let t = Self::translator();
+        ui.strong(t.text("setting-sync-title"));
         ui.add_space(8.0);
         let sync_validation_error = self.sync_validation_error();
 
@@ -920,20 +969,20 @@ impl SettingPanel {
         ui.horizontal(|ui| {
             let previous = self.settings.sync.enabled;
             ui.add(klaw_ui_kit::toggle::toggle(&mut self.settings.sync.enabled));
-            ui.label("Enable manifest sync and S3 storage");
+            ui.label(t.text("setting-sync-enable-label"));
             let changed_now = self.settings.sync.enabled != previous;
             changed |= changed_now;
             if changed_now {
                 if self.settings.sync.enabled {
-                    notifications.success("Manifest sync enabled.");
+                    notifications.success(t.text("setting-notify-sync-enabled"));
                 } else {
-                    notifications.info("Manifest sync disabled.");
+                    notifications.info(t.text("setting-notify-sync-disabled"));
                 }
             }
         });
 
         ui.add_space(8.0);
-        egui::CollapsingHeader::new("General")
+        egui::CollapsingHeader::new(t.text("setting-sync-general"))
             .id_salt("sync-general")
             .default_open(true)
             .show(ui, |ui| {
@@ -941,23 +990,27 @@ impl SettingPanel {
                     .num_columns(2)
                     .spacing([8.0, 4.0])
                     .show(ui, |ui| {
-                        ui.label("Provider:");
-                        changed |= ui
-                            .radio_value(&mut self.settings.sync.provider, SyncProvider::S3, "S3")
-                            .changed();
-                        ui.end_row();
-
-                        ui.label("Mode:");
+                        ui.label(t.text("setting-sync-provider"));
                         changed |= ui
                             .radio_value(
-                                &mut self.settings.sync.mode,
-                                SyncMode::ManifestVersioned,
-                                "Versioned manifest",
+                                &mut self.settings.sync.provider,
+                                SyncProvider::S3,
+                                t.text("setting-sync-provider-s3"),
                             )
                             .changed();
                         ui.end_row();
 
-                        ui.label("Device ID:");
+                        ui.label(t.text("setting-sync-mode"));
+                        changed |= ui
+                            .radio_value(
+                                &mut self.settings.sync.mode,
+                                SyncMode::ManifestVersioned,
+                                t.text("setting-sync-mode-versioned"),
+                            )
+                            .changed();
+                        ui.end_row();
+
+                        ui.label(t.text("setting-sync-device-id"));
                         changed |= ui
                             .text_edit_singleline(&mut self.settings.sync.device_id)
                             .changed();
@@ -965,21 +1018,21 @@ impl SettingPanel {
                     });
             });
 
-        egui::CollapsingHeader::new("Schedule And Retention")
+        egui::CollapsingHeader::new(t.text("setting-sync-schedule-header"))
             .id_salt("sync-schedule")
             .default_open(true)
             .show(ui, |ui| {
                 changed |= ui
                     .checkbox(
                         &mut self.settings.sync.schedule.auto_backup,
-                        "Enable automatic backup",
+                        t.text("setting-sync-auto-backup"),
                     )
                     .changed();
                 egui::Grid::new("sync-schedule-grid")
                     .num_columns(2)
                     .spacing([8.0, 4.0])
                     .show(ui, |ui| {
-                        ui.label("Interval (minutes):");
+                        ui.label(t.text("setting-sync-interval"));
                         let mut interval = self.settings.sync.schedule.interval_minutes.to_string();
                         if ui.text_edit_singleline(&mut interval).changed()
                             && let Ok(parsed) = interval.parse::<u32>()
@@ -989,7 +1042,7 @@ impl SettingPanel {
                         }
                         ui.end_row();
 
-                        ui.label("Keep latest manifests:");
+                        ui.label(t.text("setting-sync-keep-latest"));
                         let mut keep_last = self.settings.sync.retention.keep_last.to_string();
                         if ui.text_edit_singleline(&mut keep_last).changed()
                             && let Ok(parsed) = keep_last.parse::<u32>()
@@ -1001,7 +1054,7 @@ impl SettingPanel {
                     });
             });
 
-        egui::CollapsingHeader::new("S3 Configuration")
+        egui::CollapsingHeader::new(t.text("setting-sync-s3-header"))
             .id_salt("sync-s3")
             .default_open(true)
             .show(ui, |ui| {
@@ -1011,61 +1064,61 @@ impl SettingPanel {
                     .show(ui, |ui| {
                         changed |= render_sync_text_field(
                             ui,
-                            "Endpoint:",
+                            t.text("setting-s3-endpoint"),
                             &mut self.settings.sync.s3.endpoint,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Region:",
+                            t.text("setting-s3-region"),
                             &mut self.settings.sync.s3.region,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Bucket:",
+                            t.text("setting-s3-bucket"),
                             &mut self.settings.sync.s3.bucket,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Prefix:",
+                            t.text("setting-s3-prefix"),
                             &mut self.settings.sync.s3.prefix,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Access Key:",
+                            t.text("setting-s3-access-key"),
                             &mut self.settings.sync.s3.access_key,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Secret Key:",
+                            t.text("setting-s3-secret-key"),
                             &mut self.settings.sync.s3.secret_key,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Session Token:",
+                            t.text("setting-s3-session-token"),
                             &mut self.settings.sync.s3.session_token,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Access Key Env:",
+                            t.text("setting-s3-access-key-env"),
                             &mut self.settings.sync.s3.access_key_env,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Secret Key Env:",
+                            t.text("setting-s3-secret-key-env"),
                             &mut self.settings.sync.s3.secret_key_env,
                         );
                         ui.end_row();
                         changed |= render_sync_text_field(
                             ui,
-                            "Session Token Env:",
+                            t.text("setting-s3-session-token-env"),
                             &mut self.settings.sync.s3.session_token_env,
                         );
                         ui.end_row();
@@ -1073,12 +1126,12 @@ impl SettingPanel {
                 changed |= ui
                     .checkbox(
                         &mut self.settings.sync.s3.force_path_style,
-                        "Force path style",
+                        t.text("setting-s3-force-path-style"),
                     )
                     .changed();
             });
 
-        egui::CollapsingHeader::new("Backup Scope")
+        egui::CollapsingHeader::new(t.text("setting-sync-scope-header"))
             .id_salt("sync-scope")
             .default_open(true)
             .show(ui, |ui| {
@@ -1090,56 +1143,72 @@ impl SettingPanel {
                         .iter()
                         .position(|value| value == item);
                     let mut checked = index.is_some();
-                    if ui.checkbox(&mut checked, item.label()).clicked() {
+                    if ui
+                        .checkbox(&mut checked, item.label_with_translator(&t))
+                        .clicked()
+                    {
                         if checked && index.is_none() {
                             self.settings.sync.backup_items.push(*item);
                             changed = true;
-                        } else if !checked
-                            && let Some(idx) = index
-                        {
+                        } else if !checked && let Some(idx) = index {
                             self.settings.sync.backup_items.remove(idx);
                             changed = true;
                         }
                     }
                 }
                 ui.add_space(4.0);
-                ui.label(
-                    "Restore replays a selected manifest version. Temporary, logs, and observability data are excluded.",
-                );
+                ui.label(t.text("setting-sync-scope-restore-hint"));
             });
 
-        egui::CollapsingHeader::new("Manifest Actions")
+        egui::CollapsingHeader::new(t.text("setting-sync-actions-header"))
             .id_salt("sync-actions")
             .default_open(true)
             .show(ui, |ui| {
                 if let Some(remote_update) = &runtime.remote_update {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
-                        format!(
-                            "Remote manifest {} from {} is newer than local.",
-                            remote_update.manifest_id, remote_update.device_id
+                        t.text_args(
+                            "setting-sync-remote-newer",
+                            HashMap::from([
+                                ("id", remote_update.manifest_id.clone()),
+                                ("device", remote_update.device_id.clone()),
+                            ]),
                         ),
                     );
-                    ui.label(format!(
-                        "Remote created: {}",
-                        crate::time_format::format_timestamp_millis(remote_update.created_at)
+                    ui.label(t.text_args(
+                        "setting-sync-remote-created",
+                        HashMap::from([(
+                            "time",
+                            crate::time_format::format_timestamp_millis(remote_update.created_at),
+                        )]),
                     ));
                     ui.add_space(6.0);
                 }
-                ui.label(format!(
-                    "Last sync: {}",
-                    format_optional_timestamp_millis(self.settings.sync.last_sync_at)
+                ui.label(t.text_args(
+                    "setting-sync-last-sync",
+                    HashMap::from([(
+                        "time",
+                        format_optional_timestamp_millis(self.settings.sync.last_sync_at),
+                    )]),
                 ));
-                ui.label(format!(
-                    "Last manifest ID: {}",
-                    self.settings
-                        .sync
-                        .last_manifest_id
-                        .clone()
-                        .unwrap_or_default()
-                ));
+                ui.label(
+                    t.text_args(
+                        "setting-sync-last-manifest-id",
+                        HashMap::from([(
+                            "id",
+                            self.settings
+                                .sync
+                                .last_manifest_id
+                                .clone()
+                                .unwrap_or_default(),
+                        )]),
+                    ),
+                );
                 if let Some(task) = &runtime.active_task {
-                    ui.label(format!("In progress: {}", task.label));
+                    ui.label(t.text_args(
+                        "setting-sync-in-progress",
+                        HashMap::from([("label", task.label.clone())]),
+                    ));
                     if let Some(progress) = &task.progress {
                         ui.add(
                             egui::ProgressBar::new(progress.fraction.clamp(0.0, 1.0))
@@ -1161,7 +1230,7 @@ impl SettingPanel {
                         && !self.sync_busy()
                         && sync_validation_error.is_none();
                     if ui
-                        .add_enabled(can_run, egui::Button::new("Run Sync Now"))
+                        .add_enabled(can_run, egui::Button::new(t.text("setting-sync-run-now")))
                         .clicked()
                     {
                         self.run_backup();
@@ -1169,7 +1238,7 @@ impl SettingPanel {
                     if ui
                         .add_enabled(
                             !self.sync_busy() && sync_validation_error.is_none(),
-                            egui::Button::new("Refresh Remote Manifests"),
+                            egui::Button::new(t.text("setting-sync-refresh-remote")),
                         )
                         .clicked()
                     {
@@ -1180,7 +1249,7 @@ impl SettingPanel {
                             self.settings.sync.enabled
                                 && !self.sync_busy()
                                 && sync_validation_error.is_none(),
-                            egui::Button::new("Run Retention Cleanup"),
+                            egui::Button::new(t.text("setting-sync-run-cleanup")),
                         )
                         .clicked()
                     {
@@ -1188,37 +1257,44 @@ impl SettingPanel {
                     }
                 });
                 if self.settings.sync.enabled && sync_validation_error.is_none() {
-                    ui.small(
-                        "Manual sync progress is shown below while reconciliation, blob upload, and manifest publish are running.",
-                    );
+                    ui.small(t.text("setting-sync-manual-progress-hint"));
                 }
             });
 
-        egui::CollapsingHeader::new("Remote Manifests")
+        egui::CollapsingHeader::new(t.text("setting-sync-remote-header"))
             .id_salt("sync-remote")
             .default_open(true)
             .show(ui, |ui| {
                 if runtime.remote_snapshots.is_empty() {
-                    ui.label("No remote manifests loaded.");
+                    ui.label(t.text("setting-sync-no-remote"));
                 } else {
                     let mut restore_target = None;
                     for snapshot in &runtime.remote_snapshots {
                         ui.separator();
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(format!("Manifest: {}", snapshot.manifest_id));
-                                ui.label(format!(
-                                    "Created: {}",
-                                    crate::time_format::format_timestamp_millis(
-                                        snapshot.created_at
-                                    )
+                                ui.label(t.text_args(
+                                    "setting-sync-manifest-id",
+                                    HashMap::from([("id", snapshot.manifest_id.clone())]),
                                 ));
-                                ui.label(format!("Device: {}", snapshot.device_id));
+                                ui.label(t.text_args(
+                                    "setting-sync-created",
+                                    HashMap::from([(
+                                        "time",
+                                        crate::time_format::format_timestamp_millis(
+                                            snapshot.created_at,
+                                        ),
+                                    )]),
+                                ));
+                                ui.label(t.text_args(
+                                    "setting-sync-device",
+                                    HashMap::from([("device", snapshot.device_id.clone())]),
+                                ));
                             });
                             if ui
                                 .add_enabled(
                                     !self.sync_busy() && sync_validation_error.is_none(),
-                                    egui::Button::new("Restore"),
+                                    egui::Button::new(t.text("setting-sync-restore-btn")),
                                 )
                                 .clicked()
                             {
@@ -1238,26 +1314,29 @@ impl SettingPanel {
 
         if let Some(manifest_id) = self.pending_restore_manifest_id.clone() {
             let mut keep_open = true;
-            egui::Window::new("Confirm Restore")
+            egui::Window::new(t.text("setting-sync-confirm-restore-title"))
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut keep_open)
                 .show(ui.ctx(), |ui| {
-                    ui.label("Restore replaces the current local manifest-managed data.");
-                    ui.label("Restore replays the selected manifest version.");
-                    ui.label("Restart Klaw after restore completes.");
+                    ui.label(t.text("setting-sync-confirm-restore-desc1"));
+                    ui.label(t.text("setting-sync-confirm-restore-desc2"));
+                    ui.label(t.text("setting-sync-confirm-restore-desc3"));
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(t.text("setting-cancel")).clicked() {
                             self.pending_restore_manifest_id = None;
                         }
                         if ui
-                            .add_enabled(!self.sync_busy(), egui::Button::new("Restore Now"))
+                            .add_enabled(
+                                !self.sync_busy(),
+                                egui::Button::new(t.text("setting-sync-restore-now-btn")),
+                            )
                             .clicked()
                         {
                             self.pending_restore_manifest_id = None;
                             self.restore_snapshot(manifest_id.clone());
-                            notifications.info("Restore started.");
+                            notifications.info(t.text("setting-notify-restore-started"));
                         }
                     });
                 });
@@ -1268,8 +1347,12 @@ impl SettingPanel {
     }
 }
 
-fn bool_status_label(enabled: bool) -> &'static str {
-    if enabled { "enabled" } else { "disabled" }
+fn bool_status_label(enabled: bool, t: &Translator) -> String {
+    if enabled {
+        t.text("setting-enabled")
+    } else {
+        t.text("setting-disabled")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1297,54 +1380,53 @@ struct LocationStatus {
 }
 
 impl LocationStatus {
-    fn authorization_label(self) -> &'static str {
+    fn authorization_label(self, t: &Translator) -> String {
         match self.authorization {
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::NotDetermined => "not determined",
+            LocationAuthorizationState::NotDetermined => t.text("setting-auth-not-determined"),
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::Restricted => "restricted",
+            LocationAuthorizationState::Restricted => t.text("setting-auth-restricted"),
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::Denied => "denied",
+            LocationAuthorizationState::Denied => t.text("setting-auth-denied"),
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::AuthorizedAlways => "authorized always",
+            LocationAuthorizationState::AuthorizedAlways => {
+                t.text("setting-auth-authorized-always")
+            }
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::AuthorizedWhenInUse => "authorized when in use",
+            LocationAuthorizationState::AuthorizedWhenInUse => {
+                t.text("setting-auth-authorized-when-in-use")
+            }
             #[cfg(not(target_os = "macos"))]
-            LocationAuthorizationState::UnsupportedPlatform => "unsupported on this platform",
+            LocationAuthorizationState::UnsupportedPlatform => {
+                t.text("setting-auth-unsupported-platform")
+            }
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::Unknown(_) => "unknown",
+            LocationAuthorizationState::Unknown(_) => t.text("setting-auth-unknown"),
         }
     }
 
-    fn detail_message(self) -> Option<&'static str> {
+    fn detail_message(self, t: &Translator) -> Option<String> {
         match self.authorization {
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::NotDetermined => Some(
-                "Authorization has not been granted yet. Open system settings to review Location Services access.",
-            ),
+            LocationAuthorizationState::NotDetermined => {
+                Some(t.text("setting-auth-detail-not-determined"))
+            }
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::Restricted => Some(
-                "Location access is restricted by system policy or parental controls.",
-            ),
+            LocationAuthorizationState::Restricted => {
+                Some(t.text("setting-auth-detail-restricted"))
+            }
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::Denied => Some(
-                "Location access is currently denied for this app context. Open system settings to allow it.",
-            ),
+            LocationAuthorizationState::Denied => Some(t.text("setting-auth-detail-denied")),
             #[cfg(target_os = "macos")]
             LocationAuthorizationState::AuthorizedAlways
-            | LocationAuthorizationState::AuthorizedWhenInUse => {
-                (!self.services_enabled).then_some(
-                    "Authorization exists, but system-wide Location Services are currently disabled.",
-                )
-            }
+            | LocationAuthorizationState::AuthorizedWhenInUse => (!self.services_enabled)
+                .then_some(t.text("setting-auth-detail-auth-but-services-off")),
             #[cfg(not(target_os = "macos"))]
-            LocationAuthorizationState::UnsupportedPlatform => Some(
-                "Location Services privacy integration is currently implemented for macOS only.",
-            ),
+            LocationAuthorizationState::UnsupportedPlatform => {
+                Some(t.text("setting-auth-detail-unsupported-platform"))
+            }
             #[cfg(target_os = "macos")]
-            LocationAuthorizationState::Unknown(_) => Some(
-                "The system returned an unknown authorization state.",
-            ),
+            LocationAuthorizationState::Unknown(_) => Some(t.text("setting-auth-detail-unknown")),
         }
     }
 }
@@ -1414,43 +1496,57 @@ fn sync_item_to_backup_item(item: SyncItem) -> Option<BackupItem> {
 }
 
 fn runtime_progress_from_backup(progress: BackupProgress) -> SyncRuntimeProgress {
+    let t = Translator::new(LocaleDomain::Gui, current_ui_language());
     SyncRuntimeProgress {
         fraction: progress.fraction.clamp(0.0, 1.0),
         stage: match progress.stage {
-            klaw_storage::BackupProgressStage::ReconcilingRemote => "Reconciling remote manifest",
-            klaw_storage::BackupProgressStage::PreparingManifest => "Preparing manifest",
-            klaw_storage::BackupProgressStage::UploadingBlobs => "Uploading blobs",
-            klaw_storage::BackupProgressStage::UploadingManifest => "Uploading manifest",
-            klaw_storage::BackupProgressStage::UpdatingLatestPointer => {
-                "Updating latest manifest pointer"
+            klaw_storage::BackupProgressStage::ReconcilingRemote => {
+                t.text("setting-sync-stage-reconciling")
             }
-            klaw_storage::BackupProgressStage::CleaningUpRemote => "Cleaning up old manifests",
-            klaw_storage::BackupProgressStage::Completed => "Sync completed",
-        }
-        .to_string(),
+            klaw_storage::BackupProgressStage::PreparingManifest => {
+                t.text("setting-sync-stage-preparing")
+            }
+            klaw_storage::BackupProgressStage::UploadingBlobs => {
+                t.text("setting-sync-stage-uploading-blobs")
+            }
+            klaw_storage::BackupProgressStage::UploadingManifest => {
+                t.text("setting-sync-stage-uploading-manifest")
+            }
+            klaw_storage::BackupProgressStage::UpdatingLatestPointer => {
+                t.text("setting-sync-stage-updating-pointer")
+            }
+            klaw_storage::BackupProgressStage::CleaningUpRemote => {
+                t.text("setting-sync-stage-cleaning-up")
+            }
+            klaw_storage::BackupProgressStage::Completed => t.text("setting-sync-stage-completed"),
+        },
         detail: Some(progress.detail),
     }
 }
 
-fn render_sync_text_field(ui: &mut egui::Ui, label: &str, value: &mut String) -> bool {
+fn render_sync_text_field(ui: &mut egui::Ui, label: String, value: &mut String) -> bool {
     ui.label(label);
     ui.text_edit_singleline(value).changed()
 }
 
-fn render_proxy_fields(ui: &mut egui::Ui, config: &mut crate::settings::ProxyConfig) -> bool {
+fn render_proxy_fields(
+    ui: &mut egui::Ui,
+    config: &mut crate::settings::ProxyConfig,
+    t: &Translator,
+) -> bool {
     let mut changed = false;
 
     egui::Grid::new(ui.next_auto_id())
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
-            ui.label("Host:");
+            ui.label(t.text("setting-proxy-host"));
             if ui.text_edit_singleline(&mut config.host).changed() {
                 changed = true;
             }
             ui.end_row();
 
-            ui.label("Port:");
+            ui.label(t.text("setting-proxy-port"));
             let mut port_str = if config.port == 0 {
                 String::new()
             } else {

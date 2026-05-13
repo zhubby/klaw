@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use egui_file_dialog::FileDialog;
@@ -9,8 +10,9 @@ use klaw_model::{
     DownloadProgress, ModelInstallRequest, ModelInstallResult, ModelService, ModelSummary,
     ModelUsageBinding,
 };
+use klaw_ui_kit::{LocaleDomain, Translator};
 use klaw_util::{default_data_dir, models_dir};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
@@ -104,8 +106,9 @@ impl PanelRenderer for LocalModelsPanel {
     ) {
         self.poll_tasks(notifications);
         self.ensure_store_loaded(notifications);
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
-        ui.label("Browse, install, and manage local LLM models stored on your device.");
+        ui.label(t.text("local-model-subtitle"));
         ui.separator();
 
         let selected_model = self.selected_model.clone();
@@ -113,21 +116,41 @@ impl PanelRenderer for LocalModelsPanel {
             .selected_model_summary()
             .and_then(|summary| summary.default_gguf_model_file.clone());
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(t.text_args(
+                    "local-model-btn-refresh",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.begin_refresh();
             }
-            if ui.button("Install Model").clicked() {
+            if ui
+                .button(t.text_args(
+                    "local-model-btn-install",
+                    HashMap::from([("icon", regular::DOWNLOAD_SIMPLE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.install_window_open = true;
             }
-            if ui.button("Open Models Directory").clicked()
+            if ui
+                .button(t.text_args(
+                    "local-model-btn-open-dir",
+                    HashMap::from([("icon", regular::FOLDER_OPEN.to_string())]),
+                ))
+                .clicked()
                 && let Err(err) = open_path_in_os(&self.models_dir_path())
             {
-                notifications.error(format!("Failed to open models directory: {err}"));
+                notifications.error(t.text_args(
+                    "local-model-notify-open-dir-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
             if ui
                 .add_enabled(
                     selected_model.is_some(),
-                    egui::Button::new("Set Default GGUF File"),
+                    egui::Button::new(t.text("local-model-btn-set-default-gguf")),
                 )
                 .clicked()
                 && let Some(model_id) = selected_model.clone()
@@ -137,7 +160,7 @@ impl PanelRenderer for LocalModelsPanel {
             if ui
                 .add_enabled(
                     selected_model.is_some() && selected_default_gguf.is_some(),
-                    egui::Button::new("Clear Default GGUF"),
+                    egui::Button::new(t.text("local-model-btn-clear-default-gguf")),
                 )
                 .clicked()
                 && let Some(model_id) = selected_model.clone()
@@ -157,6 +180,9 @@ impl PanelRenderer for LocalModelsPanel {
 }
 
 impl LocalModelsPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -167,9 +193,12 @@ impl LocalModelsPanel {
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
                 self.begin_refresh();
-                notifications.success("Local model config loaded from disk");
+                notifications.success(Self::translator().text("local-model-notify-config-loaded"));
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "local-model-notify-load-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -206,11 +235,12 @@ impl LocalModelsPanel {
             return;
         };
         let Some(model_id) = self.pending_default_gguf_model.take() else {
-            notifications.error("No selected model for default GGUF file");
+            notifications.error(Self::translator().text("local-model-notify-no-selected-model"));
             return;
         };
         if !is_gguf_file(&path) {
-            notifications.error("Default model file must have a .gguf extension");
+            notifications
+                .error(Self::translator().text("local-model-notify-gguf-extension-required"));
             return;
         }
         let value = match gguf_manifest_relative_path(&path, &self.models_dir_path()) {
@@ -267,7 +297,7 @@ impl LocalModelsPanel {
 
     fn begin_upgrade(&mut self, summary: &ModelSummary, notifications: &mut NotificationCenter) {
         if self.install_cancel.is_some() {
-            notifications.error("Another model download is already running");
+            notifications.error(Self::translator().text("local-model-notify-download-running"));
             return;
         }
         self.begin_install(ModelInstallRequest {
@@ -275,9 +305,12 @@ impl LocalModelsPanel {
             revision: summary.revision.clone(),
             quantization: None,
         });
-        notifications.info(format!(
-            "Upgrading model '{}' from latest '{}'",
-            summary.model_id, summary.revision
+        notifications.info(Self::translator().text_args(
+            "local-model-notify-upgrading",
+            HashMap::from([
+                ("model_id", summary.model_id.clone()),
+                ("revision", summary.revision.clone()),
+            ]),
         ));
     }
 
@@ -326,7 +359,10 @@ impl LocalModelsPanel {
                     clear_receiver = true;
                     match result {
                         Ok(installed) => self.installed = installed,
-                        Err(err) => notifications.error(format!("Refresh failed: {err}")),
+                        Err(err) => notifications.error(Self::translator().text_args(
+                            "local-model-notify-refresh-failed",
+                            HashMap::from([("error", err)]),
+                        )),
                     }
                 }
                 ModelTaskMessage::Progress(progress) => {
@@ -342,32 +378,49 @@ impl LocalModelsPanel {
                     match result {
                         Ok(installed) => {
                             if installed.up_to_date {
-                                notifications.info(format!(
-                                    "Model '{}' is already up to date",
-                                    installed.manifest.model_id
+                                notifications.info(Self::translator().text_args(
+                                    "local-model-notify-up-to-date",
+                                    HashMap::from([(
+                                        "model_id",
+                                        installed.manifest.model_id.clone(),
+                                    )]),
                                 ));
                             } else {
-                                notifications.success(format!(
-                                    "Installed model '{}'",
-                                    installed.manifest.model_id
+                                notifications.success(Self::translator().text_args(
+                                    "local-model-notify-installed",
+                                    HashMap::from([(
+                                        "model_id",
+                                        installed.manifest.model_id.clone(),
+                                    )]),
                                 ));
                             }
                             refresh_after = true;
                         }
                         Err(err) if err == "operation cancelled" => {
-                            notifications.info("Model install cancelled");
+                            notifications.info(
+                                Self::translator().text("local-model-notify-install-cancelled"),
+                            );
                         }
-                        Err(err) => notifications.error(format!("Install failed: {err}")),
+                        Err(err) => notifications.error(Self::translator().text_args(
+                            "local-model-notify-install-failed",
+                            HashMap::from([("error", err)]),
+                        )),
                     }
                 }
                 ModelTaskMessage::Removed(result) => {
                     clear_receiver = true;
                     match result {
                         Ok(model_id) => {
-                            notifications.success(format!("Removed model '{model_id}'"));
+                            notifications.success(Self::translator().text_args(
+                                "local-model-notify-removed",
+                                HashMap::from([("model_id", model_id.clone())]),
+                            ));
                             refresh_after = true;
                         }
-                        Err(err) => notifications.error(format!("Remove failed: {err}")),
+                        Err(err) => notifications.error(Self::translator().text_args(
+                            "local-model-notify-remove-failed",
+                            HashMap::from([("error", err)]),
+                        )),
                     }
                 }
                 ModelTaskMessage::DefaultGgufUpdated(result) => {
@@ -381,11 +434,16 @@ impl LocalModelsPanel {
                             {
                                 summary.default_gguf_model_file = default_gguf_model_file;
                             }
-                            notifications
-                                .success(format!("Saved default GGUF file for model '{model_id}'"));
+                            notifications.success(Self::translator().text_args(
+                                "local-model-notify-gguf-saved",
+                                HashMap::from([("model_id", model_id.clone())]),
+                            ));
                         }
                         Err(err) => {
-                            notifications.error(format!("Failed to save default GGUF file: {err}"));
+                            notifications.error(Self::translator().text_args(
+                                "local-model-notify-gguf-save-failed",
+                                HashMap::from([("error", err)]),
+                            ));
                         }
                     }
                 }
@@ -403,22 +461,23 @@ impl LocalModelsPanel {
         if !self.install_window_open {
             return;
         }
+        let t = Self::translator();
         let mut open = self.install_window_open;
         let mut install_clicked = false;
         let mut cancel_clicked = false;
-        egui::Window::new("Install Model")
+        egui::Window::new(t.text("local-model-window-install"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ui.ctx(), |ui| {
-                ui.label("Download a complete Hugging Face repository snapshot.");
-                ui.label("Repository");
+                ui.label(t.text("local-model-install-desc"));
+                ui.label(t.text("local-model-install-repo"));
                 ui.text_edit_singleline(&mut self.install_form.repo_id);
-                ui.label("Branch / revision");
+                ui.label(t.text("local-model-install-revision"));
                 ui.text_edit_singleline(&mut self.install_form.revision);
                 ui.horizontal(|ui| {
-                    cancel_clicked = ui.button("Cancel").clicked();
-                    install_clicked = ui.button("Download").clicked();
+                    cancel_clicked = ui.button(t.text("local-model-install-cancel")).clicked();
+                    install_clicked = ui.button(t.text("local-model-install-download")).clicked();
                 });
             });
         if cancel_clicked {
@@ -429,7 +488,7 @@ impl LocalModelsPanel {
                 Ok(request) => {
                     open = false;
                     self.begin_install(request);
-                    notifications.info("Starting model download");
+                    notifications.info(t.text("local-model-notify-starting-download"));
                 }
                 Err(err) => notifications.error(err),
             }
@@ -445,13 +504,18 @@ impl LocalModelsPanel {
         if self.install_cancel.is_none() && self.progress_by_file.is_empty() {
             return;
         }
+        let t = Self::translator();
         let current_label = self.progress.as_ref().map(|progress| {
-            format!(
-                "File {} / {}: {}",
-                progress.file_index, progress.total_files, progress.file_name
+            t.text_args(
+                "local-model-download-file-label",
+                HashMap::from([
+                    ("index", progress.file_index.to_string()),
+                    ("total", progress.total_files.to_string()),
+                    ("name", progress.file_name.clone()),
+                ]),
             )
         });
-        egui::Window::new("Downloading Model")
+        egui::Window::new(t.text("local-model-window-downloading"))
             .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {
@@ -459,12 +523,12 @@ impl LocalModelsPanel {
                 if let Some(label) = current_label.as_ref() {
                     ui.label(label);
                 } else {
-                    ui.label("Preparing repository file list...");
+                    ui.label(t.text("local-model-download-preparing"));
                 }
                 if let Some(overall) = self.overall_progress() {
                     ui.add(
                         egui::ProgressBar::new(overall)
-                            .text("Overall progress")
+                            .text(t.text("local-model-download-overall"))
                             .desired_height(progress_height),
                     );
                 }
@@ -491,11 +555,11 @@ impl LocalModelsPanel {
                             );
                         }
                     });
-                if ui.button("Cancel Download").clicked()
+                if ui.button(t.text("local-model-download-cancel")).clicked()
                     && let Some(token) = self.install_cancel.as_ref()
                 {
                     token.cancel();
-                    notifications.info("Cancelling model download");
+                    notifications.info(t.text("local-model-notify-cancelling-download"));
                 }
             });
     }
@@ -528,9 +592,10 @@ impl LocalModelsPanel {
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
-        ui.label("Installed Models");
+        let t = Self::translator();
+        ui.label(t.text("local-model-installed-label"));
         if self.installed.is_empty() {
-            ui.label("No local models installed yet.");
+            ui.label(t.text("local-model-no-models"));
             return;
         }
         let mut delete_model_id = None;
@@ -551,16 +616,16 @@ impl LocalModelsPanel {
                     .column(Column::auto().at_least(120.0))
                     .header(22.0, |mut header| {
                         header.col(|ui| {
-                            ui.strong("Name");
+                            ui.strong(t.text("local-model-col-name"));
                         });
                         header.col(|ui| {
-                            ui.strong("Size");
+                            ui.strong(t.text("local-model-col-size"));
                         });
                         header.col(|ui| {
-                            ui.strong("Created");
+                            ui.strong(t.text("local-model-col-created"));
                         });
                         header.col(|ui| {
-                            ui.strong("Default Model File");
+                            ui.strong(t.text("local-model-col-default-file"));
                         });
                     })
                     .body(|body| {
@@ -586,9 +651,11 @@ impl LocalModelsPanel {
                             });
                             row.col(|ui| {
                                 if summary.default_gguf_model_file.is_some() {
-                                    ui.label(RichText::new("✓").strong());
+                                    ui.label(
+                                        RichText::new(t.text("local-model-default-set")).strong(),
+                                    );
                                 } else {
-                                    ui.label("—");
+                                    ui.label(t.text("local-model-default-none"));
                                 }
                             });
 
@@ -621,29 +688,45 @@ impl LocalModelsPanel {
         let Some(model_id) = self.delete_confirm.clone() else {
             return;
         };
-        egui::Window::new("Delete Local Model")
+        let t = Self::translator();
+        egui::Window::new(t.text("local-model-window-delete"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                ui.label(RichText::new(format!("Delete model '{model_id}'?")).strong());
+                ui.label(
+                    RichText::new(t.text_args(
+                        "local-model-delete-confirm-message",
+                        HashMap::from([("model_id", model_id.clone())]),
+                    ))
+                    .strong(),
+                );
                 ui.add_space(8.0);
-                ui.label("This removes the local snapshot files and manifest. Models currently bound in config cannot be deleted.");
+                ui.label(t.text("local-model-delete-confirm-info"));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button(t.text("local-model-delete-confirm-cancel"))
+                        .clicked()
+                    {
                         self.delete_confirm = None;
                     }
                     if ui
                         .add(egui::Button::new(
-                            RichText::new(format!("{} Delete", regular::TRASH))
-                                .color(ui.visuals().warn_fg_color),
+                            RichText::new(t.text_args(
+                                "local-model-delete-confirm-delete",
+                                HashMap::from([("icon", regular::TRASH.to_string())]),
+                            ))
+                            .color(ui.visuals().warn_fg_color),
                         ))
                         .clicked()
                     {
                         self.delete_confirm = None;
                         self.begin_remove(model_id.clone());
-                        notifications.info(format!("Removing model '{model_id}'"));
+                        notifications.info(Self::translator().text_args(
+                            "local-model-notify-removed",
+                            HashMap::from([("model_id", model_id.clone())]),
+                        ));
                     }
                 });
             });
@@ -717,9 +800,13 @@ fn model_row_context_menu(
     upgrade_summary: &mut Option<ModelSummary>,
     delete_model_id: &mut Option<String>,
 ) {
+    let t = LocalModelsPanel::translator();
     response.context_menu(|ui| {
         if ui
-            .button(format!("{} Upgrade", regular::ARROW_CLOCKWISE))
+            .button(t.text_args(
+                "local-model-ctx-upgrade",
+                HashMap::from([("icon", regular::ARROW_CLOCKWISE.to_string())]),
+            ))
             .clicked()
         {
             *upgrade_summary = Some(summary.clone());
@@ -728,8 +815,11 @@ fn model_row_context_menu(
         ui.separator();
         if ui
             .add(egui::Button::new(
-                RichText::new(format!("{} Delete", regular::TRASH))
-                    .color(ui.visuals().warn_fg_color),
+                RichText::new(t.text_args(
+                    "local-model-ctx-delete",
+                    HashMap::from([("icon", regular::TRASH.to_string())]),
+                ))
+                .color(ui.visuals().warn_fg_color),
             ))
             .clicked()
         {

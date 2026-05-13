@@ -6,6 +6,12 @@
 
 - 新增共享 `UiLanguage`、`LocaleDomain` 与 Fluent `Translator`，为桌面 GUI 和 WebUI 提供 English / 简体中文的嵌入式 i18n 基础能力
 - 新增分域 Fluent 资源，GUI 与 WebUI 使用独立 `gui.ftl` / `webui.ftl` key 集，并以英文资源作为 fallback
+- 新增 System 面板完整 i18n key 集（视图标签、目录标题、主机信息行标签、参数化文案、环境依赖检查、清除确认对话框、通知消息等），覆盖 `en-US/gui.ftl` 和 `zh-CN/gui.ftl`
+- 新增 System 面板 i18n 单元测试（视图标签、目录标题、主机信息标签、参数化 key 在英文/简体中文下的翻译验证）
+- 新增 ACP 面板完整 i18n key 集（统计区、代理表格、配置表单、全局设置、删除确认、详情窗口、测试提示窗口、内容块渲染、权限标签、通知消息等），覆盖 `en-US/gui.ftl` 和 `zh-CN/gui.ftl`
+- 新增 LLM 面板完整 i18n key 集（筛选栏、表格列标题、上下文菜单、审计详情窗口、排序标签、状态显示、通知消息等），覆盖 `en-US/gui.ftl` 和 `zh-CN/gui.ftl`
+- 新增 MCP 面板完整 i18n key 集（服务器表格、配置表单、全局设置、详情窗口、上下文菜单、状态标签、Markdown 详情、通知消息等），覆盖 `en-US/gui.ftl` 和 `zh-CN/gui.ftl`
+- 新增 ACP/LLM/MCP 面板 i18n 单元测试（各面板标签在英文/简体中文下的翻译验证）
 
 ## 2026-04-15
 

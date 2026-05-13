@@ -3,6 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{
     RuntimeRequestHandle, begin_restart_mcp_server_request, request_mcp_status, request_sync_mcp,
 };
+use crate::settings::current_ui_language;
 use crate::widgets::{ArrayEditor, KeyValueEditor, markdown};
 use egui::RichText;
 use egui_extras::{Column, TableBuilder};
@@ -11,8 +12,9 @@ use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, McpServerConfig, McpServerMode,
 };
 use klaw_mcp::{McpLifecycleState, McpRuntimeSnapshot, McpServerDetail, McpSyncResult};
+use klaw_ui_kit::{LocaleDomain, Translator};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -35,7 +37,7 @@ struct McpServerForm {
 }
 
 impl McpServerForm {
-    fn new() -> Self {
+    fn new(t: &Translator) -> Self {
         Self {
             original_id: None,
             id: String::new(),
@@ -43,15 +45,15 @@ impl McpServerForm {
             mode: McpServerMode::Stdio,
             tool_timeout_seconds: "60".to_string(),
             command: String::new(),
-            args_input: ArrayEditor::new("Args"),
-            env_input: KeyValueEditor::new("Env"),
+            args_input: ArrayEditor::new(t.text("mcp-form-args")),
+            env_input: KeyValueEditor::new(t.text("mcp-form-env")),
             cwd: String::new(),
             url: String::new(),
-            headers_input: KeyValueEditor::new("Headers"),
+            headers_input: KeyValueEditor::new(t.text("mcp-form-headers")),
         }
     }
 
-    fn edit(server: &McpServerConfig) -> Self {
+    fn edit(server: &McpServerConfig, t: &Translator) -> Self {
         Self {
             original_id: Some(server.id.clone()),
             id: server.id.clone(),
@@ -59,14 +61,15 @@ impl McpServerForm {
             mode: server.mode.clone(),
             tool_timeout_seconds: server.tool_timeout_seconds.to_string(),
             command: server.command.clone().unwrap_or_default(),
-            args_input: ArrayEditor::from_vec("Args", &server.args),
-            env_input: KeyValueEditor::from_map("Env", &server.env),
+            args_input: ArrayEditor::from_vec(t.text("mcp-form-args"), &server.args),
+            env_input: KeyValueEditor::from_map(t.text("mcp-form-env"), &server.env),
             cwd: server.cwd.clone().unwrap_or_default(),
             url: server.url.clone().unwrap_or_default(),
-            headers_input: KeyValueEditor::from_map("Headers", &server.headers),
+            headers_input: KeyValueEditor::from_map(t.text("mcp-form-headers"), &server.headers),
         }
     }
 
+    #[allow(dead_code)]
     fn title(&self) -> &'static str {
         if self.original_id.is_some() {
             "Edit MCP Server"
@@ -142,6 +145,10 @@ pub struct McpPanel {
 }
 
 impl McpPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -152,9 +159,12 @@ impl McpPanel {
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
                 self.schedule_status_refresh(false);
-                notifications.success("MCP config loaded from disk");
+                notifications.success(Self::translator().text("mcp-notify-config-loaded"));
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "mcp-notify-load-config-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -245,7 +255,7 @@ impl McpPanel {
                 self.apply_runtime_snapshot(result);
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
-                    notifications.success("MCP status refreshed");
+                    notifications.success(Self::translator().text("mcp-notify-status-refreshed"));
                 }
                 self.status_refresh_announce = false;
                 self.status_refresh_manual = false;
@@ -253,7 +263,10 @@ impl McpPanel {
             Ok(Err(err)) => {
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
-                    notifications.error(format!("Failed to refresh MCP status: {err}"));
+                    notifications.error(Self::translator().text_args(
+                        "mcp-notify-status-refresh-failed",
+                        HashMap::from([("error", err.to_string())]),
+                    ));
                 }
                 self.status_refresh_announce = false;
                 self.status_refresh_manual = false;
@@ -263,7 +276,7 @@ impl McpPanel {
                 self.status_fetch_rx = None;
                 if self.status_refresh_announce {
                     notifications
-                        .error("Failed to refresh MCP status: background task disconnected");
+                        .error(Self::translator().text("mcp-notify-status-refresh-disconnected"));
                 }
                 self.status_refresh_announce = false;
                 self.status_refresh_manual = false;
@@ -287,10 +300,16 @@ impl McpPanel {
         match result {
             Ok(snapshot) => {
                 self.apply_runtime_snapshot(snapshot);
-                notifications.success(format!("Restarted MCP server {}", target));
+                notifications.success(Self::translator().text_args(
+                    "mcp-notify-server-restarted",
+                    HashMap::from([("target", target.clone())]),
+                ));
             }
             Err(err) => {
-                notifications.error(format!("Failed to restart {}: {}", target, err));
+                notifications.error(Self::translator().text_args(
+                    "mcp-notify-restart-failed",
+                    HashMap::from([("target", target.clone()), ("error", err.to_string())]),
+                ));
             }
         }
     }
@@ -305,19 +324,22 @@ impl McpPanel {
                 self.sync_fetch_rx = None;
                 self.schedule_status_refresh(false);
                 if self.sync_announce {
-                    notifications.success("MCP runtime synchronized");
+                    notifications.success(Self::translator().text("mcp-notify-sync-success"));
                 }
                 self.sync_announce = false;
             }
             Ok(Err(err)) => {
                 self.sync_fetch_rx = None;
-                notifications.error(format!("Failed to sync MCP runtime: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "mcp-notify-sync-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 self.sync_announce = false;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.sync_fetch_rx = None;
-                notifications.error("Failed to sync MCP runtime: background task disconnected");
+                notifications.error(Self::translator().text("mcp-notify-sync-disconnected"));
                 self.sync_announce = false;
             }
         }
@@ -333,7 +355,7 @@ impl McpPanel {
         F: FnOnce(&mut AppConfig) -> Result<(), String>,
     {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("mcp-notify-store-unavailable"));
             return false;
         };
         match store.update_config(|config| mutate(config).map_err(ConfigError::InvalidConfig)) {
@@ -344,7 +366,10 @@ impl McpPanel {
                 true
             }
             Err(err) => {
-                notifications.error(format!("Save failed: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "mcp-notify-save-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 false
             }
         }
@@ -352,22 +377,25 @@ impl McpPanel {
 
     fn reload(&mut self, notifications: &mut NotificationCenter) {
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(Self::translator().text("mcp-notify-store-unavailable"));
             return;
         };
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
                 self.schedule_manager_sync(false);
-                notifications.success("Configuration reloaded from disk");
+                notifications.success(Self::translator().text("mcp-notify-config-reloaded"));
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "mcp-notify-reload-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn restart_server(&mut self, id: &str, notifications: &mut NotificationCenter) {
         if self.restart_request.is_some() {
-            notifications.info("An MCP server restart is already in progress");
+            notifications.info(Self::translator().text("mcp-notify-restart-already-in-progress"));
             return;
         }
         self.mark_server_restarting(id);
@@ -389,12 +417,14 @@ impl McpPanel {
     }
 
     fn open_add_server(&mut self) {
-        self.form = Some(McpServerForm::new());
+        let t = Self::translator();
+        self.form = Some(McpServerForm::new(&t));
     }
 
     fn open_edit_server(&mut self, id: &str) {
         if let Some(server) = self.config.mcp.servers.iter().find(|item| item.id == id) {
-            self.form = Some(McpServerForm::edit(server));
+            let t = Self::translator();
+            self.form = Some(McpServerForm::edit(server, &t));
         }
     }
 
@@ -403,7 +433,10 @@ impl McpPanel {
         let id_for_config = id.clone();
         self.save_config(
             notifications,
-            &format!("MCP server '{id}' deleted"),
+            &Self::translator().text_args(
+                "mcp-notify-server-deleted",
+                HashMap::from([("id", id.clone())]),
+            ),
             move |config| {
                 config.mcp.servers.retain(|s| s.id != id_for_config);
                 Ok(())
@@ -420,11 +453,15 @@ impl McpPanel {
         let Some(form) = self.form.clone() else {
             return;
         };
-        if self.save_config(notifications, "MCP server saved", move |config| {
-            let next = Self::apply_form(config.clone(), &form)?;
-            *config = next;
-            Ok(())
-        }) {
+        if self.save_config(
+            notifications,
+            &Self::translator().text("mcp-notify-server-saved"),
+            move |config| {
+                let next = Self::apply_form(config.clone(), &form)?;
+                *config = next;
+                Ok(())
+            },
+        ) {
             self.form = None;
         }
     }
@@ -432,7 +469,7 @@ impl McpPanel {
     fn apply_form(mut config: AppConfig, form: &McpServerForm) -> Result<AppConfig, String> {
         let server = form.to_config()?;
         if server.id.is_empty() {
-            return Err("MCP server ID cannot be empty".to_string());
+            return Err(Self::translator().text("mcp-error-server-id-empty"));
         }
 
         let mut replaced = false;
@@ -448,9 +485,9 @@ impl McpPanel {
 
         if !replaced {
             if config.mcp.servers.iter().any(|item| item.id == server.id) {
-                return Err(format!(
-                    "MCP server ID '{}' already exists, choose another ID",
-                    server.id
+                return Err(Self::translator().text_args(
+                    "mcp-error-server-id-duplicate",
+                    HashMap::from([("id", server.id.clone())]),
                 ));
             }
             config.mcp.servers.push(server);
@@ -476,21 +513,28 @@ impl McpPanel {
     fn open_detail_window(&mut self, server_id: &str) {
         let detail = self.server_details.get(server_id).cloned();
         let status = self.server_statuses.get(server_id).cloned();
+        let t = Self::translator();
         self.detail_window = Some(McpServerDetailWindow {
             server_id: server_id.to_string(),
-            markdown: build_server_detail_markdown(server_id, status.as_ref(), detail.as_ref()),
+            markdown: build_server_detail_markdown(server_id, status.as_ref(), detail.as_ref(), &t),
         });
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
         let mut save_clicked = false;
         let mut cancel_clicked = false;
+        let t = Self::translator();
 
         let Some(form) = self.form.as_mut() else {
             return;
         };
 
-        egui::Window::new(form.title())
+        let form_title = if form.original_id.is_some() {
+            t.text("mcp-form-title-edit")
+        } else {
+            t.text("mcp-form-title-add")
+        };
+        egui::Window::new(form_title)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
@@ -500,27 +544,35 @@ impl McpPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("ID");
+                        ui.label(t.text("mcp-form-id"));
                         ui.text_edit_singleline(&mut form.id);
                         ui.end_row();
 
-                        ui.label("Enabled");
+                        ui.label(t.text("mcp-form-enabled"));
                         ui.checkbox(&mut form.enabled, "");
                         ui.end_row();
 
-                        ui.label("Mode");
+                        ui.label(t.text("mcp-form-mode"));
                         egui::ComboBox::from_id_salt("mcp-mode")
                             .selected_text(match form.mode {
-                                McpServerMode::Stdio => "stdio",
-                                McpServerMode::Sse => "sse",
+                                McpServerMode::Stdio => t.text("mcp-mode-stdio"),
+                                McpServerMode::Sse => t.text("mcp-mode-sse"),
                             })
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut form.mode, McpServerMode::Stdio, "stdio");
-                                ui.selectable_value(&mut form.mode, McpServerMode::Sse, "sse");
+                                ui.selectable_value(
+                                    &mut form.mode,
+                                    McpServerMode::Stdio,
+                                    t.text("mcp-mode-stdio"),
+                                );
+                                ui.selectable_value(
+                                    &mut form.mode,
+                                    McpServerMode::Sse,
+                                    t.text("mcp-mode-sse"),
+                                );
                             });
                         ui.end_row();
 
-                        ui.label("Tool Timeout Seconds");
+                        ui.label(t.text("mcp-form-tool-timeout-seconds"));
                         ui.text_edit_singleline(&mut form.tool_timeout_seconds);
                         ui.end_row();
                     });
@@ -533,11 +585,11 @@ impl McpPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("Command");
+                                ui.label(t.text("mcp-form-command"));
                                 ui.text_edit_singleline(&mut form.command);
                                 ui.end_row();
 
-                                ui.label("CWD");
+                                ui.label(t.text("mcp-form-cwd"));
                                 ui.text_edit_singleline(&mut form.cwd);
                                 ui.end_row();
                             });
@@ -550,7 +602,7 @@ impl McpPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label("URL");
+                                ui.label(t.text("mcp-form-url"));
                                 ui.text_edit_singleline(&mut form.url);
                                 ui.end_row();
                             });
@@ -561,10 +613,10 @@ impl McpPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("mcp-btn-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("mcp-btn-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -583,6 +635,8 @@ impl McpPanel {
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
+
         let Some(ref mut timeout_text) = self.global_settings_form else {
             return;
         };
@@ -590,23 +644,23 @@ impl McpPanel {
         let mut save_clicked = false;
         let mut close = false;
 
-        egui::Window::new("MCP Settings")
+        egui::Window::new(t.text("mcp-window-global-settings"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 ui.set_width(320.0);
                 ui.horizontal(|ui| {
-                    ui.label("startup_timeout_seconds:");
+                    ui.label(t.text("mcp-form-startup-timeout-seconds"));
                     ui.add(egui::TextEdit::singleline(timeout_text).desired_width(80.0));
                 });
                 ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("mcp-btn-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("mcp-btn-cancel")).clicked() {
                         close = true;
                     }
                 });
@@ -616,15 +670,19 @@ impl McpPanel {
             let timeout = match timeout_text.trim().parse::<u64>() {
                 Ok(value) => value,
                 Err(_) => {
-                    notifications.error("startup_timeout_seconds must be a positive integer");
+                    notifications.error(t.text("mcp-error-startup-timeout-invalid"));
                     return;
                 }
             };
 
-            if self.save_config(notifications, "MCP settings saved", move |config| {
-                config.mcp.startup_timeout_seconds = timeout;
-                Ok(())
-            }) {
+            if self.save_config(
+                notifications,
+                &t.text("mcp-notify-settings-saved"),
+                move |config| {
+                    config.mcp.startup_timeout_seconds = timeout;
+                    Ok(())
+                },
+            ) {
                 self.global_settings_form = None;
             }
         }
@@ -634,28 +692,28 @@ impl McpPanel {
     }
 
     fn render_detail_window(&mut self, ctx: &egui::Context) {
+        let t = Self::translator();
         let Some(detail_window) = self.detail_window.as_mut() else {
             return;
         };
 
         let mut open = true;
-        egui::Window::new(format!("MCP Detail: {}", detail_window.server_id))
-            .open(&mut open)
-            .resizable(true)
-            .default_width(860.0)
-            .default_height(620.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt(("mcp-detail-scroll", &detail_window.server_id))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        markdown::render(
-                            ui,
-                            &mut self.detail_markdown_cache,
-                            &detail_window.markdown,
-                        )
-                    });
-            });
+        egui::Window::new(t.text_args(
+            "mcp-window-detail-title",
+            HashMap::from([("server_id", detail_window.server_id.clone())]),
+        ))
+        .open(&mut open)
+        .resizable(true)
+        .default_width(860.0)
+        .default_height(620.0)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("mcp-detail-scroll", &detail_window.server_id))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    markdown::render(ui, &mut self.detail_markdown_cache, &detail_window.markdown)
+                });
+        });
 
         if !open {
             self.detail_window = None;
@@ -677,38 +735,51 @@ impl PanelRenderer for McpPanel {
         self.refresh_status_if_due();
         ui.ctx().request_repaint_after(MCP_STATUS_POLL_INTERVAL);
 
+        let t = Self::translator();
+
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label(format!("Servers: {}", self.config.mcp.servers.len()));
+            ui.label(t.text_args(
+                "mcp-label-servers-count",
+                HashMap::from([("count", self.config.mcp.servers.len().to_string())]),
+            ));
             if self.sync_fetch_rx.is_some() {
                 ui.spinner();
-                ui.label("Applying MCP changes...");
+                ui.label(t.text("mcp-status-applying-changes"));
             }
             if self.status_fetch_rx.is_some() && self.status_refresh_manual {
                 ui.spinner();
-                ui.label("Refreshing runtime status...");
+                ui.label(t.text("mcp-status-refreshing"));
             }
             if self.restart_request.is_some() {
                 ui.spinner();
-                ui.label("Restarting MCP server...");
+                ui.label(t.text("mcp-status-restarting"));
             }
         });
         ui.separator();
 
         ui.horizontal(|ui| {
-            if ui.button(format!("{} Config", regular::GEAR)).clicked()
+            if ui
+                .button(t.text_args(
+                    "mcp-btn-config",
+                    HashMap::from([("icon", regular::GEAR.to_string())]),
+                ))
+                .clicked()
                 && self.global_settings_form.is_none()
             {
                 self.open_global_settings();
             }
-            if ui.button("Add").clicked() {
+            if ui.button(t.text("mcp-btn-add")).clicked() {
                 self.open_add_server();
             }
-            if ui.button("Reload").clicked() {
+            if ui.button(t.text("mcp-btn-reload")).clicked() {
                 self.reload(notifications);
             }
             if ui
-                .button(format!("{} Refresh Status", regular::ARROW_CLOCKWISE))
+                .button(t.text_args(
+                    "mcp-btn-refresh-status",
+                    HashMap::from([("icon", regular::ARROW_CLOCKWISE.to_string())]),
+                ))
                 .clicked()
             {
                 self.schedule_status_refresh(true);
@@ -726,7 +797,7 @@ impl PanelRenderer for McpPanel {
             .collect::<Vec<_>>();
 
         if server_ids.is_empty() {
-            ui.label("No MCP servers configured.");
+            ui.label(t.text("mcp-label-no-servers"));
         } else {
             let mut edit_server_id = None;
             let mut delete_server_id = None;
@@ -750,25 +821,25 @@ impl PanelRenderer for McpPanel {
                 .sense(egui::Sense::click())
                 .header(20.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("ID");
+                        ui.strong(t.text("mcp-col-id"));
                     });
                     header.col(|ui| {
-                        ui.strong("On");
+                        ui.strong(t.text("mcp-col-on"));
                     });
                     header.col(|ui| {
-                        ui.strong("Status");
+                        ui.strong(t.text("mcp-col-status"));
                     });
                     header.col(|ui| {
-                        ui.strong("Mode");
+                        ui.strong(t.text("mcp-col-mode"));
                     });
                     header.col(|ui| {
-                        ui.strong("Command/URL");
+                        ui.strong(t.text("mcp-col-command-url"));
                     });
                     header.col(|ui| {
-                        ui.strong("Args");
+                        ui.strong(t.text("mcp-col-args"));
                     });
                     header.col(|ui| {
-                        ui.strong("Tools");
+                        ui.strong(t.text("mcp-col-tools"));
                     });
                 })
                 .body(|body| {
@@ -795,22 +866,26 @@ impl PanelRenderer for McpPanel {
                             ui.label(&server.id);
                         });
                         row.col(|ui| {
-                            ui.label(if server.enabled { "yes" } else { "no" });
+                            ui.label(if server.enabled {
+                                t.text("mcp-label-enabled-yes")
+                            } else {
+                                t.text("mcp-label-enabled-no")
+                            });
                         });
                         row.col(|ui| {
                             ui.label(
-                                RichText::new(server_state_label(state))
+                                RichText::new(server_state_label(state, &t))
                                     .color(server_state_color(state)),
                             );
                         });
                         row.col(|ui| {
                             ui.label(match server.mode {
-                                McpServerMode::Stdio => "stdio",
-                                McpServerMode::Sse => "sse",
+                                McpServerMode::Stdio => t.text("mcp-mode-stdio"),
+                                McpServerMode::Sse => t.text("mcp-mode-sse"),
                             });
                         });
                         row.col(|ui| {
-                            ui.label(command_display(server));
+                            ui.label(command_display(server, &t));
                         });
                         row.col(|ui| {
                             ui.label(server.args.len().to_string());
@@ -831,26 +906,44 @@ impl PanelRenderer for McpPanel {
                         let server_id_clone = server_id.clone();
                         response.context_menu(|ui| {
                             if ui
-                                .button(format!("{} Detail", regular::FILE_TEXT))
+                                .button(t.text_args(
+                                    "mcp-btn-detail",
+                                    HashMap::from([("icon", regular::FILE_TEXT.to_string())]),
+                                ))
                                 .clicked()
                             {
                                 detail_server_id = Some(server_id_clone.clone());
                                 ui.close();
                             }
                             if ui
-                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .button(t.text_args(
+                                    "mcp-btn-edit",
+                                    HashMap::from([("icon", regular::PENCIL_SIMPLE.to_string())]),
+                                ))
                                 .clicked()
                             {
                                 edit_server_id = Some(server_id_clone.clone());
                                 ui.close();
                             }
-                            if ui.button(format!("{} Config", regular::GEAR)).clicked() {
+                            if ui
+                                .button(t.text_args(
+                                    "mcp-btn-config",
+                                    HashMap::from([("icon", regular::GEAR.to_string())]),
+                                ))
+                                .clicked()
+                            {
                                 open_settings_from_menu = true;
                                 ui.close();
                             }
                             if can_restart_server(server)
                                 && ui
-                                    .button(format!("{} Restart", regular::ARROW_CLOCKWISE))
+                                    .button(t.text_args(
+                                        "mcp-btn-restart",
+                                        HashMap::from([(
+                                            "icon",
+                                            regular::ARROW_CLOCKWISE.to_string(),
+                                        )]),
+                                    ))
                                     .clicked()
                             {
                                 restart_server_id = Some(server_id_clone.clone());
@@ -859,8 +952,11 @@ impl PanelRenderer for McpPanel {
                             ui.separator();
                             if ui
                                 .add(egui::Button::new(
-                                    RichText::new(format!("{} Delete", regular::TRASH))
-                                        .color(egui::Color32::RED),
+                                    RichText::new(t.text_args(
+                                        "mcp-btn-delete",
+                                        HashMap::from([("icon", regular::TRASH.to_string())]),
+                                    ))
+                                    .color(egui::Color32::RED),
                                 ))
                                 .clicked()
                             {
@@ -898,30 +994,56 @@ fn build_server_detail_markdown(
     server_id: &str,
     status: Option<&ServerRuntimeStatus>,
     detail: Option<&McpServerDetail>,
+    translator: &Translator,
 ) -> String {
     let state = status
-        .map(|item| server_state_label(item.state))
-        .unwrap_or(server_state_label(McpLifecycleState::Stopped));
+        .map(|item| server_state_label(item.state, translator))
+        .unwrap_or(server_state_label(McpLifecycleState::Stopped, translator));
     let tool_count = status.map(|item| item.tool_count).unwrap_or(0);
     let last_error = status
         .and_then(|item| item.last_error.as_deref())
         .unwrap_or("-");
     let tools_list_response = detail
         .and_then(|item| item.tools_list_response.as_ref())
-        .map(pretty_json)
-        .unwrap_or_else(|| "null".to_string());
+        .map(|v| pretty_json(v, translator))
+        .unwrap_or_else(|| translator.text("mcp-detail-tools-list-null"));
 
     format!(
-        "# MCP Server Detail\n\n- Server: `{server_id}`\n- State: `{state}`\n- Tools: `{tool_count}`\n- Last Error: `{last_error}`\n\n## tools/list response\n\n```json\n{tools_list_response}\n```"
+        "# {}\n\n- {}\n- {}\n- {}\n- {}\n\n## {}\n\n```json\n{tools_list_response}\n```",
+        translator.text("mcp-detail-heading"),
+        translator.text_args(
+            "mcp-detail-server",
+            HashMap::from([("server_id", server_id.to_string())])
+        ),
+        translator.text_args(
+            "mcp-detail-state",
+            HashMap::from([("state", state.clone())])
+        ),
+        translator.text_args(
+            "mcp-detail-tools",
+            HashMap::from([("tool_count", tool_count.to_string())])
+        ),
+        translator.text_args(
+            "mcp-detail-last-error",
+            HashMap::from([("last_error", last_error.to_string())])
+        ),
+        translator.text("mcp-detail-tools-list-heading"),
     )
 }
 
-fn pretty_json(value: &Value) -> String {
-    serde_json::to_string_pretty(value)
-        .unwrap_or_else(|err| format!("{{\"error\":\"failed to render json: {err}\"}}"))
+fn pretty_json(value: &Value, translator: &Translator) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|err| {
+        format!(
+            "{{\"error\":\"{}\"}}",
+            translator.text_args(
+                "mcp-detail-json-render-error",
+                HashMap::from([("error", err.to_string())])
+            )
+        )
+    })
 }
 
-fn command_display(server: &McpServerConfig) -> String {
+fn command_display(server: &McpServerConfig, translator: &Translator) -> String {
     match server.mode {
         McpServerMode::Stdio => {
             let mut parts = Vec::new();
@@ -933,12 +1055,15 @@ fn command_display(server: &McpServerConfig) -> String {
             }
             parts.extend(server.args.iter().cloned());
             if parts.is_empty() {
-                "-".to_string()
+                translator.text("mcp-placeholder-none")
             } else {
                 parts.join(" ")
             }
         }
-        McpServerMode::Sse => server.url.clone().unwrap_or_else(|| "-".to_string()),
+        McpServerMode::Sse => server
+            .url
+            .clone()
+            .unwrap_or_else(|| translator.text("mcp-placeholder-none")),
     }
 }
 
@@ -946,12 +1071,12 @@ fn can_restart_server(server: &McpServerConfig) -> bool {
     server.mode == McpServerMode::Stdio && server.enabled
 }
 
-fn server_state_label(state: McpLifecycleState) -> &'static str {
+fn server_state_label(state: McpLifecycleState, translator: &Translator) -> String {
     match state {
-        McpLifecycleState::Starting => "starting",
-        McpLifecycleState::Running => "running",
-        McpLifecycleState::Stopped => "stopped",
-        McpLifecycleState::Failed => "failed",
+        McpLifecycleState::Starting => translator.text("mcp-state-starting"),
+        McpLifecycleState::Running => translator.text("mcp-state-running"),
+        McpLifecycleState::Stopped => translator.text("mcp-state-stopped"),
+        McpLifecycleState::Failed => translator.text("mcp-state-failed"),
     }
 }
 
@@ -967,11 +1092,17 @@ fn server_state_color(state: McpLifecycleState) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_ui_kit::UiLanguage;
+
+    fn test_translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, UiLanguage::English)
+    }
 
     #[test]
     fn apply_form_adds_new_server() {
+        let t = test_translator();
         let config = AppConfig::default();
-        let mut form = McpServerForm::new();
+        let mut form = McpServerForm::new(&t);
         form.id = "docs".to_string();
         form.mode = McpServerMode::Sse;
         form.url = "https://example.com/sse".to_string();
@@ -983,6 +1114,7 @@ mod tests {
 
     #[test]
     fn apply_form_rejects_duplicate_id() {
+        let t = test_translator();
         let mut config = AppConfig::default();
         config.mcp.servers.push(McpServerConfig {
             id: "docs".to_string(),
@@ -997,7 +1129,7 @@ mod tests {
             headers: BTreeMap::new(),
         });
 
-        let mut form = McpServerForm::new();
+        let mut form = McpServerForm::new(&t);
         form.id = "docs".to_string();
 
         let err = McpPanel::apply_form(config, &form).expect_err("duplicate should fail");
@@ -1007,6 +1139,7 @@ mod tests {
 
     #[test]
     fn apply_form_edits_existing_server() {
+        let t = test_translator();
         let mut config = AppConfig::default();
         config.mcp.servers.push(McpServerConfig {
             id: "docs".to_string(),
@@ -1028,7 +1161,7 @@ mod tests {
             .find(|item| item.id == "docs")
             .expect("server should exist")
             .clone();
-        let mut form = McpServerForm::edit(&source);
+        let mut form = McpServerForm::edit(&source, &t);
         form.command = "new".to_string();
 
         let updated = McpPanel::apply_form(config, &form).expect("should apply");
@@ -1044,18 +1177,20 @@ mod tests {
 
     #[test]
     fn server_status_defaults_to_stopped_without_runtime_data() {
+        let t = test_translator();
         let panel = McpPanel::default();
 
         assert_eq!(panel.server_state("missing"), McpLifecycleState::Stopped);
         assert_eq!(
-            server_state_label(panel.server_state("missing")),
-            server_state_label(McpLifecycleState::Stopped)
+            server_state_label(panel.server_state("missing"), &t),
+            server_state_label(McpLifecycleState::Stopped, &t)
         );
         assert_eq!(panel.server_tool_count("missing"), 0);
     }
 
     #[test]
     fn command_display_joins_stdio_command_and_args() {
+        let t = test_translator();
         let server = McpServerConfig {
             id: "browser".to_string(),
             enabled: true,
@@ -1069,7 +1204,7 @@ mod tests {
             headers: BTreeMap::new(),
         };
 
-        assert_eq!(command_display(&server), "npx @browsermcp/mcp@latest");
+        assert_eq!(command_display(&server, &t), "npx @browsermcp/mcp@latest");
     }
 
     #[test]
@@ -1133,10 +1268,20 @@ mod tests {
 
     #[test]
     fn server_state_helpers_define_distinct_labels_and_colors() {
-        assert_eq!(server_state_label(McpLifecycleState::Starting), "starting");
-        assert_eq!(server_state_label(McpLifecycleState::Running), "running");
-        assert_eq!(server_state_label(McpLifecycleState::Stopped), "stopped");
-        assert_eq!(server_state_label(McpLifecycleState::Failed), "failed");
+        let t = test_translator();
+        assert_eq!(
+            server_state_label(McpLifecycleState::Starting, &t),
+            "starting"
+        );
+        assert_eq!(
+            server_state_label(McpLifecycleState::Running, &t),
+            "running"
+        );
+        assert_eq!(
+            server_state_label(McpLifecycleState::Stopped, &t),
+            "stopped"
+        );
+        assert_eq!(server_state_label(McpLifecycleState::Failed, &t), "failed");
 
         assert_ne!(
             server_state_color(McpLifecycleState::Stopped),
