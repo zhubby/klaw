@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::voice_test::{RecordingCapture, RecordingHandle};
 use egui::{Color32, RichText};
 use egui_phosphor::regular;
@@ -7,8 +8,10 @@ use klaw_config::{
     AppConfig, AssemblyAiVoiceConfig, ConfigError, ConfigSnapshot, ConfigStore,
     DeepgramVoiceConfig, ElevenLabsVoiceConfig, SttProviderKind, TtsProviderKind, VoiceConfig,
 };
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
 use klaw_voice::{SttInput, TtsInput, VoiceService};
 use rodio::{Decoder, OutputStream, Sink};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
@@ -183,12 +186,12 @@ impl VoiceConfigTab {
         Self::Elevenlabs,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self, t: &Translator) -> String {
         match self {
-            Self::General => "General",
-            Self::Deepgram => "Deepgram",
-            Self::Assemblyai => "AssemblyAI",
-            Self::Elevenlabs => "ElevenLabs",
+            Self::General => t.text("voice-config-tab-general"),
+            Self::Deepgram => t.text("voice-config-tab-deepgram"),
+            Self::Assemblyai => t.text("voice-config-tab-assemblyai"),
+            Self::Elevenlabs => t.text("voice-config-tab-elevenlabs"),
         }
     }
 }
@@ -200,10 +203,10 @@ enum VoiceTestMode {
 }
 
 impl VoiceTestMode {
-    fn label(self) -> &'static str {
+    fn label(self, t: &Translator) -> String {
         match self {
-            Self::Stt => "STT Test",
-            Self::Tts => "TTS Test",
+            Self::Stt => t.text("voice-stt-tab"),
+            Self::Tts => t.text("voice-tts-tab"),
         }
     }
 
@@ -309,6 +312,10 @@ impl Default for VoicePanel {
 }
 
 impl VoicePanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -335,8 +342,9 @@ impl VoicePanel {
     }
 
     fn save_config(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("voice-notify-store-unavailable"));
             return;
         };
 
@@ -350,27 +358,35 @@ impl VoicePanel {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
                 self.config_window_open = false;
-                notifications.success("Voice config saved");
+                notifications.success(t.text("voice-notify-config-saved"));
             }
-            Err(err) => notifications.error(format!("Save failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "voice-notify-save-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn reload_config(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("voice-notify-store-unavailable"));
             return;
         };
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
-                notifications.success("Voice config reloaded from disk");
+                notifications.success(t.text("voice-notify-config-reloaded"));
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "voice-notify-reload-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn poll_stt_result(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(rx) = self.stt_result_rx.as_ref() else {
             return;
         };
@@ -378,7 +394,7 @@ impl VoicePanel {
             Ok(Ok(result)) => {
                 self.stt_result_rx = None;
                 self.stt_state = SttTestState::Completed(result);
-                notifications.success("Voice transcription test completed");
+                notifications.success(t.text("voice-notify-stt-completed"));
             }
             Ok(Err(err)) => {
                 self.stt_result_rx = None;
@@ -388,7 +404,7 @@ impl VoicePanel {
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.stt_result_rx = None;
-                let message = "Voice STT test worker disconnected unexpectedly".to_string();
+                let message = t.text("voice-notify-stt-disconnected");
                 self.stt_state = SttTestState::Failed(message.clone());
                 notifications.error(message);
             }
@@ -396,6 +412,7 @@ impl VoicePanel {
     }
 
     fn poll_tts_result(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(rx) = self.tts_result_rx.as_ref() else {
             return;
         };
@@ -403,9 +420,9 @@ impl VoicePanel {
             Ok(Ok(result)) => {
                 self.tts_result_rx = None;
                 self.tts_state = TtsTestState::Completed(result.clone());
-                notifications.success(format!(
-                    "Voice synthesis completed and saved to {}",
-                    result.output_path.display()
+                notifications.success(t.text_args(
+                    "voice-notify-tts-completed",
+                    HashMap::from([("path", result.output_path.display().to_string())]),
                 ));
             }
             Ok(Err(err)) => {
@@ -416,7 +433,7 @@ impl VoicePanel {
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.tts_result_rx = None;
-                let message = "Voice TTS test worker disconnected unexpectedly".to_string();
+                let message = t.text("voice-notify-tts-disconnected");
                 self.tts_state = TtsTestState::Failed(message.clone());
                 notifications.error(message);
             }
@@ -424,12 +441,13 @@ impl VoicePanel {
     }
 
     fn start_recording(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.recording.is_some() {
-            notifications.info("Recording is already in progress");
+            notifications.info(t.text("voice-notify-recording-in-progress"));
             return;
         }
         if self.stt_result_rx.is_some() {
-            notifications.info("Transcription is still running");
+            notifications.info(t.text("voice-notify-transcription-running"));
             return;
         }
         match RecordingHandle::start_default() {
@@ -440,7 +458,7 @@ impl VoicePanel {
                     sample_rate_hz: handle.sample_rate_hz(),
                     channels: handle.channels(),
                 };
-                notifications.success("Microphone recording started");
+                notifications.success(t.text("voice-notify-recording-started"));
                 self.recording = Some(handle);
             }
             Err(err) => {
@@ -451,8 +469,9 @@ impl VoicePanel {
     }
 
     fn stop_recording(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(handle) = self.recording.take() else {
-            notifications.info("No recording is currently running");
+            notifications.info(t.text("voice-notify-no-recording"));
             return;
         };
 
@@ -484,12 +503,13 @@ impl VoicePanel {
             let outcome = run_transcription_test(capture, voice_config);
             let _ = tx.send(outcome);
         });
-        notifications.info("Recording stopped. Uploading audio for transcription...");
+        notifications.info(t.text("voice-notify-recording-stopped"));
     }
 
     fn start_tts_generation(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.tts_result_rx.is_some() {
-            notifications.info("Synthesis is still running");
+            notifications.info(t.text("voice-notify-synthesis-running"));
             return;
         }
         let text = self.tts_input_text.trim().to_string();
@@ -517,12 +537,13 @@ impl VoicePanel {
             let outcome = run_tts_test(text, requested_voice_id, voice_config);
             let _ = tx.send(outcome);
         });
-        notifications.info("Submitting text to the configured TTS provider...");
+        notifications.info(t.text("voice-notify-tts-submitting"));
     }
 
     fn play_tts_output(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let TtsTestState::Completed(result) = &self.tts_state else {
-            notifications.info("Generate TTS audio before playback");
+            notifications.info(t.text("voice-notify-tts-no-output"));
             return;
         };
         let result = result.clone();
@@ -532,28 +553,40 @@ impl VoicePanel {
         let file = match File::open(&result.output_path) {
             Ok(file) => file,
             Err(err) => {
-                notifications.error(format!("Failed to open generated audio: {err}"));
+                notifications.error(t.text_args(
+                    "voice-notify-tts-open-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 return;
             }
         };
         let stream = match OutputStream::try_default() {
             Ok(stream) => stream,
             Err(err) => {
-                notifications.error(format!("Failed to open audio output device: {err}"));
+                notifications.error(t.text_args(
+                    "voice-notify-tts-device-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 return;
             }
         };
         let sink = match Sink::try_new(&stream.1) {
             Ok(sink) => sink,
             Err(err) => {
-                notifications.error(format!("Failed to create playback sink: {err}"));
+                notifications.error(t.text_args(
+                    "voice-notify-tts-sink-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 return;
             }
         };
         let decoder = match Decoder::new(BufReader::new(file)) {
             Ok(decoder) => decoder,
             Err(err) => {
-                notifications.error(format!("Failed to decode generated audio: {err}"));
+                notifications.error(t.text_args(
+                    "voice-notify-tts-decode-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 return;
             }
         };
@@ -565,7 +598,7 @@ impl VoicePanel {
             sink,
             path: result.output_path.clone(),
         });
-        notifications.success("Playing generated audio");
+        notifications.success(t.text("voice-notify-tts-playing"));
     }
 
     fn stop_playback(&mut self) {
@@ -589,14 +622,15 @@ impl VoicePanel {
         ctx: &egui::Context,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         let mut open = self.config_window_open;
-        egui::Window::new("Voice Config")
+        egui::Window::new(t.text("voice-config-title"))
             .id(egui::Id::new("voice-config-window"))
             .open(&mut open)
             .resizable(true)
             .default_width(720.0)
             .show(ctx, |ui| {
-                ui.label("Edit voice provider configuration stored in config.toml.");
+                ui.label(t.text("voice-config-subtitle"));
                 ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -607,10 +641,22 @@ impl VoicePanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Reload").clicked() {
+                    if ui
+                        .button(t.text_args(
+                            "voice-config-btn-reload",
+                            HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                        ))
+                        .clicked()
+                    {
                         self.reload_config(notifications);
                     }
-                    if ui.button("Save").clicked() {
+                    if ui
+                        .button(t.text_args(
+                            "voice-config-btn-save",
+                            HashMap::from([("icon", regular::FLOPPY_DISK.to_string())]),
+                        ))
+                        .clicked()
+                    {
                         self.save_config(notifications);
                     }
                 });
@@ -619,10 +665,11 @@ impl VoicePanel {
     }
 
     fn render_config_tabs(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         ui.horizontal_wrapped(|ui| {
             for tab in VoiceConfigTab::ALL {
                 if ui
-                    .selectable_label(self.config_tab == tab, tab.label())
+                    .selectable_label(self.config_tab == tab, tab.label(&t))
                     .clicked()
                 {
                     self.config_tab = tab;
@@ -632,10 +679,11 @@ impl VoicePanel {
     }
 
     fn render_selected_config_tab(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         match self.config_tab {
             VoiceConfigTab::General => self.render_general_config_tab(ui),
             VoiceConfigTab::Deepgram => {
-                ui.strong("Deepgram");
+                ui.strong(t.text("voice-config-tab-deepgram"));
                 ui.add_space(6.0);
                 render_secret_provider_section(
                     ui,
@@ -644,12 +692,16 @@ impl VoicePanel {
                     &mut self.config_form.deepgram_api_key_env,
                     &mut self.config_form.deepgram_base_url,
                     &mut self.config_form.deepgram_streaming_base_url,
-                    Some((&mut self.config_form.deepgram_stt_model, "STT Model")),
+                    Some((
+                        &mut self.config_form.deepgram_stt_model,
+                        t.text("voice-cfg-label-stt-model"),
+                    )),
                     None,
+                    &t,
                 );
             }
             VoiceConfigTab::Assemblyai => {
-                ui.strong("AssemblyAI");
+                ui.strong(t.text("voice-config-tab-assemblyai"));
                 ui.add_space(6.0);
                 render_secret_provider_section(
                     ui,
@@ -658,12 +710,16 @@ impl VoicePanel {
                     &mut self.config_form.assemblyai_api_key_env,
                     &mut self.config_form.assemblyai_base_url,
                     &mut self.config_form.assemblyai_streaming_base_url,
-                    Some((&mut self.config_form.assemblyai_stt_model, "STT Model")),
+                    Some((
+                        &mut self.config_form.assemblyai_stt_model,
+                        t.text("voice-cfg-label-stt-model"),
+                    )),
                     None,
+                    &t,
                 );
             }
             VoiceConfigTab::Elevenlabs => {
-                ui.strong("ElevenLabs");
+                ui.strong(t.text("voice-config-tab-elevenlabs"));
                 ui.add_space(6.0);
                 render_secret_provider_section(
                     ui,
@@ -674,37 +730,55 @@ impl VoicePanel {
                     &mut self.config_form.elevenlabs_streaming_base_url,
                     Some((
                         &mut self.config_form.elevenlabs_default_model,
-                        "Default Model",
+                        t.text("voice-cfg-label-default-model"),
                     )),
                     Some((
                         &mut self.config_form.elevenlabs_default_voice_id,
-                        "Provider Default Voice ID",
+                        t.text("voice-cfg-label-provider-default-voice-id"),
                     )),
+                    &t,
                 );
             }
         }
     }
 
     fn render_general_config_tab(&mut self, ui: &mut egui::Ui) {
-        ui.strong("General");
+        let t = Self::translator();
+        ui.strong(t.text("voice-config-tab-general"));
         ui.add_space(6.0);
         egui::Grid::new("voice-config-general-grid")
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Enabled");
-                ui.checkbox(&mut self.config_form.enabled, "Enable voice runtime");
+                label_with_hint(
+                    ui,
+                    &t.text("voice-cfg-label-enabled"),
+                    &t.text("voice-cfg-hint-enabled"),
+                );
+                ui.add(toggle(&mut self.config_form.enabled));
                 ui.end_row();
 
-                ui.label("Default Language");
+                label_with_hint(
+                    ui,
+                    &t.text("voice-cfg-label-default-language"),
+                    &t.text("voice-cfg-label-default-language"),
+                );
                 ui.text_edit_singleline(&mut self.config_form.default_language);
                 ui.end_row();
 
-                ui.label("Default Voice ID");
+                label_with_hint(
+                    ui,
+                    &t.text("voice-cfg-label-default-voice-id"),
+                    &t.text("voice-cfg-label-default-voice-id"),
+                );
                 ui.text_edit_singleline(&mut self.config_form.default_voice_id);
                 ui.end_row();
 
-                ui.label("STT Provider");
+                label_with_hint(
+                    ui,
+                    &t.text("voice-cfg-label-stt-provider"),
+                    &t.text("voice-cfg-label-stt-provider"),
+                );
                 egui::ComboBox::from_id_salt("voice-stt-provider")
                     .selected_text(self.config_form.stt_provider.as_str())
                     .show_ui(ui, |ui| {
@@ -721,7 +795,11 @@ impl VoicePanel {
                     });
                 ui.end_row();
 
-                ui.label("TTS Provider");
+                label_with_hint(
+                    ui,
+                    &t.text("voice-cfg-label-tts-provider"),
+                    &t.text("voice-cfg-label-tts-provider"),
+                );
                 egui::ComboBox::from_id_salt("voice-tts-provider")
                     .selected_text(self.config_form.tts_provider.as_str())
                     .show_ui(ui, |ui| {
@@ -736,10 +814,11 @@ impl VoicePanel {
     }
 
     fn render_test_mode_tabs(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         ui.horizontal(|ui| {
             for mode in [VoiceTestMode::Stt, VoiceTestMode::Tts] {
                 let selected = self.test_mode == mode;
-                let label = format!("{} {}", mode.icon(), mode.label());
+                let label = format!("{} {}", mode.icon(), mode.label(&t));
                 if ui.selectable_label(selected, label).clicked() {
                     self.test_mode = mode;
                 }
@@ -752,7 +831,8 @@ impl VoicePanel {
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
-        ui.label("Capture live microphone audio and send it to the configured STT provider.");
+        let t = Self::translator();
+        ui.label(t.text("voice-stt-subtitle"));
         ui.add_space(6.0);
 
         ui.horizontal(|ui| {
@@ -760,7 +840,10 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     !recording && self.stt_result_rx.is_none(),
-                    egui::Button::new(format!("{} Start Recording", regular::MICROPHONE)),
+                    egui::Button::new(t.text_args(
+                        "voice-stt-btn-start",
+                        HashMap::from([("icon", regular::MICROPHONE.to_string())]),
+                    )),
                 )
                 .clicked()
             {
@@ -769,7 +852,10 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     recording,
-                    egui::Button::new(format!("{} Stop Recording", regular::STOP)),
+                    egui::Button::new(t.text_args(
+                        "voice-stt-btn-stop",
+                        HashMap::from([("icon", regular::STOP.to_string())]),
+                    )),
                 )
                 .clicked()
             {
@@ -779,7 +865,7 @@ impl VoicePanel {
 
         match &self.stt_state {
             SttTestState::Idle => {
-                ui.label("Press Start Recording to begin a microphone-to-transcript test.");
+                ui.label(t.text("voice-stt-idle-hint"));
             }
             SttTestState::Recording {
                 started_at,
@@ -790,23 +876,33 @@ impl VoicePanel {
                 ui.horizontal(|ui| {
                     ui.colored_label(Color32::from_rgb(220, 38, 38), "●");
                     ui.label(
-                        RichText::new("Recording")
+                        RichText::new(t.text("voice-stt-recording-label"))
                             .color(Color32::from_rgb(220, 38, 38))
                             .strong(),
                     );
                 });
                 let elapsed_ms = started_at.elapsed().as_millis() as u64;
-                ui.label(format!(
-                    "Recording from {device_name} at {sample_rate_hz} Hz / {channels} ch for {elapsed_ms} ms"
+                ui.label(t.text_args(
+                    "voice-stt-recording-detail",
+                    HashMap::from([
+                        ("device", device_name.clone()),
+                        ("sample_rate", sample_rate_hz.to_string()),
+                        ("channels", channels.to_string()),
+                        ("elapsed", elapsed_ms.to_string()),
+                    ]),
                 ));
             }
             SttTestState::Transcribing {
                 started_at,
                 capture_duration_ms,
             } => {
-                ui.label(format!(
-                    "Transcribing {capture_duration_ms} ms recording... queued for {} ms",
-                    started_at.elapsed().as_millis()
+                let queued_ms = started_at.elapsed().as_millis();
+                ui.label(t.text_args(
+                    "voice-stt-transcribing-detail",
+                    HashMap::from([
+                        ("duration", capture_duration_ms.to_string()),
+                        ("queued", queued_ms.to_string()),
+                    ]),
                 ));
             }
             SttTestState::Completed(result) => {
@@ -814,30 +910,37 @@ impl VoicePanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Provider");
+                        ui.label(t.text("voice-stt-col-provider"));
                         ui.monospace(&result.provider_name);
                         ui.end_row();
 
-                        ui.label("Input Device");
+                        ui.label(t.text("voice-stt-col-input-device"));
                         ui.label(&result.device_name);
                         ui.end_row();
 
-                        ui.label("Capture Duration");
-                        ui.label(format!("{} ms", result.capture_duration_ms));
-                        ui.end_row();
-
-                        ui.label("Audio Format");
-                        ui.label(format!(
-                            "{} Hz / {} ch / {} samples",
-                            result.sample_rate_hz, result.channels, result.sample_count
+                        ui.label(t.text("voice-stt-col-capture-duration"));
+                        ui.label(t.text_args(
+                            "voice-stt-duration-ms",
+                            HashMap::from([("value", result.capture_duration_ms.to_string())]),
                         ));
                         ui.end_row();
 
-                        ui.label("Detected Language");
+                        ui.label(t.text("voice-stt-col-audio-format"));
+                        ui.label(t.text_args(
+                            "voice-stt-audio-format-detail",
+                            HashMap::from([
+                                ("sample_rate", result.sample_rate_hz.to_string()),
+                                ("channels", result.channels.to_string()),
+                                ("samples", result.sample_count.to_string()),
+                            ]),
+                        ));
+                        ui.end_row();
+
+                        ui.label(t.text("voice-stt-col-detected-language"));
                         ui.label(result.language.as_deref().unwrap_or("-"));
                         ui.end_row();
 
-                        ui.label("Confidence");
+                        ui.label(t.text("voice-stt-col-confidence"));
                         ui.label(
                             result
                                 .confidence
@@ -846,17 +949,22 @@ impl VoicePanel {
                         );
                         ui.end_row();
 
-                        ui.label("Provider Duration");
+                        ui.label(t.text("voice-stt-col-provider-duration"));
                         ui.label(
                             result
                                 .duration_ms
-                                .map(|value| format!("{value} ms"))
+                                .map(|value| {
+                                    t.text_args(
+                                        "voice-stt-provider-duration-value",
+                                        HashMap::from([("value", value.to_string())]),
+                                    )
+                                })
                                 .unwrap_or_else(|| "-".to_string()),
                         );
                         ui.end_row();
                     });
                 ui.add_space(8.0);
-                ui.strong("Transcript");
+                ui.strong(t.text("voice-stt-section-transcript"));
                 let mut transcript = result.transcript.clone();
                 ui.add(
                     egui::TextEdit::multiline(&mut transcript)
@@ -875,22 +983,31 @@ impl VoicePanel {
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
-        ui.label("Enter text, synthesize it through the configured TTS provider, save it into tmp, and play it back inside the GUI.");
+        let t = Self::translator();
+        ui.label(t.text("voice-tts-subtitle"));
         ui.add_space(6.0);
 
-        ui.label("Text");
+        label_with_hint(
+            ui,
+            &t.text("voice-tts-label-text"),
+            &t.text("voice-tts-hint-text"),
+        );
         ui.add(
             egui::TextEdit::multiline(&mut self.tts_input_text)
                 .desired_rows(TTS_INPUT_ROWS)
-                .hint_text("Type text to synthesize into speech..."),
+                .hint_text(t.text("voice-tts-hint-text")),
         );
         ui.add_space(6.0);
 
         ui.horizontal(|ui| {
-            ui.label("Voice ID");
+            label_with_hint(
+                ui,
+                &t.text("voice-tts-label-voice-id"),
+                &t.text("voice-tts-hint-voice-id"),
+            );
             ui.add(
                 egui::TextEdit::singleline(&mut self.tts_voice_id)
-                    .hint_text("Optional override; otherwise config default is used"),
+                    .hint_text(t.text("voice-tts-hint-voice-id")),
             );
         });
         ui.add_space(6.0);
@@ -899,7 +1016,10 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     self.tts_result_rx.is_none(),
-                    egui::Button::new(format!("{} Generate Audio", regular::WAVEFORM)),
+                    egui::Button::new(t.text_args(
+                        "voice-tts-btn-generate",
+                        HashMap::from([("icon", regular::WAVEFORM.to_string())]),
+                    )),
                 )
                 .clicked()
             {
@@ -910,7 +1030,10 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     can_play,
-                    egui::Button::new(format!("{} Play", regular::PLAY)),
+                    egui::Button::new(t.text_args(
+                        "voice-tts-btn-play",
+                        HashMap::from([("icon", regular::PLAY.to_string())]),
+                    )),
                 )
                 .clicked()
             {
@@ -921,23 +1044,27 @@ impl VoicePanel {
             if ui
                 .add_enabled(
                     playing,
-                    egui::Button::new(format!("{} Stop", regular::STOP)),
+                    egui::Button::new(t.text_args(
+                        "voice-tts-btn-stop",
+                        HashMap::from([("icon", regular::STOP.to_string())]),
+                    )),
                 )
                 .clicked()
             {
                 self.stop_playback();
-                notifications.info("Stopped generated audio playback");
+                notifications.info(t.text("voice-notify-tts-stopped"));
             }
         });
 
         match &self.tts_state {
             TtsTestState::Idle => {
-                ui.label("Generate audio to save a tmp file and enable in-app playback.");
+                ui.label(t.text("voice-tts-idle-hint"));
             }
             TtsTestState::Synthesizing { started_at } => {
-                ui.label(format!(
-                    "Synthesizing audio... queued for {} ms",
-                    started_at.elapsed().as_millis()
+                let queued_ms = started_at.elapsed().as_millis();
+                ui.label(t.text_args(
+                    "voice-tts-synthesizing-detail",
+                    HashMap::from([("queued", queued_ms.to_string())]),
                 ));
             }
             TtsTestState::Completed(result) => {
@@ -945,45 +1072,56 @@ impl VoicePanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Provider");
+                        ui.label(t.text("voice-tts-col-provider"));
                         ui.monospace(&result.provider_name);
                         ui.end_row();
 
-                        ui.label("MIME Type");
+                        ui.label(t.text("voice-tts-col-mime-type"));
                         ui.monospace(&result.mime_type);
                         ui.end_row();
 
-                        ui.label("Output Size");
-                        ui.label(format!("{} bytes", result.output_size_bytes));
+                        ui.label(t.text("voice-tts-col-output-size"));
+                        ui.label(t.text_args(
+                            "voice-tts-output-size-detail",
+                            HashMap::from([("value", result.output_size_bytes.to_string())]),
+                        ));
                         ui.end_row();
 
-                        ui.label("Provider Duration");
+                        ui.label(t.text("voice-tts-col-provider-duration"));
                         ui.label(
                             result
                                 .duration_ms
-                                .map(|value| format!("{value} ms"))
+                                .map(|value| {
+                                    t.text_args(
+                                        "voice-tts-provider-duration-value",
+                                        HashMap::from([("value", value.to_string())]),
+                                    )
+                                })
                                 .unwrap_or_else(|| "-".to_string()),
                         );
                         ui.end_row();
 
-                        ui.label("Voice ID");
+                        ui.label(t.text("voice-tts-col-voice-id"));
                         ui.label(
                             result
                                 .requested_voice_id
                                 .as_deref()
-                                .unwrap_or("(config default)"),
+                                .unwrap_or(&t.text("voice-tts-voice-id-config-default")),
                         );
                         ui.end_row();
 
-                        ui.label("Saved To");
+                        ui.label(t.text("voice-tts-col-saved-to"));
                         ui.monospace(result.output_path.display().to_string());
                         ui.end_row();
 
-                        ui.label("Playback");
+                        ui.label(t.text("voice-tts-col-playback"));
                         if let Some(playback) = self.playback.as_ref() {
-                            ui.label(format!("Playing {}", playback.path.display()));
+                            ui.label(t.text_args(
+                                "voice-tts-playback-playing",
+                                HashMap::from([("path", playback.path.display().to_string())]),
+                            ));
                         } else {
-                            ui.label("Idle");
+                            ui.label(t.text("voice-tts-playback-idle"));
                         }
                         ui.end_row();
                     });
@@ -1002,53 +1140,66 @@ impl PanelRenderer for VoicePanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         self.ensure_store_loaded(notifications);
         self.poll_stt_result(notifications);
         self.poll_tts_result(notifications);
         self.poll_playback();
 
         ui.heading(ctx.tab_title);
-        ui.label("Manage voice providers and run split STT/TTS voice tests.");
+        ui.label(t.text("voice-subtitle"));
         ui.separator();
 
         ui.horizontal(|ui| {
-            if ui.button("Config").clicked() {
+            if ui
+                .button(t.text_args(
+                    "voice-btn-config",
+                    HashMap::from([("icon", regular::SLIDERS.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_config_window();
             }
-            if ui.button("Reload").clicked() {
+            if ui
+                .button(t.text_args(
+                    "voice-btn-reload",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.reload_config(notifications);
             }
         });
 
         ui.add_space(8.0);
-        ui.strong("Current Config");
+        ui.strong(t.text("voice-section-current-config"));
         egui::Grid::new("voice-summary-grid")
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Enabled");
+                ui.label(t.text("voice-col-enabled"));
                 render_enabled_status(ui, self.config.voice.enabled);
                 ui.end_row();
 
-                ui.label("STT Provider");
+                ui.label(t.text("voice-col-stt-provider"));
                 ui.monospace(self.config.voice.stt_provider.as_str());
                 ui.end_row();
 
-                ui.label("TTS Provider");
+                ui.label(t.text("voice-col-tts-provider"));
                 ui.monospace(self.config.voice.tts_provider.as_str());
                 ui.end_row();
 
-                ui.label("Default Language");
+                ui.label(t.text("voice-col-default-language"));
                 ui.label(&self.config.voice.default_language);
                 ui.end_row();
 
-                ui.label("Default Voice ID");
+                ui.label(t.text("voice-col-default-voice-id"));
                 ui.label(self.config.voice.default_voice_id.as_deref().unwrap_or("-"));
                 ui.end_row();
             });
 
         ui.separator();
-        ui.strong("Voice Tests");
+        ui.strong(t.text("voice-section-voice-tests"));
         self.render_test_mode_tabs(ui);
         ui.add_space(8.0);
 
@@ -1080,26 +1231,43 @@ fn render_secret_provider_section(
     api_key_env: &mut String,
     base_url: &mut String,
     streaming_base_url: &mut String,
-    primary_extra: Option<(&mut String, &str)>,
-    secondary_extra: Option<(&mut String, &str)>,
+    primary_extra: Option<(&mut String, String)>,
+    secondary_extra: Option<(&mut String, String)>,
+    t: &Translator,
 ) {
     egui::Grid::new(id_prefix)
         .num_columns(2)
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
-            ui.label("API Key");
+            label_with_hint(
+                ui,
+                &t.text("voice-cfg-label-api-key"),
+                &t.text("voice-cfg-label-api-key"),
+            );
             ui.add(egui::TextEdit::singleline(api_key).password(true));
             ui.end_row();
 
-            ui.label("API Key Env");
+            label_with_hint(
+                ui,
+                &t.text("voice-cfg-label-api-key-env"),
+                &t.text("voice-cfg-label-api-key-env"),
+            );
             ui.text_edit_singleline(api_key_env);
             ui.end_row();
 
-            ui.label("Base URL");
+            label_with_hint(
+                ui,
+                &t.text("voice-cfg-label-base-url"),
+                &t.text("voice-cfg-label-base-url"),
+            );
             ui.text_edit_singleline(base_url);
             ui.end_row();
 
-            ui.label("Streaming Base URL");
+            label_with_hint(
+                ui,
+                &t.text("voice-cfg-label-streaming-base-url"),
+                &t.text("voice-cfg-label-streaming-base-url"),
+            );
             ui.text_edit_singleline(streaming_base_url);
             ui.end_row();
 

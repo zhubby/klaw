@@ -1809,6 +1809,447 @@ mod tests {
     }
 
     #[test]
+    fn gui_voice_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("voice-subtitle"),
+            "Manage voice providers and run split STT/TTS voice tests."
+        );
+        assert_eq!(translator.text("voice-btn-config"), "{$icon} Config");
+        assert_eq!(translator.text("voice-btn-reload"), "{$icon} Reload");
+        assert_eq!(
+            translator.text("voice-section-current-config"),
+            "Current Config"
+        );
+        assert_eq!(translator.text("voice-col-enabled"), "Enabled");
+        assert_eq!(translator.text("voice-col-stt-provider"), "STT Provider");
+        assert_eq!(translator.text("voice-col-tts-provider"), "TTS Provider");
+        assert_eq!(
+            translator.text("voice-col-default-language"),
+            "Default Language"
+        );
+        assert_eq!(
+            translator.text("voice-col-default-voice-id"),
+            "Default Voice ID"
+        );
+        assert_eq!(translator.text("voice-section-voice-tests"), "Voice Tests");
+        assert_eq!(translator.text("voice-stt-tab"), "STT Test");
+        assert_eq!(translator.text("voice-tts-tab"), "TTS Test");
+        assert_eq!(
+            translator.text("voice-stt-subtitle"),
+            "Capture live microphone audio and send it to the configured STT provider."
+        );
+        assert_eq!(
+            translator.text("voice-tts-subtitle"),
+            "Enter text, synthesize it through the configured TTS provider, save it into tmp, and play it back inside the GUI."
+        );
+        assert_eq!(translator.text("voice-config-title"), "Voice Config");
+        assert_eq!(
+            translator.text("voice-config-subtitle"),
+            "Edit voice provider configuration stored in config.toml."
+        );
+        assert_eq!(translator.text("voice-config-tab-general"), "General");
+        assert_eq!(translator.text("voice-config-tab-deepgram"), "Deepgram");
+        assert_eq!(translator.text("voice-config-tab-assemblyai"), "AssemblyAI");
+        assert_eq!(translator.text("voice-config-tab-elevenlabs"), "ElevenLabs");
+        assert_eq!(translator.text("voice-cfg-label-enabled"), "Enabled");
+        assert_eq!(
+            translator.text("voice-cfg-hint-enabled"),
+            "Enable voice runtime"
+        );
+        assert_eq!(translator.text("voice-cfg-label-api-key"), "API Key");
+        assert_eq!(translator.text("voice-cfg-label-base-url"), "Base URL");
+        assert_eq!(
+            translator.text("voice-cfg-label-streaming-base-url"),
+            "Streaming Base URL"
+        );
+        assert_eq!(translator.text("voice-cfg-label-stt-model"), "STT Model");
+        assert_eq!(
+            translator.text("voice-cfg-label-default-model"),
+            "Default Model"
+        );
+        assert_eq!(
+            translator.text("voice-cfg-label-provider-default-voice-id"),
+            "Provider Default Voice ID"
+        );
+        assert_eq!(
+            translator.text("voice-notify-config-saved"),
+            "Voice config saved"
+        );
+        assert_eq!(
+            translator.text("voice-notify-config-reloaded"),
+            "Voice config reloaded from disk"
+        );
+        assert_eq!(
+            translator.text("voice-notify-store-unavailable"),
+            "Configuration store is not available"
+        );
+    }
+
+    #[test]
+    fn gui_voice_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("voice-subtitle"),
+            "管理语音提供商，并分别运行 STT/TTS 语音测试。"
+        );
+        assert_eq!(translator.text("voice-btn-config"), "{$icon} 配置");
+        assert_eq!(translator.text("voice-btn-reload"), "{$icon} 重载");
+        assert_eq!(translator.text("voice-section-current-config"), "当前配置");
+        assert_eq!(translator.text("voice-col-enabled"), "已启用");
+        assert_eq!(translator.text("voice-col-stt-provider"), "STT 提供商");
+        assert_eq!(translator.text("voice-col-tts-provider"), "TTS 提供商");
+        assert_eq!(translator.text("voice-col-default-language"), "默认语言");
+        assert_eq!(translator.text("voice-col-default-voice-id"), "默认语音 ID");
+        assert_eq!(translator.text("voice-section-voice-tests"), "语音测试");
+        assert_eq!(translator.text("voice-stt-tab"), "STT 测试");
+        assert_eq!(translator.text("voice-tts-tab"), "TTS 测试");
+        assert_eq!(
+            translator.text("voice-stt-subtitle"),
+            "捕获麦克风音频并发送到已配置的 STT 提供商。"
+        );
+        assert_eq!(
+            translator.text("voice-tts-subtitle"),
+            "输入文本，通过已配置的 TTS 提供商合成语音，保存到临时文件并在 GUI 中播放。"
+        );
+        assert_eq!(translator.text("voice-config-title"), "语音配置");
+        assert_eq!(
+            translator.text("voice-config-subtitle"),
+            "编辑存储在 config.toml 中的语音提供商配置。"
+        );
+        assert_eq!(translator.text("voice-config-tab-general"), "通用");
+        assert_eq!(translator.text("voice-config-tab-deepgram"), "Deepgram");
+        assert_eq!(translator.text("voice-config-tab-assemblyai"), "AssemblyAI");
+        assert_eq!(translator.text("voice-config-tab-elevenlabs"), "ElevenLabs");
+        assert_eq!(translator.text("voice-cfg-label-enabled"), "已启用");
+        assert_eq!(translator.text("voice-cfg-hint-enabled"), "启用语音运行时");
+        assert_eq!(translator.text("voice-cfg-label-api-key"), "API Key");
+        assert_eq!(translator.text("voice-cfg-label-base-url"), "Base URL");
+        assert_eq!(
+            translator.text("voice-cfg-label-streaming-base-url"),
+            "Streaming Base URL"
+        );
+        assert_eq!(translator.text("voice-cfg-label-stt-model"), "STT 模型");
+        assert_eq!(translator.text("voice-cfg-label-default-model"), "默认模型");
+        assert_eq!(
+            translator.text("voice-cfg-label-provider-default-voice-id"),
+            "提供商默认语音 ID"
+        );
+        assert_eq!(
+            translator.text("voice-notify-config-saved"),
+            "语音配置已保存"
+        );
+        assert_eq!(
+            translator.text("voice-notify-config-reloaded"),
+            "语音配置已从磁盘重载"
+        );
+        assert_eq!(
+            translator.text("voice-notify-store-unavailable"),
+            "配置存储不可用"
+        );
+    }
+
+    #[test]
+    fn gui_voice_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "voice-btn-config",
+                HashMap::from([("icon", "⚙".to_string())])
+            ),
+            "⚙ Config"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-btn-reload",
+                HashMap::from([("icon", "↻".to_string())])
+            ),
+            "↻ Reload"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-btn-start",
+                HashMap::from([("icon", "🎤".to_string())])
+            ),
+            "🎤 Start Recording"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-btn-stop",
+                HashMap::from([("icon", "⏹".to_string())])
+            ),
+            "⏹ Stop Recording"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-btn-generate",
+                HashMap::from([("icon", "〰".to_string())])
+            ),
+            "〰 Generate Audio"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-btn-play",
+                HashMap::from([("icon", "▶".to_string())])
+            ),
+            "▶ Play"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-btn-stop",
+                HashMap::from([("icon", "⏹".to_string())])
+            ),
+            "⏹ Stop"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-notify-save-failed",
+                HashMap::from([("error", "bad data".to_string())])
+            ),
+            "Save failed: bad data"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-notify-reload-failed",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "Reload failed: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-notify-tts-completed",
+                HashMap::from([("path", "/tmp/audio.mp3".to_string())])
+            ),
+            "Voice synthesis completed and saved to /tmp/audio.mp3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-recording-detail",
+                HashMap::from([
+                    ("device", "MacBook Mic".to_string()),
+                    ("sample_rate", "48000".to_string()),
+                    ("channels", "1".to_string()),
+                    ("elapsed", "500".to_string()),
+                ])
+            ),
+            "Recording from MacBook Mic at 48000 Hz / 1 ch for 500 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-transcribing-detail",
+                HashMap::from([
+                    ("duration", "2000".to_string()),
+                    ("queued", "300".to_string()),
+                ])
+            ),
+            "Transcribing 2000 ms recording… queued for 300 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-duration-ms",
+                HashMap::from([("value", "2000".to_string())])
+            ),
+            "2000 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-audio-format-detail",
+                HashMap::from([
+                    ("sample_rate", "48000".to_string()),
+                    ("channels", "2".to_string()),
+                    ("samples", "96000".to_string()),
+                ])
+            ),
+            "48000 Hz / 2 ch / 96000 samples"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-provider-duration-value",
+                HashMap::from([("value", "1500".to_string())])
+            ),
+            "1500 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-synthesizing-detail",
+                HashMap::from([("queued", "800".to_string())])
+            ),
+            "Synthesizing audio… queued for 800 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-output-size-detail",
+                HashMap::from([("value", "1024".to_string())])
+            ),
+            "1024 bytes"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-provider-duration-value",
+                HashMap::from([("value", "3200".to_string())])
+            ),
+            "3200 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-playback-playing",
+                HashMap::from([("path", "/tmp/out.wav".to_string())])
+            ),
+            "Playing /tmp/out.wav"
+        );
+    }
+
+    #[test]
+    fn gui_voice_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "voice-btn-config",
+                HashMap::from([("icon", "⚙".to_string())])
+            ),
+            "⚙ 配置"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-btn-reload",
+                HashMap::from([("icon", "↻".to_string())])
+            ),
+            "↻ 重载"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-btn-start",
+                HashMap::from([("icon", "🎤".to_string())])
+            ),
+            "🎤 开始录音"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-btn-stop",
+                HashMap::from([("icon", "⏹".to_string())])
+            ),
+            "⏹ 停止录音"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-btn-generate",
+                HashMap::from([("icon", "〰".to_string())])
+            ),
+            "〰 生成音频"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-btn-play",
+                HashMap::from([("icon", "▶".to_string())])
+            ),
+            "▶ 播放"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-btn-stop",
+                HashMap::from([("icon", "⏹".to_string())])
+            ),
+            "⏹ 停止"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-notify-save-failed",
+                HashMap::from([("error", "bad data".to_string())])
+            ),
+            "保存失败: bad data"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-notify-reload-failed",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "重载失败: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-notify-tts-completed",
+                HashMap::from([("path", "/tmp/audio.mp3".to_string())])
+            ),
+            "语音合成已完成并保存至 /tmp/audio.mp3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-recording-detail",
+                HashMap::from([
+                    ("device", "MacBook Mic".to_string()),
+                    ("sample_rate", "48000".to_string()),
+                    ("channels", "1".to_string()),
+                    ("elapsed", "500".to_string()),
+                ])
+            ),
+            "从 MacBook Mic 录音，48000 Hz / 1 通道，已录 500 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-transcribing-detail",
+                HashMap::from([
+                    ("duration", "2000".to_string()),
+                    ("queued", "300".to_string()),
+                ])
+            ),
+            "转录 2000 ms 录音… 已排队 300 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-duration-ms",
+                HashMap::from([("value", "2000".to_string())])
+            ),
+            "2000 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-audio-format-detail",
+                HashMap::from([
+                    ("sample_rate", "48000".to_string()),
+                    ("channels", "2".to_string()),
+                    ("samples", "96000".to_string()),
+                ])
+            ),
+            "48000 Hz / 2 通道 / 96000 样本"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-stt-provider-duration-value",
+                HashMap::from([("value", "1500".to_string())])
+            ),
+            "1500 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-synthesizing-detail",
+                HashMap::from([("queued", "800".to_string())])
+            ),
+            "合成音频… 已排队 800 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-output-size-detail",
+                HashMap::from([("value", "1024".to_string())])
+            ),
+            "1024 字节"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-provider-duration-value",
+                HashMap::from([("value", "3200".to_string())])
+            ),
+            "3200 ms"
+        );
+        assert_eq!(
+            translator.text_args(
+                "voice-tts-playback-playing",
+                HashMap::from([("path", "/tmp/out.wav".to_string())])
+            ),
+            "播放 /tmp/out.wav"
+        );
+    }
+
+    #[test]
     fn gui_webhook_panel_translates_labels_in_english() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
         assert_eq!(
