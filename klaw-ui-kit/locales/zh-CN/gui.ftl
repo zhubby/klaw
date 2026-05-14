@@ -1067,6 +1067,7 @@ channel-subtitle = 管理与外部消息服务（钉钉、Telegram、WebSocket�
 channel-restarting = 正在重启通道...
 channel-synchronizing = 正在同步通道...
 channel-btn-disabled = { $icon } 设置禁用通道
+channel-disabled-label = 设置禁用通道
 channel-btn-add-dingtalk = { $icon } 添加钉钉
 channel-btn-add-telegram = { $icon } 添加 Telegram
 channel-btn-add-websocket = { $icon } 添加 WebSocket

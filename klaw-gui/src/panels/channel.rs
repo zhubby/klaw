@@ -479,7 +479,7 @@ impl ChannelPanel {
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
         let t = Self::translator();
         self.disable_session_commands_input = ArrayEditor::from_vec(
-            t.text("channel-btn-disabled"),
+            t.text("channel-disabled-label"),
             &snapshot.config.channels.disable_session_commands_for,
         );
         self.config = snapshot.config;

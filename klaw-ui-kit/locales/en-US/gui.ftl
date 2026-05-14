@@ -1067,6 +1067,7 @@ channel-subtitle = Manage channel connections to external messaging services (Di
 channel-restarting = Restarting channel...
 channel-synchronizing = Synchronizing channels...
 channel-btn-disabled = { $icon } Set Disabled Channels
+channel-disabled-label = Set Disabled Channels
 channel-btn-add-dingtalk = { $icon } Add Dingtalk
 channel-btn-add-telegram = { $icon } Add Telegram
 channel-btn-add-websocket = { $icon } Add WebSocket
