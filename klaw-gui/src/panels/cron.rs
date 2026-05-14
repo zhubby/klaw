@@ -621,6 +621,7 @@ impl PanelRenderer for CronPanel {
 
         let t = Self::translator();
         ui.heading(ctx.tab_title);
+        ui.label(t.text("cron-subtitle"));
         ui.horizontal(|ui| {
             if ui
                 .button(&t.text_args(

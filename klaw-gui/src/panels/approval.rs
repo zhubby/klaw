@@ -172,6 +172,7 @@ impl PanelRenderer for ApprovalPanel {
         let t = Self::translator();
 
         ui.heading(ctx.tab_title);
+        ui.label(t.text("approval-subtitle"));
         ui.horizontal(|ui| {
             if ui
                 .button(t.text_args(

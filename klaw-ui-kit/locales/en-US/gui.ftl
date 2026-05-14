@@ -1390,6 +1390,7 @@ gw-btn-reload = Reload
 gw-btn-save = Save
 
 ## Heartbeat panel
+hb-subtitle = Configure periodic heartbeat check-in jobs for active sessions.
 hb-btn-refresh = { $icon } Refresh
 hb-btn-add = { $icon } Add Heartbeat Job
 hb-btn-config = { $icon } Config
@@ -1488,6 +1489,7 @@ hb-notify-executed = Heartbeat executed: { $id }
 hb-notify-run-failed = Failed to run heartbeat now: { $error }
 
 ## Approval panel
+approval-subtitle = Review and manage pending tool approval requests.
 approval-notify-filters-failed = Failed to load filters: { $error }
 approval-notify-list-failed = Failed to load approvals: { $error }
 approval-notify-resolved = Approval { $id } updated
@@ -1544,6 +1546,7 @@ approval-detail-command-text = Command Text:
 approval-detail-na = -
 
 ## Cron panel
+cron-subtitle = Schedule and manage recurring automated tasks.
 cron-btn-refresh = { $icon } Refresh
 cron-btn-add = { $icon } Add Cron Job
 cron-label-total = Total: { $count }
@@ -1639,6 +1642,7 @@ cron-notify-already-running = A cron run is already in progress
 cron-notify-running-bg = Running cron '{ $id }' in background...
 
 ## Session panel
+sess-subtitle = Browse, filter, and inspect chat session history and usage metrics.
 sess-btn-refresh = { $icon } Refresh
 sess-btn-clean = { $icon } Clean
 sess-label-count = Sessions: { $count }

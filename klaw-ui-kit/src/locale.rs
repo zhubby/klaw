@@ -2261,6 +2261,10 @@ mod tests {
     #[test]
     fn gui_cron_panel_translates_labels_in_english() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("cron-subtitle"),
+            "Schedule and manage recurring automated tasks."
+        );
         assert_eq!(translator.text("cron-form-title-edit"), "Edit Cron Job");
         assert_eq!(translator.text("cron-form-title-add"), "Add Cron Job");
         assert_eq!(translator.text("cron-col-id"), "ID");
@@ -2367,6 +2371,10 @@ mod tests {
     #[test]
     fn gui_cron_panel_translates_labels_in_chinese() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("cron-subtitle"),
+            "计划和管理周期性自动化任务。"
+        );
         assert_eq!(translator.text("cron-form-title-edit"), "编辑定时任务");
         assert_eq!(translator.text("cron-form-title-add"), "添加定时任务");
         assert_eq!(translator.text("cron-col-id"), "ID");
@@ -2813,6 +2821,10 @@ mod tests {
     fn gui_approval_panel_translates_labels_in_english() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
         assert_eq!(
+            translator.text("approval-subtitle"),
+            "Review and manage pending tool approval requests."
+        );
+        assert_eq!(
             translator.text("approval-filter-session-key"),
             "Session Key"
         );
@@ -2877,6 +2889,10 @@ mod tests {
     #[test]
     fn gui_approval_panel_translates_labels_in_chinese() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("approval-subtitle"),
+            "查看和管理待审批的工具执行请求。"
+        );
         assert_eq!(translator.text("approval-filter-session-key"), "会话密钥");
         assert_eq!(translator.text("approval-filter-session-key-all"), "全部");
         assert_eq!(translator.text("approval-filter-tool-name"), "工具名称");
@@ -3144,6 +3160,10 @@ mod tests {
     #[test]
     fn gui_heartbeat_panel_translates_labels_in_english() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("hb-subtitle"),
+            "Configure periodic heartbeat check-in jobs for active sessions."
+        );
         assert_eq!(translator.text("hb-filter-start-date"), "Start Date");
         assert_eq!(translator.text("hb-filter-end-date"), "End Date");
         assert_eq!(translator.text("hb-filter-page"), "Page");
@@ -3303,6 +3323,10 @@ mod tests {
     #[test]
     fn gui_heartbeat_panel_translates_labels_in_chinese() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("hb-subtitle"),
+            "配置活动会话的周期性心跳签到任务。"
+        );
         assert_eq!(translator.text("hb-filter-start-date"), "开始日期");
         assert_eq!(translator.text("hb-filter-end-date"), "结束日期");
         assert_eq!(translator.text("hb-filter-page"), "页码");
@@ -3698,6 +3722,10 @@ mod tests {
     #[test]
     fn gui_session_panel_translates_labels_in_english() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("sess-subtitle"),
+            "Browse, filter, and inspect chat session history and usage metrics."
+        );
         assert_eq!(translator.text("sess-filter-start-date"), "Start Date");
         assert_eq!(translator.text("sess-filter-end-date"), "End Date");
         assert_eq!(translator.text("sess-filter-channel"), "Channel");
@@ -3766,6 +3794,10 @@ mod tests {
     #[test]
     fn gui_session_panel_translates_labels_in_chinese() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("sess-subtitle"),
+            "浏览、筛选和查看聊天会话历史及用量指标。"
+        );
         assert_eq!(translator.text("sess-filter-start-date"), "开始日期");
         assert_eq!(translator.text("sess-filter-end-date"), "结束日期");
         assert_eq!(translator.text("sess-filter-channel"), "通道");

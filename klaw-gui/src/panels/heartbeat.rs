@@ -616,6 +616,7 @@ impl PanelRenderer for HeartbeatPanel {
         }
 
         ui.heading(ctx.tab_title);
+        ui.label(t.text("hb-subtitle"));
         ui.horizontal(|ui| {
             if ui
                 .button(t.text_args(

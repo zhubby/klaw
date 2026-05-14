@@ -1390,6 +1390,7 @@ gw-btn-reload = 重载
 gw-btn-save = 保存
 
 ## 心跳面板
+hb-subtitle = 配置活动会话的周期性心跳签到任务。
 hb-btn-refresh = { $icon } 刷新
 hb-btn-add = { $icon } 添加心跳任务
 hb-btn-config = { $icon } 配置
@@ -1488,6 +1489,7 @@ hb-notify-executed = 心跳已执行: { $id }
 hb-notify-run-failed = 立即运行心跳失败: { $error }
 
 ## 审批面板
+approval-subtitle = 查看和管理待审批的工具执行请求。
 approval-notify-filters-failed = 加载筛选器失败: { $error }
 approval-notify-list-failed = 加载审批列表失败: { $error }
 approval-notify-resolved = 审批 { $id } 已更新
@@ -1544,6 +1546,7 @@ approval-detail-command-text = 命令文本:
 approval-detail-na = -
 
 ## Session panel
+sess-subtitle = 浏览、筛选和查看聊天会话历史及用量指标。
 sess-btn-refresh = { $icon } 刷新
 sess-btn-clean = { $icon } 清理
 sess-label-count = 会话: { $count }
@@ -1595,6 +1598,7 @@ sess-notify-clean-failed = 清理会话失败: { $error }
 sess-notify-clean-disconnected = 清理会话失败：清理任务意外停止
 
 ## Cron panel
+cron-subtitle = 计划和管理周期性自动化任务。
 cron-btn-refresh = { $icon } 刷新
 cron-btn-add = { $icon } 添加定时任务
 cron-label-total = 总计: { $count }
