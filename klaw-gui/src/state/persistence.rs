@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const UI_STATE_SCHEMA_VERSION: u32 = 1;
+const UI_STATE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct PersistedUiState {
@@ -14,9 +14,11 @@ struct PersistedUiState {
 
 impl PersistedUiState {
     fn from_state(state: &UiState) -> Self {
+        let mut state = state.clone();
+        state.workbench.sanitize_for_persistence();
         Self {
             schema_version: UI_STATE_SCHEMA_VERSION,
-            state: state.clone(),
+            state,
         }
     }
 }
@@ -53,17 +55,13 @@ where
 
 fn load_ui_state_from_path(path: &Path) -> io::Result<UiState> {
     let raw = fs::read_to_string(path)?;
-    let persisted: PersistedUiState = serde_json::from_str(&raw)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    let Ok(persisted) = serde_json::from_str::<PersistedUiState>(&raw) else {
+        return Ok(UiState::default());
+    };
     if persisted.schema_version != UI_STATE_SCHEMA_VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "unsupported ui state schema version",
-        ));
+        return Ok(UiState::default());
     }
-    let mut state = persisted.state;
-    state.workbench.normalize_titles();
-    Ok(state)
+    Ok(persisted.state)
 }
 
 fn save_ui_state_to_path(path: &Path, state: &UiState) -> io::Result<()> {
@@ -122,7 +120,7 @@ mod tests {
         assert_eq!(restored.light_theme, LightThemePreset::Crab);
         assert_eq!(restored.dark_theme, DarkThemePreset::Mocha);
         assert_eq!(restored.workbench.active_tab, state.workbench.active_tab);
-        assert_eq!(restored.workbench.tabs.len(), state.workbench.tabs.len());
+        assert_eq!(restored.workbench.tab_count(), state.workbench.tab_count());
         assert_eq!(
             restored.logs_panel.level_filter,
             LogsLevelFilterState::default()
@@ -132,21 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn load_ui_state_normalizes_persisted_tab_titles() {
-        let path = unique_test_path();
-        let mut state = UiState::default();
-        state.workbench.tabs[0].title = "Profile".to_string();
-
-        save_ui_state_to_path(&path, &state).expect("save ui state");
-        let restored = load_ui_state_from_path(&path).expect("load ui state");
-
-        assert_eq!(restored.workbench.tabs[0].title, "Profile Prompt");
-
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn load_ui_state_backfills_missing_theme_presets() {
+    fn load_ui_state_falls_back_for_legacy_state_schema() {
         let path = unique_test_path();
         let json = r#"{
           "schema_version": 1,
@@ -173,13 +157,56 @@ mod tests {
 
         let restored = load_ui_state_from_path(&path).expect("load ui state");
 
-        assert_eq!(restored.theme_mode, ThemeMode::Dark);
+        assert_eq!(restored.theme_mode, ThemeMode::System);
         assert_eq!(restored.light_theme, LightThemePreset::Default);
         assert_eq!(restored.dark_theme, DarkThemePreset::Default);
+        assert_eq!(
+            restored.workbench.active_tab,
+            Some(TabId::from_menu(WorkbenchMenu::Profile))
+        );
+        assert_eq!(restored.workbench.tab_count(), 1);
         assert_eq!(
             restored.logs_panel.level_filter,
             LogsLevelFilterState::default()
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_ui_state_falls_back_for_legacy_state_shape_even_with_current_schema() {
+        let path = unique_test_path();
+        let json = r#"{
+          "schema_version": 2,
+          "state": {
+            "workbench": {
+              "tabs": [
+                {
+                  "id": { "menu": "Profile" },
+                  "menu": "Profile",
+                  "title": "Profile",
+                  "closable": true
+                }
+              ],
+              "active_tab": { "menu": "Profile" }
+            },
+            "theme_mode": "dark",
+            "fullscreen": false,
+            "show_about": false
+          }
+        }"#;
+        fs::create_dir_all(path.parent().expect("legacy ui state parent"))
+            .expect("create legacy ui state parent");
+        fs::write(&path, json).expect("write legacy ui state");
+
+        let restored = load_ui_state_from_path(&path).expect("load ui state");
+
+        assert_eq!(restored.theme_mode, ThemeMode::System);
+        assert_eq!(
+            restored.workbench.active_tab,
+            Some(TabId::from_menu(WorkbenchMenu::Profile))
+        );
+        assert_eq!(restored.workbench.tab_count(), 1);
 
         let _ = fs::remove_file(path);
     }

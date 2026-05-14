@@ -162,9 +162,12 @@ impl PanelRenderer for TerminalPanel {
         ui.separator();
 
         let mut add_requested = false;
+        let mut style = Style::from_egui(ui.style().as_ref());
+        style.tab_bar.show_scroll_bar_on_overflow = false;
+
         DockArea::new(&mut self.dock_state)
             .id(egui::Id::new("terminal_panel_dock"))
-            .style(Style::from_egui(ui.style().as_ref()))
+            .style(style)
             .show_add_buttons(true)
             .show_close_buttons(true)
             .show_leaf_close_all_buttons(false)

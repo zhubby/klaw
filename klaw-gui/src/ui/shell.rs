@@ -208,7 +208,7 @@ impl ShellUi {
         self.about_icon.as_ref()
     }
 
-    pub fn render(&mut self, ctx: &egui::Context, state: &UiState) -> Vec<UiAction> {
+    pub fn render(&mut self, ctx: &egui::Context, state: &mut UiState) -> Vec<UiAction> {
         puffin::profile_function!();
         let mut actions = Vec::new();
         self.panels.tick(ctx);

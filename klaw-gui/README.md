@@ -4,7 +4,7 @@
 
 ## Capabilities
 
-- Workbench shell with left navigation and center tab workspace
+- Workbench shell with left navigation and persistent `egui_dock` center workspace
 - Left navigation groups sidebar menus by domain and sorts items alphabetically within each group
 - Workbench sidebar now includes `System`, `Settings`, and `Terminal`
 - Workbench sidebar now includes dedicated `Gateway` and `Webhook` panels
@@ -18,7 +18,7 @@
   - macOS menu bar icon now uses left click to show and activate the main window
   - right click opens a compact menu with `Show Klaw`, `About`, and `Quit Klaw`
 - UI state persistence across restart (`~/.klaw/gui_state.json`)
-  - includes tabs/theme mode/light-dark theme presets/fullscreen and window size
+  - includes persistent dock workspace layout, theme mode/light-dark theme presets/fullscreen and window size
 - Linux windows keep the same borderless shell as macOS and provide native resize
   hit zones on the window edges and corners.
 - macOS app icon is loaded from embedded image bytes at startup, so both `.app` bundles and standalone binaries keep the custom icon

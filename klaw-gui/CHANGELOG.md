@@ -5,10 +5,14 @@
 ### Added
 
 - Terminal 面板现在通过 `egui_dock` tab 承载多个独立 `egui_term` 会话。
+- Workbench 工作区现在使用可持久化的 `egui_dock` 布局，支持恢复 dock tab/tree 状态。
 
 ### Changed
 
 - Terminal 面板移除 Start / Restart / Stop 顶部按钮，改用 tab 栏的新增、切换和关闭交互管理终端会话。
+- Workbench tab、侧边栏菜单和面板标题统一使用 GUI i18n 菜单文案，避免维护第二套硬编码英文标题。
+- Workbench 与 Terminal 的 dock tab bar 在 tab 过多时不再显示可见滚动条。
+- GUI state schema 更新后会忽略旧版 workbench state 结构并回退到默认工作区，避免旧 `gui_state.json` 阻断启动。
 
 ## 2026-05-13
 

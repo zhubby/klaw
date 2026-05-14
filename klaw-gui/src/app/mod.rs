@@ -305,7 +305,11 @@ impl eframe::App for KlawGuiApp {
             self.should_quit = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        let actions = self.shell.render(ctx, &self.state);
+        let before_workbench = serde_json::to_string(&self.state.workbench).ok();
+        let actions = self.shell.render(ctx, &mut self.state);
+        if before_workbench != serde_json::to_string(&self.state.workbench).ok() {
+            self.mark_state_dirty();
+        }
         for action in actions {
             self.handle_action(ctx, action);
         }

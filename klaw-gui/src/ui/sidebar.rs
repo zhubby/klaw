@@ -4,10 +4,14 @@ use crate::state::{UiAction, UiState};
 use egui_phosphor::regular;
 use klaw_ui_kit::{LocaleDomain, Translator};
 
-fn grouped_menus() -> Vec<(WorkbenchMenuGroup, Vec<WorkbenchMenu>)> {
+fn grouped_menus(translator: &Translator) -> Vec<(WorkbenchMenuGroup, Vec<WorkbenchMenu>)> {
     WorkbenchMenuGroup::ALL
         .into_iter()
-        .map(|group| (group, WorkbenchMenu::sorted_for_group(group)))
+        .map(|group| {
+            let mut menus = WorkbenchMenu::for_group(group);
+            menus.sort_by_key(|menu| translator.text(menu.i18n_key()));
+            (group, menus)
+        })
         .collect()
 }
 
@@ -28,7 +32,7 @@ pub fn show_sidebar(ui: &mut egui::Ui, state: &UiState) -> Vec<UiAction> {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             puffin::profile_scope!("sidebar_grouped_menus");
-            let groups = grouped_menus();
+            let groups = grouped_menus(&translator);
             for (index, (group, menus)) in groups.iter().enumerate() {
                 if index > 0 {
                     ui.add_space(6.0);
@@ -68,7 +72,8 @@ mod tests {
 
     #[test]
     fn grouped_menus_follow_expected_group_order() {
-        let groups = grouped_menus();
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let groups = grouped_menus(&translator);
         let order = groups
             .into_iter()
             .map(|(group, _)| group)
@@ -78,8 +83,8 @@ mod tests {
 
     #[test]
     fn grouped_menus_are_sorted_and_keep_skills_adjacent() {
-        let groups = grouped_menus();
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        let groups = grouped_menus(&translator);
 
         let (_, workspace_group) = groups
             .iter()

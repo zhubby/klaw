@@ -21,17 +21,6 @@ impl WorkbenchMenuGroup {
         WorkbenchMenuGroup::Observability,
     ];
 
-    pub const fn title(self) -> &'static str {
-        match self {
-            WorkbenchMenuGroup::Workspace => "WORKSPACE",
-            WorkbenchMenuGroup::AiAndCapability => "AI & CAPABILITY",
-            WorkbenchMenuGroup::RuntimeAndAccess => "RUNTIME & ACCESS",
-            WorkbenchMenuGroup::AutomationAndOperations => "AUTOMATION & OPERATIONS",
-            WorkbenchMenuGroup::DataAndHistory => "DATA & HISTORY",
-            WorkbenchMenuGroup::Observability => "OBSERVABILITY",
-        }
-    }
-
     pub const fn i18n_key(self) -> &'static str {
         match self {
             WorkbenchMenuGroup::Workspace => "menu-group-workspace",
@@ -142,39 +131,6 @@ impl WorkbenchMenu {
         }
     }
 
-    pub const fn title(self) -> &'static str {
-        match self {
-            WorkbenchMenu::Profile => "Profile Prompt",
-            WorkbenchMenu::System => "System",
-            WorkbenchMenu::Setting => "Settings",
-            WorkbenchMenu::Terminal => "Terminal",
-            WorkbenchMenu::Session => "Session",
-            WorkbenchMenu::Approval => "Approval",
-            WorkbenchMenu::Configuration => "Configuration",
-            WorkbenchMenu::Provider => "Model Provider",
-            WorkbenchMenu::LocalModels => "Model",
-            WorkbenchMenu::Llm => "LLM",
-            WorkbenchMenu::Channel => "Channel",
-            WorkbenchMenu::Voice => "Voice",
-            WorkbenchMenu::Cron => "Cron",
-            WorkbenchMenu::Heartbeat => "Heartbeat",
-            WorkbenchMenu::Gateway => "Gateway",
-            WorkbenchMenu::Webhook => "Webhook",
-            WorkbenchMenu::Mcp => "MCP",
-            WorkbenchMenu::Acp => "ACP",
-            WorkbenchMenu::Skill => "Skills Registry",
-            WorkbenchMenu::SkillsManager => "Skills Manager",
-            WorkbenchMenu::Memory => "Memory",
-            WorkbenchMenu::Knowledge => "Knowledge",
-            WorkbenchMenu::Archive => "Archive",
-            WorkbenchMenu::Tool => "Tool",
-            WorkbenchMenu::Monitor => "Monitor",
-            WorkbenchMenu::Logs => "Logs",
-            WorkbenchMenu::AnalyzeDashboard => "Analyze Dashboard",
-            WorkbenchMenu::Observability => "Observability",
-        }
-    }
-
     pub const fn i18n_key(self) -> &'static str {
         match self {
             WorkbenchMenu::Profile => "menu-profile",
@@ -241,10 +197,6 @@ impl WorkbenchMenu {
         }
     }
 
-    pub const fn default_tab_title(self) -> &'static str {
-        self.title()
-    }
-
     pub const fn group(self) -> WorkbenchMenuGroup {
         match self {
             WorkbenchMenu::Profile
@@ -278,13 +230,11 @@ impl WorkbenchMenu {
         }
     }
 
-    pub fn sorted_for_group(group: WorkbenchMenuGroup) -> Vec<WorkbenchMenu> {
-        let mut menus = Self::ALL
+    pub fn for_group(group: WorkbenchMenuGroup) -> Vec<WorkbenchMenu> {
+        Self::ALL
             .into_iter()
             .filter(|menu| menu.group() == group)
-            .collect::<Vec<_>>();
-        menus.sort_by_key(|menu| menu.title());
-        menus
+            .collect()
     }
 }
 
@@ -304,11 +254,10 @@ mod tests {
     }
 
     #[test]
-    fn menu_titles_and_icons_are_present() {
+    fn menu_i18n_keys_and_icons_are_present() {
         for menu in WorkbenchMenu::ALL {
-            assert!(!menu.title().is_empty());
+            assert!(!menu.i18n_key().is_empty());
             assert!(!menu.icon().is_empty());
-            assert!(!menu.default_tab_title().is_empty());
         }
     }
 
@@ -340,7 +289,7 @@ mod tests {
     fn terminal_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Terminal));
         assert_eq!(WorkbenchMenu::Terminal.id_key(), "terminal");
-        assert_eq!(WorkbenchMenu::Terminal.title(), "Terminal");
+        assert_eq!(WorkbenchMenu::Terminal.i18n_key(), "menu-terminal");
         assert_eq!(
             WorkbenchMenu::Terminal.group(),
             WorkbenchMenuGroup::Workspace
@@ -351,7 +300,7 @@ mod tests {
     fn local_models_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::LocalModels));
         assert_eq!(WorkbenchMenu::LocalModels.id_key(), "local-models");
-        assert_eq!(WorkbenchMenu::LocalModels.title(), "Model");
+        assert_eq!(WorkbenchMenu::LocalModels.i18n_key(), "menu-local-models");
         assert_eq!(
             WorkbenchMenu::LocalModels.group(),
             WorkbenchMenuGroup::AiAndCapability
@@ -362,7 +311,7 @@ mod tests {
     fn knowledge_menu_is_registered() {
         assert!(WorkbenchMenu::ALL.contains(&WorkbenchMenu::Knowledge));
         assert_eq!(WorkbenchMenu::Knowledge.id_key(), "knowledge");
-        assert_eq!(WorkbenchMenu::Knowledge.title(), "Knowledge");
+        assert_eq!(WorkbenchMenu::Knowledge.i18n_key(), "menu-knowledge");
         assert_eq!(
             WorkbenchMenu::Knowledge.group(),
             WorkbenchMenuGroup::DataAndHistory
@@ -374,7 +323,7 @@ mod tests {
         let mut seen = HashSet::new();
 
         for group in WorkbenchMenuGroup::ALL {
-            for menu in WorkbenchMenu::sorted_for_group(group) {
+            for menu in WorkbenchMenu::for_group(group) {
                 assert_eq!(menu.group(), group);
                 assert!(
                     seen.insert(menu),
@@ -388,21 +337,8 @@ mod tests {
     }
 
     #[test]
-    fn settings_title_is_plural_while_id_key_stays_stable() {
-        assert_eq!(WorkbenchMenu::Setting.title(), "Settings");
+    fn settings_i18n_key_stays_stable() {
+        assert_eq!(WorkbenchMenu::Setting.i18n_key(), "menu-setting");
         assert_eq!(WorkbenchMenu::Setting.id_key(), "setting");
-    }
-
-    #[test]
-    fn menus_within_group_are_sorted_by_title() {
-        for group in WorkbenchMenuGroup::ALL {
-            let menus = WorkbenchMenu::sorted_for_group(group);
-            let mut titles = menus.iter().map(|menu| menu.title()).collect::<Vec<_>>();
-            let mut sorted_titles = titles.clone();
-            sorted_titles.sort_unstable();
-            assert_eq!(titles, sorted_titles);
-            titles.dedup();
-            assert_eq!(titles.len(), menus.len());
-        }
     }
 }
