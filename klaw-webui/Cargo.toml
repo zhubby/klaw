@@ -26,6 +26,7 @@ egui_commonmark = { workspace = true }
 egui-phosphor = { workspace = true }
 egui-notify = { workspace = true }
 egui-twemoji = { workspace = true }
+image = { workspace = true, features = ["png", "jpeg", "gif", "webp"] }
 js-sys = { workspace = true }
 urlencoding = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
@@ -43,6 +44,7 @@ web-sys = { workspace = true, features = [
     "File",
     "FormData",
     "Headers",
+    "HtmlAnchorElement",
     "HtmlElement",
     "HtmlInputElement",
     "Location",

@@ -59,8 +59,9 @@ pub(super) struct ArchivePreviewDialog {
 pub(super) enum ArchivePreviewStatus {
     Loading,
     Ready {
-        object_url: String,
         content_type: Option<String>,
+        bytes: Vec<u8>,
+        image_size: Option<[usize; 2]>,
     },
     Failed(String),
 }
@@ -648,10 +649,14 @@ impl ChatApp {
             )
             .await
             {
-                Ok(blob) => ArchivePreviewStatus::Ready {
-                    object_url: blob.object_url,
-                    content_type: blob.content_type,
-                },
+                Ok(blob) => {
+                    let image_size = archive_preview_image_size(&blob.content_type, &blob.bytes);
+                    ArchivePreviewStatus::Ready {
+                        content_type: blob.content_type,
+                        bytes: blob.bytes,
+                        image_size,
+                    }
+                }
                 Err(err) => {
                     toasts.borrow_mut().error(format!("Preview failed: {err}"));
                     ArchivePreviewStatus::Failed(err)
@@ -665,6 +670,47 @@ impl ChatApp {
             ctx.request_repaint();
         });
     }
+
+    pub(in crate::web_chat) fn download_archive_attachment(
+        &mut self,
+        resource: WebArchiveResource,
+    ) {
+        let Some(gateway_origin) = self.gateway_origin.clone() else {
+            self.toasts
+                .borrow_mut()
+                .error("Gateway origin not available");
+            return;
+        };
+
+        let gateway_token = self.gateway_token.clone();
+        let toasts = self.toasts.clone();
+        let ctx = self.ctx.clone();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(err) = super::upload::download_archive_resource(
+                &gateway_origin,
+                gateway_token.as_deref(),
+                &resource,
+            )
+            .await
+            {
+                toasts.borrow_mut().error(format!("Download failed: {err}"));
+            }
+            ctx.request_repaint();
+        });
+    }
+}
+
+fn archive_preview_image_size(content_type: &Option<String>, bytes: &[u8]) -> Option<[usize; 2]> {
+    if !content_type
+        .as_deref()
+        .is_some_and(crate::content_type_is_image)
+    {
+        return None;
+    }
+
+    let image = image::load_from_memory(bytes).ok()?;
+    Some([image.width() as usize, image.height() as usize])
 }
 
 fn web_archive_attachment_from_record(record: ArchiveRecord) -> WebArchiveAttachment {
