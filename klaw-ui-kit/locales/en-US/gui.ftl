@@ -1294,4 +1294,99 @@ webhook-notify-trick-agents-disabled = Agents webhook endpoint is disabled in co
 webhook-notify-trick-gateway-not-running = Gateway is not running.
 webhook-notify-trick-info-unavailable = Gateway runtime info is unavailable.
 
+## Gateway panel main view
+gw-subtitle = Manage the embedded gateway service used by the GUI runtime.
+gw-loading = Loading...
+gw-status-unavailable = Gateway status unavailable: { $error }
+gw-btn-retry = { $icon } Retry
+gw-btn-refresh = { $icon } Refresh
+gw-btn-config = { $icon } Config
+gw-btn-start = { $icon } Start
+gw-btn-restart = { $icon } Restart
+gw-status-refreshed = Gateway status refreshed
+gw-tailscale-status-refreshed = Tailscale status refreshed
+gw-notify-started = Gateway started
+gw-notify-started-at = Gateway started at { $url }
+gw-notify-restarted = Gateway restarted
+gw-notify-restarted-at = Gateway restarted at { $url }
+gw-notify-tailscale-mode-set = Tailscale mode set to { $mode }
+gw-notify-load-failed = Failed to load gateway status: { $error }
+gw-notify-tailscale-refresh-failed = Failed to refresh tailscale status: { $error }
+gw-notify-start-failed = Failed to start gateway: { $error }
+gw-notify-restart-failed = Failed to restart gateway: { $error }
+gw-notify-tailscale-mode-failed = Failed to set tailscale mode: { $error }
+gw-notify-worker-closed = Gateway request worker closed unexpectedly
+gw-notify-config-store-unavailable = Configuration store is not available
+gw-notify-config-saved = Gateway config saved
+gw-notify-config-saved-restart = Gateway config saved. Restart gateway to apply changes.
+gw-notify-config-reloaded = Config reloaded from disk
+gw-notify-save-failed = Save failed: { $error }
+gw-notify-reload-failed = Reload failed: { $error }
+
+## Gateway status labels
+gw-status-configured = Configured
+gw-status-enabled = Enabled
+gw-status-disabled = Disabled
+gw-status-runtime = Runtime
+gw-status-running = running
+gw-status-stopped = stopped
+gw-status-transition = Transition
+gw-status-busy = busy
+gw-status-idle = idle
+gw-status-auth = Auth
+gw-status-auth-configured = Configured
+gw-status-auth-not-configured = Not Configured
+gw-status-listen-ip = Listen IP
+gw-status-configured-port = Configured Port
+gw-status-actual-port = Actual Port
+gw-status-address = Address
+gw-status-started-at = Started At
+
+## Gateway Tailscale section
+gw-ts-heading = Tailscale
+gw-ts-subtitle = Expose the gateway via Tailscale Serve (tailnet only) or Funnel (public internet).
+gw-ts-mode = Mode
+gw-ts-mode-off = Off
+gw-ts-mode-serve = Serve (tailnet)
+gw-ts-mode-funnel = Funnel (public)
+gw-ts-mode-apply-disabled = disabled
+gw-ts-mode-apply-serve = serve (tailnet only)
+gw-ts-mode-apply-funnel = funnel (public)
+gw-btn-refresh-ts = { $icon } Refresh Tailscale
+gw-btn-apply = Apply
+gw-ts-host-status = Host Status
+gw-ts-host-status-label = Status
+gw-ts-host-connected = Connected
+gw-ts-host-disconnected = Disconnected
+gw-ts-host-version = Version
+gw-ts-host-backend-state = Backend State
+gw-ts-host-dns-name = DNS Name
+gw-ts-host-tailnet-url = Tailnet URL
+gw-ts-host-message = Host Message
+gw-ts-gateway-exposure = Gateway Exposure
+gw-ts-gateway-url = Gateway URL
+gw-ts-message = Message
+gw-ts-funnel-no-auth-warning = ⚠️ Funnel exposes your gateway publicly. Configure gateway.auth to protect it.
+
+## Gateway Config window
+gw-cfg-title = Gateway Config
+gw-cfg-basic = Basic
+gw-cfg-enabled = Enabled
+gw-cfg-enabled-hint = Enable or disable the gateway service.
+gw-cfg-listen-ip = Listen IP
+gw-cfg-listen-ip-hint = The IP address the gateway binds to. Use 0.0.0.0 for all interfaces.
+gw-cfg-listen-port = Listen Port
+gw-cfg-listen-port-hint = Port number for the gateway. 0 means auto-select.
+gw-cfg-port-auto = (0 = auto)
+gw-cfg-auth = Auth
+gw-cfg-auth-enabled = Enabled
+gw-cfg-auth-enabled-hint = Require authentication token for gateway connections.
+gw-cfg-auth-token = Token
+gw-cfg-auth-token-hint = Secret token used to authenticate gateway clients.
+gw-btn-generate = Generate
+gw-notify-auth-token-empty = Gateway auth token is empty
+gw-notify-auth-token-copied = Gateway auth token copied
+gw-btn-reload = Reload
+gw-btn-save = Save
+
 test-english-only = English only

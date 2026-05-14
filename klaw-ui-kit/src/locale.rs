@@ -1907,4 +1907,346 @@ mod tests {
             "确定要删除提示词模板 'order_sync' 吗？"
         );
     }
+
+    #[test]
+    fn gui_gateway_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("gw-subtitle"),
+            "Manage the embedded gateway service used by the GUI runtime."
+        );
+        assert_eq!(translator.text("gw-loading"), "Loading...");
+        assert_eq!(
+            translator.text("gw-status-refreshed"),
+            "Gateway status refreshed"
+        );
+        assert_eq!(
+            translator.text("gw-tailscale-status-refreshed"),
+            "Tailscale status refreshed"
+        );
+        assert_eq!(translator.text("gw-notify-started"), "Gateway started");
+        assert_eq!(translator.text("gw-notify-restarted"), "Gateway restarted");
+        assert_eq!(
+            translator.text("gw-notify-worker-closed"),
+            "Gateway request worker closed unexpectedly"
+        );
+        assert_eq!(
+            translator.text("gw-notify-config-store-unavailable"),
+            "Configuration store is not available"
+        );
+        assert_eq!(
+            translator.text("gw-notify-config-saved"),
+            "Gateway config saved"
+        );
+        assert_eq!(
+            translator.text("gw-notify-config-saved-restart"),
+            "Gateway config saved. Restart gateway to apply changes."
+        );
+        assert_eq!(
+            translator.text("gw-notify-config-reloaded"),
+            "Config reloaded from disk"
+        );
+        // Status labels
+        assert_eq!(translator.text("gw-status-configured"), "Configured");
+        assert_eq!(translator.text("gw-status-enabled"), "Enabled");
+        assert_eq!(translator.text("gw-status-disabled"), "Disabled");
+        assert_eq!(translator.text("gw-status-runtime"), "Runtime");
+        assert_eq!(translator.text("gw-status-running"), "running");
+        assert_eq!(translator.text("gw-status-stopped"), "stopped");
+        assert_eq!(translator.text("gw-status-auth"), "Auth");
+        assert_eq!(translator.text("gw-status-auth-configured"), "Configured");
+        assert_eq!(
+            translator.text("gw-status-auth-not-configured"),
+            "Not Configured"
+        );
+        assert_eq!(translator.text("gw-status-listen-ip"), "Listen IP");
+        assert_eq!(translator.text("gw-status-address"), "Address");
+        assert_eq!(translator.text("gw-status-started-at"), "Started At");
+        // Tailscale
+        assert_eq!(translator.text("gw-ts-heading"), "Tailscale");
+        assert_eq!(
+            translator.text("gw-ts-subtitle"),
+            "Expose the gateway via Tailscale Serve (tailnet only) or Funnel (public internet)."
+        );
+        assert_eq!(translator.text("gw-ts-mode"), "Mode");
+        assert_eq!(translator.text("gw-ts-mode-off"), "Off");
+        assert_eq!(translator.text("gw-ts-mode-serve"), "Serve (tailnet)");
+        assert_eq!(translator.text("gw-ts-mode-funnel"), "Funnel (public)");
+        assert_eq!(translator.text("gw-ts-host-status"), "Host Status");
+        assert_eq!(translator.text("gw-ts-host-connected"), "Connected");
+        assert_eq!(translator.text("gw-ts-host-disconnected"), "Disconnected");
+        // Config window
+        assert_eq!(translator.text("gw-cfg-title"), "Gateway Config");
+        assert_eq!(translator.text("gw-cfg-basic"), "Basic");
+        assert_eq!(translator.text("gw-cfg-enabled"), "Enabled");
+        assert_eq!(
+            translator.text("gw-cfg-enabled-hint"),
+            "Enable or disable the gateway service."
+        );
+        assert_eq!(translator.text("gw-cfg-listen-ip"), "Listen IP");
+        assert_eq!(
+            translator.text("gw-cfg-listen-ip-hint"),
+            "The IP address the gateway binds to. Use 0.0.0.0 for all interfaces."
+        );
+        assert_eq!(translator.text("gw-cfg-listen-port"), "Listen Port");
+        assert_eq!(
+            translator.text("gw-cfg-listen-port-hint"),
+            "Port number for the gateway. 0 means auto-select."
+        );
+        assert_eq!(translator.text("gw-cfg-port-auto"), "(0 = auto)");
+        assert_eq!(translator.text("gw-cfg-auth"), "Auth");
+        assert_eq!(translator.text("gw-cfg-auth-enabled"), "Enabled");
+        assert_eq!(
+            translator.text("gw-cfg-auth-enabled-hint"),
+            "Require authentication token for gateway connections."
+        );
+        assert_eq!(translator.text("gw-cfg-auth-token"), "Token");
+        assert_eq!(
+            translator.text("gw-cfg-auth-token-hint"),
+            "Secret token used to authenticate gateway clients."
+        );
+        assert_eq!(translator.text("gw-btn-generate"), "Generate");
+        assert_eq!(translator.text("gw-btn-reload"), "Reload");
+        assert_eq!(translator.text("gw-btn-save"), "Save");
+        assert_eq!(
+            translator.text("gw-notify-auth-token-empty"),
+            "Gateway auth token is empty"
+        );
+        assert_eq!(
+            translator.text("gw-notify-auth-token-copied"),
+            "Gateway auth token copied"
+        );
+    }
+
+    #[test]
+    fn gui_gateway_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("gw-subtitle"),
+            "管理 GUI 运行时使用的嵌入式网关服务。"
+        );
+        assert_eq!(translator.text("gw-loading"), "加载中...");
+        assert_eq!(translator.text("gw-status-refreshed"), "网关状态已刷新");
+        assert_eq!(translator.text("gw-notify-started"), "网关已启动");
+        assert_eq!(translator.text("gw-notify-restarted"), "网关已重启");
+        assert_eq!(
+            translator.text("gw-notify-config-store-unavailable"),
+            "配置存储不可用"
+        );
+        assert_eq!(translator.text("gw-notify-config-saved"), "网关配置已保存");
+        assert_eq!(
+            translator.text("gw-notify-config-reloaded"),
+            "配置已从磁盘重新加载"
+        );
+        // Status labels
+        assert_eq!(translator.text("gw-status-configured"), "已配置");
+        assert_eq!(translator.text("gw-status-enabled"), "已启用");
+        assert_eq!(translator.text("gw-status-disabled"), "已禁用");
+        assert_eq!(translator.text("gw-status-runtime"), "运行状态");
+        assert_eq!(translator.text("gw-status-running"), "运行中");
+        assert_eq!(translator.text("gw-status-stopped"), "已停止");
+        assert_eq!(translator.text("gw-status-auth"), "认证");
+        assert_eq!(translator.text("gw-status-auth-configured"), "已配置");
+        assert_eq!(translator.text("gw-status-auth-not-configured"), "未配置");
+        // Tailscale
+        assert_eq!(translator.text("gw-ts-heading"), "Tailscale");
+        assert_eq!(translator.text("gw-ts-mode-off"), "关闭");
+        assert_eq!(translator.text("gw-ts-mode-serve"), "Serve（仅 tailnet）");
+        assert_eq!(translator.text("gw-ts-mode-funnel"), "Funnel（公共）");
+        assert_eq!(translator.text("gw-ts-host-connected"), "已连接");
+        assert_eq!(translator.text("gw-ts-host-disconnected"), "已断开");
+        // Config window
+        assert_eq!(translator.text("gw-cfg-title"), "网关配置");
+        assert_eq!(translator.text("gw-cfg-basic"), "基本");
+        assert_eq!(translator.text("gw-cfg-enabled"), "已启用");
+        assert_eq!(
+            translator.text("gw-cfg-enabled-hint"),
+            "启用或禁用网关服务。"
+        );
+        assert_eq!(translator.text("gw-cfg-listen-ip"), "监听 IP");
+        assert_eq!(
+            translator.text("gw-cfg-listen-ip-hint"),
+            "网关绑定的 IP 地址。使用 0.0.0.0 监听所有接口。"
+        );
+        assert_eq!(translator.text("gw-cfg-listen-port"), "监听端口");
+        assert_eq!(
+            translator.text("gw-cfg-listen-port-hint"),
+            "网关的端口号。0 表示自动选择。"
+        );
+        assert_eq!(translator.text("gw-cfg-port-auto"), "(0 = 自动)");
+        assert_eq!(translator.text("gw-cfg-auth"), "认证");
+        assert_eq!(translator.text("gw-cfg-auth-enabled"), "已启用");
+        assert_eq!(
+            translator.text("gw-cfg-auth-enabled-hint"),
+            "要求网关连接使用认证令牌。"
+        );
+        assert_eq!(translator.text("gw-cfg-auth-token"), "令牌");
+        assert_eq!(
+            translator.text("gw-cfg-auth-token-hint"),
+            "用于认证网关客户端的密钥令牌。"
+        );
+        assert_eq!(translator.text("gw-btn-generate"), "生成");
+        assert_eq!(translator.text("gw-btn-reload"), "重载");
+        assert_eq!(translator.text("gw-btn-save"), "保存");
+    }
+
+    #[test]
+    fn gui_gateway_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "gw-status-unavailable",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Gateway status unavailable: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-started-at",
+                HashMap::from([("url", "ws://127.0.0.1:8080/ws/chat".to_string())])
+            ),
+            "Gateway started at ws://127.0.0.1:8080/ws/chat"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-restarted-at",
+                HashMap::from([("url", "ws://127.0.0.1:8080/ws/chat".to_string())])
+            ),
+            "Gateway restarted at ws://127.0.0.1:8080/ws/chat"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-tailscale-mode-set",
+                HashMap::from([("mode", "serve (tailnet only)".to_string())])
+            ),
+            "Tailscale mode set to serve (tailnet only)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-load-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to load gateway status: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-start-failed",
+                HashMap::from([("error", "refused".to_string())])
+            ),
+            "Failed to start gateway: refused"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-restart-failed",
+                HashMap::from([("error", "refused".to_string())])
+            ),
+            "Failed to restart gateway: refused"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-tailscale-refresh-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to refresh tailscale status: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-save-failed",
+                HashMap::from([("error", "invalid".to_string())])
+            ),
+            "Save failed: invalid"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-reload-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Reload failed: io"
+        );
+        assert_eq!(
+            translator.text_args("gw-btn-refresh", HashMap::from([("icon", "⟳".to_string())])),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args("gw-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ Config"
+        );
+        assert_eq!(
+            translator.text_args("gw-btn-start", HashMap::from([("icon", "▶".to_string())])),
+            "▶ Start"
+        );
+        assert_eq!(
+            translator.text_args("gw-btn-restart", HashMap::from([("icon", "↺".to_string())])),
+            "↺ Restart"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-btn-refresh-ts",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh Tailscale"
+        );
+    }
+
+    #[test]
+    fn gui_gateway_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "gw-status-unavailable",
+                HashMap::from([("error", "超时".to_string())])
+            ),
+            "网关状态不可用: 超时"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-started-at",
+                HashMap::from([("url", "ws://127.0.0.1:8080/ws/chat".to_string())])
+            ),
+            "网关已启动于 ws://127.0.0.1:8080/ws/chat"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-restarted-at",
+                HashMap::from([("url", "ws://127.0.0.1:8080/ws/chat".to_string())])
+            ),
+            "网关已重启于 ws://127.0.0.1:8080/ws/chat"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-tailscale-mode-set",
+                HashMap::from([("mode", "serve（仅 tailnet）".to_string())])
+            ),
+            "Tailscale 模式已设置为 serve（仅 tailnet）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-load-failed",
+                HashMap::from([("error", "超时".to_string())])
+            ),
+            "加载网关状态失败: 超时"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-start-failed",
+                HashMap::from([("error", "拒绝".to_string())])
+            ),
+            "启动网关失败: 拒绝"
+        );
+        assert_eq!(
+            translator.text_args(
+                "gw-notify-save-failed",
+                HashMap::from([("error", "无效".to_string())])
+            ),
+            "保存失败: 无效"
+        );
+        assert_eq!(
+            translator.text_args("gw-btn-refresh", HashMap::from([("icon", "⟳".to_string())])),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args("gw-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ 配置"
+        );
+    }
 }

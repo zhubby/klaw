@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_seconds;
 use crate::{
     GatewayStatusSnapshot, request_gateway_status, request_restart_gateway,
@@ -11,6 +12,8 @@ use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode,
 };
 use klaw_gateway::{TailscaleHostInfo, TailscaleStatus};
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
@@ -144,6 +147,10 @@ impl Default for GatewayPanel {
 }
 
 impl GatewayPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         self.ensure_store_loaded(notifications);
         if self.loaded {
@@ -157,13 +164,14 @@ impl GatewayPanel {
         if self.store.is_some() {
             return;
         }
+        let t = Self::translator();
         match ConfigStore::open(None) {
             Ok(store) => {
                 let snapshot = store.snapshot();
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(format!("{}: {err}", t.text("gw-notify-load-failed"))),
         }
     }
 
@@ -213,6 +221,7 @@ impl GatewayPanel {
     }
 
     fn poll_pending_request(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(pending) = self.pending_request.take() else {
             return;
         };
@@ -229,9 +238,9 @@ impl GatewayPanel {
                             } => {
                                 if announce {
                                     notifications.success(if tailscale_only {
-                                        "Tailscale status refreshed"
+                                        t.text("gw-tailscale-status-refreshed")
                                     } else {
-                                        "Gateway status refreshed"
+                                        t.text("gw-status-refreshed")
                                     });
                                 }
                             }
@@ -241,8 +250,13 @@ impl GatewayPanel {
                                     .status
                                     .as_ref()
                                     .and_then(|snapshot| snapshot.info.as_ref())
-                                    .map(|info| format!("Gateway started at {}", info.ws_url))
-                                    .unwrap_or_else(|| "Gateway started".to_string());
+                                    .map(|info| {
+                                        t.text_args(
+                                            "gw-notify-started-at",
+                                            HashMap::from([("url", info.ws_url.clone())]),
+                                        )
+                                    })
+                                    .unwrap_or_else(|| t.text("gw-notify-started"));
                                 notifications.success(message);
                             }
                             PendingGatewayAction::Restart => {
@@ -251,19 +265,26 @@ impl GatewayPanel {
                                     .status
                                     .as_ref()
                                     .and_then(|snapshot| snapshot.info.as_ref())
-                                    .map(|info| format!("Gateway restarted at {}", info.ws_url))
-                                    .unwrap_or_else(|| "Gateway restarted".to_string());
+                                    .map(|info| {
+                                        t.text_args(
+                                            "gw-notify-restarted-at",
+                                            HashMap::from([("url", info.ws_url.clone())]),
+                                        )
+                                    })
+                                    .unwrap_or_else(|| t.text("gw-notify-restarted"));
                                 notifications.success(message);
                             }
                             PendingGatewayAction::SetTailscaleMode(mode) => {
                                 self.tailscale_needs_refresh = true;
                                 let mode_str = match mode {
-                                    TailscaleMode::Off => "disabled",
-                                    TailscaleMode::Serve => "serve (tailnet only)",
-                                    TailscaleMode::Funnel => "funnel (public)",
+                                    TailscaleMode::Off => t.text("gw-ts-mode-apply-disabled"),
+                                    TailscaleMode::Serve => t.text("gw-ts-mode-apply-serve"),
+                                    TailscaleMode::Funnel => t.text("gw-ts-mode-apply-funnel"),
                                 };
-                                notifications
-                                    .success(format!("Tailscale mode set to {}", mode_str));
+                                notifications.success(t.text_args(
+                                    "gw-notify-tailscale-mode-set",
+                                    HashMap::from([("mode", mode_str)]),
+                                ));
                             }
                         }
                         self.maybe_queue_tailscale_refresh();
@@ -279,20 +300,29 @@ impl GatewayPanel {
                         notifications.error(match pending.action {
                             PendingGatewayAction::Refresh { tailscale_only, .. } => {
                                 if tailscale_only {
-                                    format!("Failed to refresh tailscale status: {err}")
+                                    t.text_args(
+                                        "gw-notify-tailscale-refresh-failed",
+                                        HashMap::from([("error", err.clone())]),
+                                    )
                                 } else {
-                                    format!("Failed to load gateway status: {err}")
+                                    t.text_args(
+                                        "gw-notify-load-failed",
+                                        HashMap::from([("error", err.clone())]),
+                                    )
                                 }
                             }
-                            PendingGatewayAction::Start => {
-                                format!("Failed to start gateway: {err}")
-                            }
-                            PendingGatewayAction::Restart => {
-                                format!("Failed to restart gateway: {err}")
-                            }
-                            PendingGatewayAction::SetTailscaleMode(_) => {
-                                format!("Failed to set tailscale mode: {err}")
-                            }
+                            PendingGatewayAction::Start => t.text_args(
+                                "gw-notify-start-failed",
+                                HashMap::from([("error", err.clone())]),
+                            ),
+                            PendingGatewayAction::Restart => t.text_args(
+                                "gw-notify-restart-failed",
+                                HashMap::from([("error", err.clone())]),
+                            ),
+                            PendingGatewayAction::SetTailscaleMode(_) => t.text_args(
+                                "gw-notify-tailscale-mode-failed",
+                                HashMap::from([("error", err.clone())]),
+                            ),
                         });
                         self.load_error = Some(err);
                         self.queue_request(
@@ -312,12 +342,15 @@ impl GatewayPanel {
                         if let PendingGatewayAction::Refresh { announce, .. } = pending.action
                             && announce
                         {
-                            notifications.success("Tailscale status refreshed");
+                            notifications.success(t.text("gw-tailscale-status-refreshed"));
                         }
                     }
                     Err(err) => {
                         self.tailscale_needs_refresh = true;
-                        notifications.error(format!("Failed to refresh tailscale status: {err}"));
+                        notifications.error(t.text_args(
+                            "gw-notify-tailscale-refresh-failed",
+                            HashMap::from([("error", err.clone())]),
+                        ));
                         self.load_error = Some(err);
                     }
                 },
@@ -326,7 +359,7 @@ impl GatewayPanel {
                 self.pending_request = Some(pending);
             }
             Err(TryRecvError::Disconnected) => {
-                notifications.error("Gateway request worker closed unexpectedly");
+                notifications.error(t.text("gw-notify-worker-closed"));
             }
         }
     }
@@ -359,8 +392,9 @@ impl GatewayPanel {
     }
 
     fn save_config(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("gw-notify-config-store-unavailable"));
             return;
         };
 
@@ -377,28 +411,34 @@ impl GatewayPanel {
                 self.config_window_open = false;
                 let running = self.status.as_ref().map(|s| s.running).unwrap_or(false);
                 if running {
-                    notifications
-                        .success("Gateway config saved. Restart gateway to apply changes.");
+                    notifications.success(t.text("gw-notify-config-saved-restart"));
                 } else {
-                    notifications.success("Gateway config saved");
+                    notifications.success(t.text("gw-notify-config-saved"));
                 }
             }
-            Err(err) => notifications.error(format!("Save failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "gw-notify-save-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn reload_config(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("gw-notify-config-store-unavailable"));
             return;
         };
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
                 self.refresh(notifications, false, false);
-                notifications.success("Config reloaded from disk");
+                notifications.success(t.text("gw-notify-config-reloaded"));
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "gw-notify-reload-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -425,52 +465,73 @@ impl GatewayPanel {
         ctx: &egui::Context,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         let mut open = self.config_window_open;
-        egui::Window::new("Gateway Config")
+        egui::Window::new(t.text("gw-cfg-title"))
             .id(egui::Id::new("gateway-config-window"))
             .open(&mut open)
             .resizable(true)
             .default_width(520.0)
             .show(ctx, |ui| {
-                ui.heading("Basic");
+                ui.heading(t.text("gw-cfg-basic"));
                 egui::Grid::new("gateway-config-basic-grid")
                     .num_columns(2)
                     .spacing([16.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Enabled");
-                        ui.checkbox(&mut self.config_form.enabled, "");
+                        label_with_hint(
+                            ui,
+                            &t.text("gw-cfg-enabled"),
+                            &t.text("gw-cfg-enabled-hint"),
+                        );
+                        ui.add(toggle(&mut self.config_form.enabled));
                         ui.end_row();
 
-                        ui.label("Listen IP");
+                        label_with_hint(
+                            ui,
+                            &t.text("gw-cfg-listen-ip"),
+                            &t.text("gw-cfg-listen-ip-hint"),
+                        );
                         ui.add_sized(
                             [240.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(&mut self.config_form.listen_ip),
                         );
                         ui.end_row();
 
-                        ui.label("Listen Port");
+                        label_with_hint(
+                            ui,
+                            &t.text("gw-cfg-listen-port"),
+                            &t.text("gw-cfg-listen-port-hint"),
+                        );
                         ui.horizontal(|ui| {
                             ui.add_sized(
                                 [100.0, ui.spacing().interact_size.y],
                                 egui::TextEdit::singleline(&mut self.config_form.listen_port),
                             );
-                            ui.label("(0 = auto)");
+                            ui.label(t.text("gw-cfg-port-auto"));
                         });
                         ui.end_row();
                     });
 
                 ui.add_space(8.0);
                 ui.separator();
-                ui.heading("Auth");
+                ui.heading(t.text("gw-cfg-auth"));
                 egui::Grid::new("gateway-config-auth-grid")
                     .num_columns(2)
                     .spacing([16.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Enabled");
-                        ui.checkbox(&mut self.config_form.auth_enabled, "");
+                        label_with_hint(
+                            ui,
+                            &t.text("gw-cfg-auth-enabled"),
+                            &t.text("gw-cfg-auth-enabled-hint"),
+                        );
+                        ui.add(toggle(&mut self.config_form.auth_enabled));
                         ui.end_row();
 
-                        ui.label("Token");
+                        label_with_hint(
+                            ui,
+                            &t.text("gw-cfg-auth-token"),
+                            &t.text("gw-cfg-auth-token-hint"),
+                        );
                         ui.horizontal(|ui| {
                             ui.add_sized(
                                 [280.0, ui.spacing().interact_size.y],
@@ -487,7 +548,7 @@ impl GatewayPanel {
                             }
                             if ui.button(regular::COPY).clicked() {
                                 if self.config_form.auth_token.is_empty() {
-                                    notifications.error("Gateway auth token is empty");
+                                    notifications.error(t.text("gw-notify-auth-token-empty"));
                                 } else {
                                     let auth_token = self.config_form.auth_token.clone();
                                     ui.ctx().output_mut(|output| {
@@ -495,10 +556,10 @@ impl GatewayPanel {
                                             egui::output::OutputCommand::CopyText(auth_token),
                                         );
                                     });
-                                    notifications.success("Gateway auth token copied");
+                                    notifications.success(t.text("gw-notify-auth-token-copied"));
                                 }
                             }
-                            if ui.button("Generate").clicked() {
+                            if ui.button(t.text("gw-btn-generate")).clicked() {
                                 self.config_form.auth_token = generate_gateway_auth_token();
                             }
                         });
@@ -507,10 +568,10 @@ impl GatewayPanel {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Reload").clicked() {
+                    if ui.button(t.text("gw-btn-reload")).clicked() {
                         self.reload_config(notifications);
                     }
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("gw-btn-save")).clicked() {
                         self.save_config(notifications);
                     }
                 });
@@ -526,6 +587,7 @@ impl PanelRenderer for GatewayPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         self.ensure_loaded(notifications);
         self.poll_pending_request(notifications);
         egui::ScrollArea::vertical()
@@ -533,21 +595,30 @@ impl PanelRenderer for GatewayPanel {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.heading(ctx.tab_title);
-                ui.label("Manage the embedded gateway service used by the GUI runtime.");
+                ui.label(t.text("gw-subtitle"));
                 ui.separator();
 
                 let Some(status) = self.status.clone() else {
                     if let Some(err) = &self.load_error {
                         ui.colored_label(
                             ui.visuals().error_fg_color,
-                            format!("Gateway status unavailable: {err}"),
+                            t.text_args(
+                                "gw-status-unavailable",
+                                HashMap::from([("error", err.clone())]),
+                            ),
                         );
                         ui.add_space(8.0);
-                        if ui.button("Retry").clicked() {
+                        if ui
+                            .button(t.text_args(
+                                "gw-btn-retry",
+                                HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                            ))
+                            .clicked()
+                        {
                             self.refresh(notifications, true, false);
                         }
                     } else {
-                        ui.label("Loading...");
+                        ui.label(t.text("gw-loading"));
                     }
                     return;
                 };
@@ -561,13 +632,25 @@ impl PanelRenderer for GatewayPanel {
 
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(self.pending_request.is_none(), egui::Button::new("Refresh"))
+                        .add_enabled(
+                            self.pending_request.is_none(),
+                            egui::Button::new(t.text_args(
+                                "gw-btn-refresh",
+                                HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                            )),
+                        )
                         .clicked()
                     {
                         self.refresh(notifications, true, false);
                     }
 
-                    if ui.button("Config").clicked() {
+                    if ui
+                        .button(t.text_args(
+                            "gw-btn-config",
+                            HashMap::from([("icon", regular::SLIDERS.to_string())]),
+                        ))
+                        .clicked()
+                    {
                         self.open_config_window();
                     }
 
@@ -576,7 +659,10 @@ impl PanelRenderer for GatewayPanel {
                             !status.transitioning
                                 && !status.running
                                 && self.pending_request.is_none(),
-                            egui::Button::new("Start"),
+                            egui::Button::new(t.text_args(
+                                "gw-btn-start",
+                                HashMap::from([("icon", regular::PLAY.to_string())]),
+                            )),
                         )
                         .clicked()
                     {
@@ -588,7 +674,13 @@ impl PanelRenderer for GatewayPanel {
                             !status.transitioning
                                 && status.running
                                 && self.pending_request.is_none(),
-                            egui::Button::new("Restart"),
+                            egui::Button::new(t.text_args(
+                                "gw-btn-restart",
+                                HashMap::from([(
+                                    "icon",
+                                    regular::ARROW_COUNTER_CLOCKWISE.to_string(),
+                                )]),
+                            )),
                         )
                         .clicked()
                     {
@@ -601,45 +693,60 @@ impl PanelRenderer for GatewayPanel {
                     .num_columns(2)
                     .spacing([16.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Configured");
-                        render_boolean_status(ui, status.configured_enabled, "Enabled", "Disabled");
+                        ui.label(t.text("gw-status-configured"));
+                        render_boolean_status(
+                            ui,
+                            status.configured_enabled,
+                            &t.text("gw-status-enabled"),
+                            &t.text("gw-status-disabled"),
+                        );
                         ui.end_row();
 
-                        ui.label("Runtime");
-                        ui.label(if status.running { "running" } else { "stopped" });
+                        ui.label(t.text("gw-status-runtime"));
+                        let running_label = if status.running {
+                            t.text("gw-status-running")
+                        } else {
+                            t.text("gw-status-stopped")
+                        };
+                        ui.label(running_label);
                         ui.end_row();
 
-                        ui.label("Transition");
-                        ui.label(if status.transitioning { "busy" } else { "idle" });
+                        ui.label(t.text("gw-status-transition"));
+                        let transition_label = if status.transitioning {
+                            t.text("gw-status-busy")
+                        } else {
+                            t.text("gw-status-idle")
+                        };
+                        ui.label(transition_label);
                         ui.end_row();
 
-                        ui.label("Auth");
+                        ui.label(t.text("gw-status-auth"));
                         render_boolean_status(
                             ui,
                             status.auth_configured,
-                            "Configured",
-                            "Not Configured",
+                            &t.text("gw-status-auth-configured"),
+                            &t.text("gw-status-auth-not-configured"),
                         );
                         ui.end_row();
 
                         if let Some(info) = &status.info {
-                            ui.label("Listen IP");
+                            ui.label(t.text("gw-status-listen-ip"));
                             ui.label(&info.listen_ip);
                             ui.end_row();
 
-                            ui.label("Configured Port");
+                            ui.label(t.text("gw-status-configured-port"));
                             ui.label(info.configured_port.to_string());
                             ui.end_row();
 
-                            ui.label("Actual Port");
+                            ui.label(t.text("gw-status-actual-port"));
                             ui.label(info.actual_port.to_string());
                             ui.end_row();
 
-                            ui.label("Address");
+                            ui.label(t.text("gw-status-address"));
                             ui.hyperlink(gateway_base_url(&info.ws_url));
                             ui.end_row();
 
-                            ui.label("Started At");
+                            ui.label(t.text("gw-status-started-at"));
                             ui.label(format_timestamp_seconds(info.started_at_unix_seconds));
                             ui.end_row();
                         }
@@ -648,40 +755,41 @@ impl PanelRenderer for GatewayPanel {
                 ui.add_space(16.0);
                 ui.separator();
                 ui.add_space(8.0);
-                ui.heading("Tailscale");
-                ui.label(
-                    "Expose the gateway via Tailscale Serve (tailnet only) or Funnel (public internet).",
-                );
+                ui.heading(t.text("gw-ts-heading"));
+                ui.label(t.text("gw-ts-subtitle"));
                 ui.add_space(8.0);
 
                 let current_mode = status.tailscale_mode;
                 let tailscale_available = tailscale_service_available(&status);
 
                 ui.horizontal(|ui| {
-                    ui.label("Mode");
+                    ui.label(t.text("gw-ts-mode"));
                     egui::ComboBox::from_id_salt("tailscale-mode")
-                        .selected_text(mode_display(self.selected_tailscale_mode))
+                        .selected_text(mode_display(self.selected_tailscale_mode, &t))
                         .show_ui(ui, |ui| {
                             ui.selectable_value(
                                 &mut self.selected_tailscale_mode,
                                 TailscaleMode::Off,
-                                "Off",
+                                t.text("gw-ts-mode-off"),
                             );
                             ui.selectable_value(
                                 &mut self.selected_tailscale_mode,
                                 TailscaleMode::Serve,
-                                "Serve (tailnet)",
+                                t.text("gw-ts-mode-serve"),
                             );
                             ui.selectable_value(
                                 &mut self.selected_tailscale_mode,
                                 TailscaleMode::Funnel,
-                                "Funnel (public)",
+                                t.text("gw-ts-mode-funnel"),
                             );
                         });
                     if ui
                         .add_enabled(
                             self.pending_request.is_none(),
-                            egui::Button::new("Refresh Tailscale"),
+                            egui::Button::new(t.text_args(
+                                "gw-btn-refresh-ts",
+                                HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                            )),
                         )
                         .clicked()
                     {
@@ -692,7 +800,7 @@ impl PanelRenderer for GatewayPanel {
                         && !status.transitioning
                         && self.pending_request.is_none();
                     if ui
-                        .add_enabled(apply_enabled, egui::Button::new("Apply"))
+                        .add_enabled(apply_enabled, egui::Button::new(t.text("gw-btn-apply")))
                         .clicked()
                     {
                         self.set_tailscale_mode(self.selected_tailscale_mode, notifications);
@@ -700,41 +808,41 @@ impl PanelRenderer for GatewayPanel {
                 });
 
                 ui.add_space(8.0);
-                ui.label("Host Status");
+                ui.label(t.text("gw-ts-host-status"));
                 egui::Grid::new("gateway-panel-tailscale-host-grid")
                     .num_columns(2)
                     .spacing([16.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Status");
-                        render_tailscale_status(ui, &status.tailscale_host.status);
+                        ui.label(t.text("gw-ts-host-status-label"));
+                        render_tailscale_status(ui, &status.tailscale_host.status, &t);
                         ui.end_row();
 
                         if let Some(version) = &status.tailscale_host.version {
-                            ui.label("Version");
+                            ui.label(t.text("gw-ts-host-version"));
                             ui.label(version);
                             ui.end_row();
                         }
 
                         if let Some(backend_state) = &status.tailscale_host.backend_state {
-                            ui.label("Backend State");
+                            ui.label(t.text("gw-ts-host-backend-state"));
                             ui.label(backend_state);
                             ui.end_row();
                         }
 
                         if let Some(dns_name) = &status.tailscale_host.dns_name {
-                            ui.label("DNS Name");
+                            ui.label(t.text("gw-ts-host-dns-name"));
                             ui.label(dns_name);
                             ui.end_row();
                         }
 
                         if let Some(url) = &status.tailscale_host.public_url {
-                            ui.label("Tailnet URL");
+                            ui.label(t.text("gw-ts-host-tailnet-url"));
                             ui.hyperlink(url);
                             ui.end_row();
                         }
 
                         if let Some(message) = &status.tailscale_host.message {
-                            ui.label("Host Message");
+                            ui.label(t.text("gw-ts-host-message"));
                             ui.label(message);
                             ui.end_row();
                         }
@@ -748,18 +856,18 @@ impl PanelRenderer for GatewayPanel {
                         .num_columns(2)
                         .spacing([16.0, 8.0])
                         .show(ui, |ui| {
-                            ui.label("Gateway Exposure");
-                            render_tailscale_status(ui, &ts.status);
+                            ui.label(t.text("gw-ts-gateway-exposure"));
+                            render_tailscale_status(ui, &ts.status, &t);
                             ui.end_row();
 
                             if let Some(url) = &ts.public_url {
-                                ui.label("Gateway URL");
+                                ui.label(t.text("gw-ts-gateway-url"));
                                 ui.hyperlink(url);
                                 ui.end_row();
                             }
 
                             if let Some(msg) = &ts.message {
-                                ui.label("Message");
+                                ui.label(t.text("gw-ts-message"));
                                 ui.label(msg);
                                 ui.end_row();
                             }
@@ -770,7 +878,7 @@ impl PanelRenderer for GatewayPanel {
                     ui.add_space(8.0);
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
-                        "⚠️ Funnel exposes your gateway publicly. Configure gateway.auth to protect it.",
+                        t.text("gw-ts-funnel-no-auth-warning"),
                     );
                 }
             });
@@ -781,11 +889,11 @@ impl PanelRenderer for GatewayPanel {
     }
 }
 
-fn mode_display(mode: TailscaleMode) -> &'static str {
+fn mode_display(mode: TailscaleMode, t: &Translator) -> String {
     match mode {
-        TailscaleMode::Off => "Off",
-        TailscaleMode::Serve => "Serve (tailnet)",
-        TailscaleMode::Funnel => "Funnel (public)",
+        TailscaleMode::Off => t.text("gw-ts-mode-off"),
+        TailscaleMode::Serve => t.text("gw-ts-mode-serve"),
+        TailscaleMode::Funnel => t.text("gw-ts-mode-funnel"),
     }
 }
 
@@ -821,13 +929,16 @@ fn render_boolean_status(
     });
 }
 
-fn render_tailscale_status(ui: &mut egui::Ui, status: &TailscaleStatus) {
+fn render_tailscale_status(ui: &mut egui::Ui, status: &TailscaleStatus, t: &Translator) {
     match status {
         TailscaleStatus::Connected => {
-            ui.colored_label(egui::Color32::from_rgb(0, 180, 0), "Connected");
+            ui.colored_label(
+                egui::Color32::from_rgb(0, 180, 0),
+                t.text("gw-ts-host-connected"),
+            );
         }
         TailscaleStatus::Disconnected => {
-            ui.label("Disconnected");
+            ui.label(t.text("gw-ts-host-disconnected"));
         }
         TailscaleStatus::Error(message) => {
             ui.colored_label(ui.visuals().error_fg_color, message);
