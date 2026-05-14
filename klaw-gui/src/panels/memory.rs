@@ -1,6 +1,7 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::{RuntimeRequestHandle, begin_run_memory_archive_now_request};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -13,8 +14,9 @@ use klaw_memory::{
     read_long_term_status, read_long_term_topic, render_long_term_memory_section,
 };
 use klaw_storage::{ChatRecord, SessionStorage, open_default_store};
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -105,13 +107,13 @@ enum StatusFilter {
 }
 
 impl StatusFilter {
-    fn label(self) -> &'static str {
+    fn label(self, t: &Translator) -> String {
         match self {
-            Self::Active => "Active",
-            Self::Superseded => "Superseded",
-            Self::Archived => "Archived",
-            Self::Rejected => "Rejected",
-            Self::All => "All",
+            Self::Active => t.text("mem-filter-status-active"),
+            Self::Superseded => t.text("mem-filter-status-superseded"),
+            Self::Archived => t.text("mem-filter-status-archived"),
+            Self::Rejected => t.text("mem-filter-status-rejected"),
+            Self::All => t.text("mem-filter-status-all"),
         }
     }
 
@@ -139,15 +141,15 @@ enum KindFilter {
 }
 
 impl KindFilter {
-    fn label(self) -> &'static str {
+    fn label(self, t: &Translator) -> String {
         match self {
-            Self::All => "All kinds",
-            Self::Identity => "identity",
-            Self::Preference => "preference",
-            Self::ProjectRule => "project_rule",
-            Self::Workflow => "workflow",
-            Self::Fact => "fact",
-            Self::Constraint => "constraint",
+            Self::All => t.text("mem-filter-kind-all"),
+            Self::Identity => t.text("mem-filter-kind-identity"),
+            Self::Preference => t.text("mem-filter-kind-preference"),
+            Self::ProjectRule => t.text("mem-filter-kind-project-rule"),
+            Self::Workflow => t.text("mem-filter-kind-workflow"),
+            Self::Fact => t.text("mem-filter-kind-fact"),
+            Self::Constraint => t.text("mem-filter-kind-constraint"),
         }
     }
 
@@ -259,6 +261,10 @@ pub struct MemoryPanel {
 }
 
 impl MemoryPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded || self.load_request.is_some() {
             return;
@@ -311,6 +317,7 @@ impl MemoryPanel {
     }
 
     fn poll_load_request(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(request) = self.load_request.take() else {
             return;
         };
@@ -340,7 +347,9 @@ impl MemoryPanel {
                 }
                 Err(err) => {
                     self.loading = false;
-                    notifications.error(format!("Failed to load memory panel: {err}"));
+                    notifications.error(
+                        t.text_args("mem-notify-load-failed", HashMap::from([("error", err)])),
+                    );
                     if self.refresh_queued {
                         self.refresh_queued = false;
                         self.refresh(notifications);
@@ -352,12 +361,13 @@ impl MemoryPanel {
             }
             Err(TryRecvError::Disconnected) => {
                 self.loading = false;
-                notifications.error("Memory panel loader closed unexpectedly");
+                notifications.error(t.text("mem-notify-load-disconnected"));
             }
         }
     }
 
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.store.is_some() {
             return;
         }
@@ -368,7 +378,10 @@ impl MemoryPanel {
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "mem-notify-config-load-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -393,8 +406,9 @@ impl MemoryPanel {
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("mem-notify-store-unavailable"));
             return;
         };
         let Some(form) = self.form.clone() else {
@@ -403,31 +417,41 @@ impl MemoryPanel {
 
         match store.update_config(|config| {
             let next =
-                Self::apply_form(config.clone(), &form).map_err(ConfigError::InvalidConfig)?;
+                Self::apply_form(config.clone(), &form, &t).map_err(ConfigError::InvalidConfig)?;
             *config = next;
             Ok(())
         }) {
             Ok((snapshot, ())) => {
                 self.apply_snapshot(snapshot);
                 self.form = None;
-                notifications.success("Memory config saved");
+                notifications.success(t.text("mem-notify-config-saved"));
             }
-            Err(err) => notifications.error(format!("Save failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "mem-notify-save-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
-    fn apply_form(mut config: AppConfig, form: &MemoryConfigForm) -> Result<AppConfig, String> {
+    fn apply_form(
+        mut config: AppConfig,
+        form: &MemoryConfigForm,
+        t: &Translator,
+    ) -> Result<AppConfig, String> {
         let provider = form.provider.trim();
         if provider.is_empty() {
-            return Err("Provider cannot be empty".to_string());
+            return Err(t.text("mem-notify-provider-empty"));
         }
         if !config.model_providers.contains_key(provider) {
-            return Err(format!("Provider '{provider}' is not available"));
+            return Err(t.text_args(
+                "mem-notify-provider-unavailable",
+                HashMap::from([("provider", provider.to_string())]),
+            ));
         }
 
         let model = form.model.trim();
         if model.is_empty() {
-            return Err("Model cannot be empty".to_string());
+            return Err(t.text("mem-notify-model-empty"));
         }
 
         config.memory.embedding = EmbeddingConfig {
@@ -439,6 +463,7 @@ impl MemoryPanel {
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let provider_ids = self.available_provider_ids();
         let mut save_clicked = false;
         let mut cancel_clicked = false;
@@ -447,7 +472,7 @@ impl MemoryPanel {
             return;
         };
 
-        egui::Window::new("Long-term Memory Embedding Config")
+        egui::Window::new(t.text("mem-config-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -460,16 +485,20 @@ impl MemoryPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Embedding enabled");
-                        ui.checkbox(&mut form.enabled, "");
+                        label_with_hint(
+                            ui,
+                            &t.text("mem-config-enabled"),
+                            &t.text("mem-config-enabled-hint"),
+                        );
+                        ui.add(toggle(&mut form.enabled));
                         ui.end_row();
 
-                        ui.label("Provider");
+                        ui.label(t.text("mem-config-provider"));
                         egui::ComboBox::from_id_salt("memory-config-provider")
                             .selected_text(if form.provider.is_empty() {
-                                "Select provider"
+                                t.text("mem-config-provider-placeholder")
                             } else {
-                                form.provider.as_str()
+                                form.provider.as_str().to_string()
                             })
                             .show_ui(ui, |ui| {
                                 for provider_id in &provider_ids {
@@ -482,32 +511,33 @@ impl MemoryPanel {
                             });
                         ui.end_row();
 
-                        ui.label("Model");
+                        ui.label(t.text("mem-config-model"));
                         ui.text_edit_singleline(&mut form.model);
                         ui.end_row();
                     });
 
                 ui.add_space(6.0);
-                ui.small(
-                    "This config controls long-term memory embedding and indexing. Tool-level search settings stay under the Tool panel.",
-                );
+                ui.small(t.text("mem-config-description"));
 
                 if provider_ids.is_empty() {
                     ui.colored_label(
                         ui.style().visuals.warn_fg_color,
-                        "No providers are configured in config.toml.",
+                        t.text("mem-config-no-providers"),
                     );
                 }
 
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(!provider_ids.is_empty(), egui::Button::new("Save"))
+                        .add_enabled(
+                            !provider_ids.is_empty(),
+                            egui::Button::new(t.text("mem-config-save")),
+                        )
                         .clicked()
                     {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("mem-config-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -522,6 +552,7 @@ impl MemoryPanel {
     }
 
     fn begin_session_search(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.session_search_request.is_some() {
             return;
         }
@@ -529,25 +560,25 @@ impl MemoryPanel {
         let session_key = self.session_form.session_key.trim().to_string();
         let query = self.session_form.query.trim().to_string();
         if session_key.is_empty() {
-            notifications.error("Session search requires a session key");
+            notifications.error(t.text("mem-notify-session-key-required"));
             return;
         }
         if query.is_empty() {
-            notifications.error("Session search requires a query");
+            notifications.error(t.text("mem-notify-session-query-required"));
             return;
         }
 
         let within_days = match self.session_form.within_days.trim().parse::<i64>() {
             Ok(value) if value > 0 => value,
             _ => {
-                notifications.error("within_days must be a positive integer");
+                notifications.error(t.text("mem-notify-session-days-invalid"));
                 return;
             }
         };
         let limit = match self.session_form.limit.trim().parse::<usize>() {
             Ok(value) if value > 0 => value,
             _ => {
-                notifications.error("limit must be a positive integer");
+                notifications.error(t.text("mem-notify-session-limit-invalid"));
                 return;
             }
         };
@@ -559,6 +590,7 @@ impl MemoryPanel {
     }
 
     fn poll_session_search_request(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(request) = self.session_search_request.take() else {
             return;
         };
@@ -571,7 +603,10 @@ impl MemoryPanel {
                 }
                 Err(err) => {
                     self.session_search_loading = false;
-                    notifications.error(format!("Session search failed: {err}"));
+                    notifications.error(t.text_args(
+                        "mem-notify-session-search-failed",
+                        HashMap::from([("error", err)]),
+                    ));
                 }
             },
             Err(TryRecvError::Empty) => {
@@ -579,12 +614,13 @@ impl MemoryPanel {
             }
             Err(TryRecvError::Disconnected) => {
                 self.session_search_loading = false;
-                notifications.error("Session search task disconnected unexpectedly");
+                notifications.error(t.text("mem-notify-session-search-disconnected"));
             }
         }
     }
 
     fn begin_archive_run(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.archive_run_request.is_some() {
             return;
         }
@@ -594,12 +630,13 @@ impl MemoryPanel {
         self.archive_run_request = Some(PendingArchiveRun {
             handle: spawn_archive_run_task(timeout),
         });
-        notifications.info("Running long-term memory archive...");
+        notifications.info(t.text("mem-notify-archiving"));
     }
 
     fn begin_delete(&mut self, id: &str, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.delete_request.is_some() {
-            notifications.warning("A delete operation is already in progress");
+            notifications.warning(t.text("mem-notify-delete-in-progress"));
             return;
         }
         self.delete_loading = true;
@@ -610,6 +647,7 @@ impl MemoryPanel {
     }
 
     fn poll_delete_request(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(request) = self.delete_request.take() else {
             return;
         };
@@ -620,13 +658,15 @@ impl MemoryPanel {
                 match result {
                     Ok(deleted) => {
                         if deleted {
-                            notifications.success("Memory record deleted");
+                            notifications.success(t.text("mem-notify-deleted"));
                         } else {
-                            notifications.warning("Record not found or already deleted");
+                            notifications.warning(t.text("mem-notify-delete-not-found"));
                         }
                         self.refresh(notifications);
                     }
-                    Err(err) => notifications.error(format!("Failed to delete record: {err}")),
+                    Err(err) => notifications.error(
+                        t.text_args("mem-notify-delete-failed", HashMap::from([("error", err)])),
+                    ),
                 }
             }
             Err(TryRecvError::Empty) => {
@@ -634,12 +674,13 @@ impl MemoryPanel {
             }
             Err(TryRecvError::Disconnected) => {
                 self.delete_loading = false;
-                notifications.error("Delete operation closed unexpectedly");
+                notifications.error(t.text("mem-notify-delete-disconnected"));
             }
         }
     }
 
     fn render_detail_window(&mut self, ctx: &egui::Context, overview: &MemoryOverview) {
+        let t = Self::translator();
         let Some(record_id) = self.detail_record_id.clone() else {
             return;
         };
@@ -653,9 +694,10 @@ impl MemoryPanel {
         );
         let record = selected_long_term_record(&filtered, Some(record_id.as_str()));
 
-        egui::Window::new(format!(
-            "Memory Detail — {}",
-            &record_id[..8.min(record_id.len())]
+        let id_short = &record_id[..8.min(record_id.len())];
+        egui::Window::new(t.text_args(
+            "mem-detail-title",
+            HashMap::from([("id", id_short.to_string())]),
         ))
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .collapsible(false)
@@ -671,60 +713,68 @@ impl MemoryPanel {
                                 .num_columns(2)
                                 .spacing([12.0, 6.0])
                                 .show(ui, |ui| {
-                                    ui.strong("ID");
+                                    ui.strong(t.text("mem-detail-id"));
                                     ui.monospace(&rec.id);
                                     ui.end_row();
 
-                                    ui.strong("Kind");
-                                    ui.monospace(kind_label(rec));
+                                    ui.strong(t.text("mem-detail-kind"));
+                                    ui.monospace(kind_label(rec, &t));
                                     ui.end_row();
 
-                                    ui.strong("Status");
-                                    ui.monospace(status_label(rec));
+                                    ui.strong(t.text("mem-detail-status"));
+                                    ui.monospace(status_label(rec, &t));
                                     ui.end_row();
 
-                                    ui.strong("Priority");
-                                    ui.monospace(priority_label(rec));
+                                    ui.strong(t.text("mem-detail-priority"));
+                                    ui.monospace(priority_label(rec, &t));
                                     ui.end_row();
 
-                                    ui.strong("Topic");
+                                    ui.strong(t.text("mem-detail-topic"));
                                     ui.label(
                                         read_long_term_topic(rec)
-                                            .unwrap_or_else(|| "-".to_string()),
+                                            .unwrap_or_else(|| t.text("mem-detail-na")),
                                     );
                                     ui.end_row();
 
-                                    ui.strong("Pinned");
-                                    ui.monospace(if rec.pinned { "yes" } else { "no" });
+                                    ui.strong(t.text("mem-detail-pinned"));
+                                    ui.monospace(if rec.pinned {
+                                        t.text("mem-pin-yes")
+                                    } else {
+                                        t.text("mem-pin-no")
+                                    });
                                     ui.end_row();
 
-                                    ui.strong("Created");
+                                    ui.strong(t.text("mem-detail-created"));
                                     ui.monospace(format_timestamp_millis(rec.created_at_ms));
                                     ui.end_row();
 
-                                    ui.strong("Updated");
+                                    ui.strong(t.text("mem-detail-updated"));
                                     ui.monospace(format_timestamp_millis(rec.updated_at_ms));
                                     ui.end_row();
 
-                                    ui.strong("Archived at");
+                                    ui.strong(t.text("mem-detail-archived-at"));
                                     ui.monospace(
                                         read_long_term_archived_at(rec)
                                             .map(format_timestamp_millis)
-                                            .unwrap_or_else(|| "-".to_string()),
+                                            .unwrap_or_else(|| t.text("mem-detail-na")),
                                     );
                                     ui.end_row();
                                 });
 
-                            let governance = governance_summary(rec);
-                            if governance != "-" {
+                            let governance = governance_summary(rec, &t);
+                            if governance != t.text("mem-detail-na") {
                                 ui.add_space(4.0);
                                 ui.small(
-                                    RichText::new(format!("Governance: {governance}")).strong(),
+                                    RichText::new(t.text_args(
+                                        "mem-detail-governance",
+                                        HashMap::from([("summary", governance)]),
+                                    ))
+                                    .strong(),
                                 );
                             }
 
                             ui.add_space(8.0);
-                            ui.strong("Content");
+                            ui.strong(t.text("mem-detail-content"));
                             ui.add_space(4.0);
                             let mut content = rec.content.clone();
                             ui.add(
@@ -735,13 +785,13 @@ impl MemoryPanel {
                             );
                         }
                         None => {
-                            ui.label("Record not found or does not match the current filters.");
+                            ui.label(t.text("mem-detail-not-found"));
                         }
                     }
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Close").clicked() {
+                        if ui.button(t.text("mem-detail-close")).clicked() {
                             close = true;
                         }
                     });
@@ -754,38 +804,44 @@ impl MemoryPanel {
     }
 
     fn render_delete_confirm_window(&mut self, ctx: &egui::Context) {
+        let t = Self::translator();
         let Some(record_id) = self.delete_confirm_id.clone() else {
             return;
         };
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new("Delete Memory Record")
+        let id_short = &record_id[..8.min(record_id.len())];
+        egui::Window::new(t.text("mem-delete-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.set_min_width(320.0);
                 ui.label(
-                    RichText::new(format!(
-                        "Are you sure you want to delete memory record '{}'?",
-                        &record_id[..8.min(record_id.len())]
+                    RichText::new(t.text_args(
+                        "mem-delete-prompt",
+                        HashMap::from([("id", id_short.to_string())]),
                     ))
                     .strong(),
                 );
                 ui.add_space(4.0);
-                ui.small("This permanently removes the record from the memory database.");
+                ui.small(t.text("mem-delete-warning"));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new(format!("{} Delete", regular::TRASH)).color(Color32::RED),
+                            RichText::new(t.text_args(
+                                "mem-delete-btn",
+                                HashMap::from([("icon", regular::TRASH.to_string())]),
+                            ))
+                            .color(Color32::RED),
                         ))
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("mem-delete-cancel")).clicked() {
                         cancelled = true;
                     }
                 });
@@ -800,6 +856,7 @@ impl MemoryPanel {
     }
 
     fn poll_archive_run_request(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(mut request) = self.archive_run_request.take() else {
             return;
         };
@@ -812,7 +869,10 @@ impl MemoryPanel {
             }
             Some(Err(err)) => {
                 self.archive_run_loading = false;
-                notifications.error(format!("Archive run failed: {err}"));
+                notifications.error(t.text_args(
+                    "mem-notify-archive-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
             None => {
                 self.archive_run_request = Some(request);
@@ -821,6 +881,7 @@ impl MemoryPanel {
     }
 
     fn render_summary_cards(&self, ui: &mut egui::Ui, overview: &MemoryOverview) {
+        let t = Self::translator();
         let active = count_records_with_status(
             &overview.long_term_records,
             Some(LongTermMemoryStatus::Active),
@@ -840,27 +901,54 @@ impl MemoryPanel {
             .unwrap_or_default();
 
         ui.horizontal_wrapped(|ui| {
-            summary_chip(ui, "Active long-term", active.to_string());
-            summary_chip(ui, "Superseded", superseded.to_string());
-            summary_chip(ui, "Archived", archived.to_string());
-            summary_chip(ui, "Prompt lines", prompt_lines.to_string());
+            summary_chip(ui, &t.text("mem-summary-active"), active.to_string());
             summary_chip(
                 ui,
-                "Session search",
+                &t.text("mem-summary-superseded"),
+                superseded.to_string(),
+            );
+            summary_chip(ui, &t.text("mem-summary-archived"), archived.to_string());
+            summary_chip(
+                ui,
+                &t.text("mem-summary-prompt-lines"),
+                prompt_lines.to_string(),
+            );
+            summary_chip(
+                ui,
+                &t.text("mem-summary-session-search"),
                 if self.config.tools.memory.enabled {
-                    format!("enabled ({})", self.config.tools.memory.search_limit)
+                    t.text_args(
+                        "mem-summary-session-enabled",
+                        HashMap::from([(
+                            "limit",
+                            self.config.tools.memory.search_limit.to_string(),
+                        )]),
+                    )
                 } else {
-                    "disabled".to_string()
+                    t.text("mem-summary-session-disabled")
                 },
             );
         });
     }
 
     fn render_tab_selector(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, MemoryTab::LongTerm, "Long-term");
-            ui.selectable_value(&mut self.tab, MemoryTab::SessionSearch, "Session Search");
-            ui.selectable_value(&mut self.tab, MemoryTab::Diagnostics, "Diagnostics");
+            ui.selectable_value(
+                &mut self.tab,
+                MemoryTab::LongTerm,
+                t.text("mem-tab-long-term"),
+            );
+            ui.selectable_value(
+                &mut self.tab,
+                MemoryTab::SessionSearch,
+                t.text("mem-tab-session-search"),
+            );
+            ui.selectable_value(
+                &mut self.tab,
+                MemoryTab::Diagnostics,
+                t.text("mem-tab-diagnostics"),
+            );
         });
     }
 
@@ -870,9 +958,10 @@ impl MemoryPanel {
         notifications: &mut NotificationCenter,
         overview: &MemoryOverview,
     ) {
+        let t = Self::translator();
         ui.horizontal_wrapped(|ui| {
             egui::ComboBox::from_id_salt("memory-status-filter")
-                .selected_text(self.status_filter.label())
+                .selected_text(self.status_filter.label(&t))
                 .show_ui(ui, |ui| {
                     for filter in [
                         StatusFilter::Active,
@@ -881,12 +970,12 @@ impl MemoryPanel {
                         StatusFilter::Rejected,
                         StatusFilter::All,
                     ] {
-                        ui.selectable_value(&mut self.status_filter, filter, filter.label());
+                        ui.selectable_value(&mut self.status_filter, filter, filter.label(&t));
                     }
                 });
 
             egui::ComboBox::from_id_salt("memory-kind-filter")
-                .selected_text(self.kind_filter.label())
+                .selected_text(self.kind_filter.label(&t))
                 .show_ui(ui, |ui| {
                     for filter in [
                         KindFilter::All,
@@ -897,15 +986,15 @@ impl MemoryPanel {
                         KindFilter::Fact,
                         KindFilter::Constraint,
                     ] {
-                        ui.selectable_value(&mut self.kind_filter, filter, filter.label());
+                        ui.selectable_value(&mut self.kind_filter, filter, filter.label(&t));
                     }
                 });
 
-            ui.label("Topic");
+            ui.label(t.text("mem-topic-label"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.topic_filter)
                     .desired_width(180.0)
-                    .hint_text("reply_language"),
+                    .hint_text(t.text("mem-topic-hint")),
             );
         });
         ui.add_space(8.0);
@@ -923,7 +1012,10 @@ impl MemoryPanel {
         {
             self.selected_long_term_id = filtered.first().map(|record| record.id.clone());
         }
-        ui.label(format!("Records: {}", filtered.len()));
+        ui.label(t.text_args(
+            "mem-records-count",
+            HashMap::from([("count", filtered.len().to_string())]),
+        ));
 
         // Collect context menu / double-click actions to apply after the table closure.
         let mut detail_id = None;
@@ -948,31 +1040,31 @@ impl MemoryPanel {
                     .column(Column::auto().at_least(130.0))
                     .header(row_height, |mut header| {
                         header.col(|ui| {
-                            ui.strong("ID");
+                            ui.strong(t.text("mem-col-id"));
                         });
                         header.col(|ui| {
-                            ui.strong("Kind");
+                            ui.strong(t.text("mem-col-kind"));
                         });
                         header.col(|ui| {
-                            ui.strong("Status");
+                            ui.strong(t.text("mem-col-status"));
                         });
                         header.col(|ui| {
-                            ui.strong("Priority");
+                            ui.strong(t.text("mem-col-priority"));
                         });
                         header.col(|ui| {
-                            ui.strong("Topic");
+                            ui.strong(t.text("mem-col-topic"));
                         });
                         header.col(|ui| {
-                            ui.strong("Pin");
+                            ui.strong(t.text("mem-col-pin"));
                         });
                         header.col(|ui| {
-                            ui.strong("Summary");
+                            ui.strong(t.text("mem-col-summary"));
                         });
                         header.col(|ui| {
-                            ui.strong("Content");
+                            ui.strong(t.text("mem-col-content"));
                         });
                         header.col(|ui| {
-                            ui.strong("Updated");
+                            ui.strong(t.text("mem-col-updated"));
                         });
                     })
                     .body(|body| {
@@ -987,27 +1079,32 @@ impl MemoryPanel {
                                 ui.monospace(record_id_short);
                             });
                             row.col(|ui| {
-                                ui.monospace(kind_label(record));
+                                ui.monospace(kind_label(record, &t));
                             });
                             row.col(|ui| {
-                                ui.monospace(status_label(record));
+                                ui.monospace(status_label(record, &t));
                             });
                             row.col(|ui| {
-                                ui.monospace(priority_label(record));
+                                ui.monospace(priority_label(record, &t));
                             });
                             row.col(|ui| {
                                 ui.label(
-                                    read_long_term_topic(record).unwrap_or_else(|| "-".to_string()),
+                                    read_long_term_topic(record)
+                                        .unwrap_or_else(|| t.text("mem-detail-na")),
                                 );
                             });
                             row.col(|ui| {
-                                ui.monospace(if record.pinned { "yes" } else { "no" });
+                                ui.monospace(if record.pinned {
+                                    t.text("mem-pin-yes")
+                                } else {
+                                    t.text("mem-pin-no")
+                                });
                             });
                             row.col(|ui| {
-                                let label = summary_label(record);
-                                if label == "summary" {
+                                let label = summary_label(record, &t);
+                                if label == t.text("mem-summary-type") {
                                     ui.colored_label(Color32::from_rgb(0x22, 0xC5, 0x5E), label);
-                                } else if label == "source" {
+                                } else if label == t.text("mem-summary-source") {
                                     ui.colored_label(Color32::from_rgb(0xF5, 0x9E, 0x0B), label);
                                 } else {
                                     ui.monospace(label);
@@ -1032,7 +1129,10 @@ impl MemoryPanel {
                             let id_for_menu = record.id.clone();
                             response.context_menu(|ui| {
                                 if ui
-                                    .button(format!("{} Detail", regular::FILE_TEXT))
+                                    .button(t.text_args(
+                                        "mem-ctx-detail",
+                                        HashMap::from([("icon", regular::FILE_TEXT.to_string())]),
+                                    ))
                                     .clicked()
                                 {
                                     detail_id = Some(id_for_menu.clone());
@@ -1041,8 +1141,11 @@ impl MemoryPanel {
                                 ui.separator();
                                 if ui
                                     .add(egui::Button::new(
-                                        RichText::new(format!("{} Delete", regular::TRASH))
-                                            .color(Color32::RED),
+                                        RichText::new(t.text_args(
+                                            "mem-ctx-delete",
+                                            HashMap::from([("icon", regular::TRASH.to_string())]),
+                                        ))
+                                        .color(Color32::RED),
                                     ))
                                     .clicked()
                                 {
@@ -1077,18 +1180,19 @@ impl MemoryPanel {
         notifications: &mut NotificationCenter,
         overview: &MemoryOverview,
     ) {
-        ui.label("Search recent session memory over existing session/chat history.");
+        let t = Self::translator();
+        ui.label(t.text("mem-session-search-desc"));
         ui.add_space(6.0);
         egui::Grid::new("memory-session-search-grid")
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Session key");
+                ui.label(t.text("mem-session-session-key"));
                 egui::ComboBox::from_id_salt("memory-session-key")
                     .selected_text(if self.session_form.session_key.trim().is_empty() {
-                        "Select session key"
+                        t.text("mem-session-session-placeholder")
                     } else {
-                        self.session_form.session_key.as_str()
+                        self.session_form.session_key.as_str().to_string()
                     })
                     .width(320.0)
                     .show_ui(ui, |ui| {
@@ -1102,22 +1206,26 @@ impl MemoryPanel {
                     });
                 ui.end_row();
 
-                ui.label("Query");
+                label_with_hint(
+                    ui,
+                    &t.text("mem-session-query"),
+                    &t.text("mem-session-query-hint"),
+                );
                 ui.add(
                     egui::TextEdit::singleline(&mut self.session_form.query)
                         .desired_width(320.0)
-                        .hint_text("deploy rollback"),
+                        .hint_text(t.text("mem-session-query-hint")),
                 );
                 ui.end_row();
 
-                ui.label("Within days");
+                ui.label(t.text("mem-session-within-days"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.session_form.within_days)
                         .desired_width(80.0),
                 );
                 ui.end_row();
 
-                ui.label("Limit");
+                ui.label(t.text("mem-session-limit"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.session_form.limit).desired_width(80.0),
                 );
@@ -1126,42 +1234,49 @@ impl MemoryPanel {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if ui
-                .button(format!("{} Search", regular::MAGNIFYING_GLASS))
+                .button(t.text_args(
+                    "mem-session-search-btn",
+                    HashMap::from([("icon", regular::MAGNIFYING_GLASS.to_string())]),
+                ))
                 .clicked()
             {
                 self.begin_session_search(notifications);
             }
             if self.session_search_loading {
                 ui.add(egui::Spinner::new());
-                ui.small("Searching...");
+                ui.small(t.text("mem-session-searching"));
             }
         });
         ui.add_space(8.0);
 
         let Some(result) = self.session_search_result.clone() else {
-            ui.small(
-                "Run a session search to inspect the resolved base session and matching history.",
-            );
+            ui.small(t.text("mem-session-empty"));
             return;
         };
 
-        ui.label(format!("Input session: {}", result.input_session_key));
-        ui.label(format!(
-            "Resolved base session: {}",
-            result.base_session_key
+        ui.label(t.text_args(
+            "mem-session-input",
+            HashMap::from([("key", result.input_session_key)]),
         ));
-        ui.label(format!(
-            "Resolved sessions: {}",
-            result.session_keys.join(", ")
+        ui.label(t.text_args(
+            "mem-session-base",
+            HashMap::from([("key", result.base_session_key)]),
         ));
-        ui.label(format!(
-            "Window: {} day(s), limit {}",
-            result.within_days, result.limit
+        ui.label(t.text_args(
+            "mem-session-resolved",
+            HashMap::from([("keys", result.session_keys.join(", "))]),
+        ));
+        ui.label(t.text_args(
+            "mem-session-window",
+            HashMap::from([
+                ("days", result.within_days.to_string()),
+                ("limit", result.limit.to_string()),
+            ]),
         ));
         ui.add_space(6.0);
 
         if result.hits.is_empty() {
-            ui.small("No matching session messages found for this query and window.");
+            ui.small(t.text("mem-session-no-results"));
             return;
         }
 
@@ -1179,19 +1294,19 @@ impl MemoryPanel {
                     .column(Column::auto().at_least(80.0))
                     .header(row_height, |mut header| {
                         header.col(|ui| {
-                            ui.strong("Session");
+                            ui.strong(t.text("mem-session-col-session"));
                         });
                         header.col(|ui| {
-                            ui.strong("Time");
+                            ui.strong(t.text("mem-session-col-time"));
                         });
                         header.col(|ui| {
-                            ui.strong("Role");
+                            ui.strong(t.text("mem-session-col-role"));
                         });
                         header.col(|ui| {
-                            ui.strong("Content");
+                            ui.strong(t.text("mem-session-col-content"));
                         });
                         header.col(|ui| {
-                            ui.strong("Score");
+                            ui.strong(t.text("mem-session-col-score"));
                         });
                     })
                     .body(|body| {
@@ -1218,13 +1333,14 @@ impl MemoryPanel {
     }
 
     fn render_diagnostics_tab(&mut self, ui: &mut egui::Ui, overview: &MemoryOverview) {
-        render_memory_stats_grid(ui, &overview.stats);
+        let t = Self::translator();
+        render_memory_stats_grid(ui, &overview.stats, &t);
         ui.add_space(10.0);
         ui.separator();
-        ui.strong("Top Scopes");
+        ui.strong(t.text("mem-diag-top-scopes"));
 
         if overview.stats.top_scopes.is_empty() {
-            ui.small("No scope data.");
+            ui.small(t.text("mem-diag-no-scope-data"));
             return;
         }
 
@@ -1239,10 +1355,10 @@ impl MemoryPanel {
                     .column(Column::auto().at_least(80.0))
                     .header(row_height, |mut header| {
                         header.col(|ui| {
-                            ui.strong("Scope");
+                            ui.strong(t.text("mem-diag-col-scope"));
                         });
                         header.col(|ui| {
-                            ui.strong("Count");
+                            ui.strong(t.text("mem-diag-col-count"));
                         });
                     })
                     .body(|body| {
@@ -1260,8 +1376,9 @@ impl MemoryPanel {
     }
 
     fn render_stats_window(&mut self, ctx: &egui::Context, overview: &MemoryOverview) {
+        let t = Self::translator();
         let mut open = self.stats_window_open;
-        egui::Window::new("Memory Info")
+        egui::Window::new(t.text("mem-stats-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
@@ -1269,7 +1386,7 @@ impl MemoryPanel {
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(480.0);
-                render_memory_stats_grid(ui, &overview.stats);
+                render_memory_stats_grid(ui, &overview.stats, &t);
             });
         self.stats_window_open = open;
     }
@@ -1282,6 +1399,7 @@ impl PanelRenderer for MemoryPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         self.ensure_store_loaded(notifications);
         self.ensure_loaded(notifications);
         self.poll_load_request(notifications);
@@ -1297,37 +1415,60 @@ impl PanelRenderer for MemoryPanel {
         }
 
         ui.heading(ctx.tab_title);
+        ui.add_space(2.0);
+        ui.small(t.text("mem-subtitle"));
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(t.text_args(
+                    "mem-btn-refresh",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.refresh(notifications);
             }
-            if ui.button("Config").clicked() {
+            if ui
+                .button(t.text_args(
+                    "mem-btn-config",
+                    HashMap::from([("icon", regular::GEAR.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_config_form();
             }
             if ui
-                .add_enabled(!self.archive_run_loading, egui::Button::new("Archive Now"))
+                .add_enabled(
+                    !self.archive_run_loading,
+                    egui::Button::new(t.text("mem-btn-archive")),
+                )
                 .clicked()
             {
                 self.begin_archive_run(notifications);
             }
-            if ui.button(format!("{} Info", regular::INFO)).clicked() {
+            if ui
+                .button(t.text_args(
+                    "mem-btn-info",
+                    HashMap::from([("icon", regular::INFO.to_string())]),
+                ))
+                .clicked()
+            {
                 self.stats_window_open = true;
             }
             if self.loading || self.archive_run_loading || self.delete_loading {
                 ui.add(egui::Spinner::new());
                 ui.small(if self.archive_run_loading {
-                    "Archiving..."
+                    t.text("mem-status-archiving")
                 } else if self.delete_loading {
-                    "Deleting..."
+                    t.text("mem-status-deleting")
                 } else {
-                    "Loading..."
+                    t.text("mem-status-loading")
                 });
             }
         });
         ui.separator();
 
         let Some(overview) = self.overview.clone() else {
-            ui.label("No memory data available yet.");
+            ui.label(t.text("mem-status-no-data"));
             self.render_form_window(ui, notifications);
             return;
         };
@@ -1358,80 +1499,84 @@ impl PanelRenderer for MemoryPanel {
     }
 }
 
-fn render_memory_stats_grid(ui: &mut egui::Ui, stats: &MemoryStats) {
+fn render_memory_stats_grid(ui: &mut egui::Ui, stats: &MemoryStats, t: &Translator) {
     egui::Grid::new("memory-stats-grid")
         .num_columns(2)
         .spacing([14.0, 8.0])
         .show(ui, |ui| {
-            ui.label("Total Records");
+            ui.label(t.text("mem-stats-total-records"));
             ui.monospace(stats.total_records.to_string());
             ui.end_row();
 
-            ui.label("Pinned Records");
+            ui.label(t.text("mem-stats-pinned-records"));
             ui.monospace(stats.pinned_records.to_string());
             ui.end_row();
 
-            ui.label("Embedded Records");
+            ui.label(t.text("mem-stats-embedded-records"));
             ui.monospace(stats.embedded_records.to_string());
             ui.end_row();
 
-            ui.label("Distinct Scopes");
+            ui.label(t.text("mem-stats-distinct-scopes"));
             ui.monospace(stats.distinct_scopes.to_string());
             ui.end_row();
 
-            ui.label("Updated Last 24h");
+            ui.label(t.text("mem-stats-updated-24h"));
             ui.monospace(stats.updated_last_24h.to_string());
             ui.end_row();
 
-            ui.label("Updated Last 7d");
+            ui.label(t.text("mem-stats-updated-7d"));
             ui.monospace(stats.updated_last_7d.to_string());
             ui.end_row();
 
-            ui.label("FTS Enabled");
-            ui.monospace(if stats.fts_enabled { "yes" } else { "no" });
-            ui.end_row();
-
-            ui.label("Vector Index Enabled");
-            ui.monospace(if stats.vector_index_enabled {
-                "yes"
+            ui.label(t.text("mem-stats-fts-enabled"));
+            ui.monospace(if stats.fts_enabled {
+                t.text("mem-pin-yes")
             } else {
-                "no"
+                t.text("mem-pin-no")
             });
             ui.end_row();
 
-            ui.label("Avg Content Length");
+            ui.label(t.text("mem-stats-vector-enabled"));
+            ui.monospace(if stats.vector_index_enabled {
+                t.text("mem-pin-yes")
+            } else {
+                t.text("mem-pin-no")
+            });
+            ui.end_row();
+
+            ui.label(t.text("mem-stats-avg-content"));
             ui.monospace(
                 stats
                     .avg_content_len
                     .map(|value| format!("{value:.2}"))
-                    .unwrap_or_else(|| "-".to_string()),
+                    .unwrap_or_else(|| t.text("mem-priority-none")),
             );
             ui.end_row();
 
-            ui.label("Created Min");
+            ui.label(t.text("mem-stats-created-min"));
             ui.monospace(
                 stats
                     .created_min_ms
                     .map(format_timestamp_millis)
-                    .unwrap_or_else(|| "-".to_string()),
+                    .unwrap_or_else(|| t.text("mem-detail-na")),
             );
             ui.end_row();
 
-            ui.label("Created Max");
+            ui.label(t.text("mem-stats-created-max"));
             ui.monospace(
                 stats
                     .created_max_ms
                     .map(format_timestamp_millis)
-                    .unwrap_or_else(|| "-".to_string()),
+                    .unwrap_or_else(|| t.text("mem-detail-na")),
             );
             ui.end_row();
 
-            ui.label("Updated Max");
+            ui.label(t.text("mem-stats-updated-max"));
             ui.monospace(
                 stats
                     .updated_max_ms
                     .map(format_timestamp_millis)
-                    .unwrap_or_else(|| "-".to_string()),
+                    .unwrap_or_else(|| t.text("mem-detail-na")),
             );
             ui.end_row();
         });
@@ -1543,35 +1688,51 @@ fn summary_chip(ui: &mut egui::Ui, label: &str, value: String) {
     });
 }
 
-fn kind_label(record: &MemoryRecord) -> &'static str {
-    read_long_term_kind(record)
-        .unwrap_or(LongTermMemoryKind::Fact)
-        .as_str()
-}
-
-fn status_label(record: &MemoryRecord) -> &'static str {
-    read_long_term_status(record)
-        .unwrap_or(LongTermMemoryStatus::Active)
-        .as_str()
-}
-
-fn priority_label(record: &MemoryRecord) -> &'static str {
-    read_long_term_priority(record)
-        .map(|priority| priority.as_str())
-        .unwrap_or("-")
-}
-
-fn summary_label(record: &MemoryRecord) -> &'static str {
-    if is_summary_record(record) {
-        "summary"
-    } else if read_string_field(&record.metadata, "archived_by_summary").is_some() {
-        "source"
-    } else {
-        "-"
+fn kind_label(record: &MemoryRecord, t: &Translator) -> String {
+    let kind = read_long_term_kind(record).unwrap_or(LongTermMemoryKind::Fact);
+    match kind {
+        LongTermMemoryKind::Identity => t.text("mem-filter-kind-identity"),
+        LongTermMemoryKind::Preference => t.text("mem-filter-kind-preference"),
+        LongTermMemoryKind::ProjectRule => t.text("mem-filter-kind-project-rule"),
+        LongTermMemoryKind::Workflow => t.text("mem-filter-kind-workflow"),
+        LongTermMemoryKind::Fact => t.text("mem-filter-kind-fact"),
+        LongTermMemoryKind::Constraint => t.text("mem-filter-kind-constraint"),
     }
 }
 
-fn governance_summary(record: &MemoryRecord) -> String {
+fn status_label(record: &MemoryRecord, t: &Translator) -> String {
+    let status = read_long_term_status(record).unwrap_or(LongTermMemoryStatus::Active);
+    match status {
+        LongTermMemoryStatus::Active => t.text("mem-filter-status-active"),
+        LongTermMemoryStatus::Superseded => t.text("mem-filter-status-superseded"),
+        LongTermMemoryStatus::Archived => t.text("mem-filter-status-archived"),
+        LongTermMemoryStatus::Rejected => t.text("mem-filter-status-rejected"),
+    }
+}
+
+fn priority_label(record: &MemoryRecord, t: &Translator) -> String {
+    read_long_term_priority(record)
+        .map(|_priority| {
+            // Priority values are data strings, not UI labels; show as-is
+            read_long_term_priority(record)
+                .map(|priority| priority.as_str())
+                .unwrap_or(&t.text("mem-priority-none"))
+                .to_string()
+        })
+        .unwrap_or_else(|| t.text("mem-priority-none"))
+}
+
+fn summary_label(record: &MemoryRecord, t: &Translator) -> String {
+    if is_summary_record(record) {
+        t.text("mem-summary-type")
+    } else if read_string_field(&record.metadata, "archived_by_summary").is_some() {
+        t.text("mem-summary-source")
+    } else {
+        t.text("mem-summary-none")
+    }
+}
+
+fn governance_summary(record: &MemoryRecord, t: &Translator) -> String {
     let supersedes = read_string_list_field(&record.metadata, "supersedes");
     let superseded_by = read_string_field(&record.metadata, "superseded_by");
     let source_ids = read_string_list_field(&record.metadata, "source_ids");
@@ -1579,22 +1740,37 @@ fn governance_summary(record: &MemoryRecord) -> String {
     let archived_at = read_long_term_archived_at(record).map(format_timestamp_millis);
     let mut parts = Vec::new();
     if !supersedes.is_empty() {
-        parts.push(format!("supersedes: {}", supersedes.join(", ")));
+        parts.push(t.text_args(
+            "mem-governance-supersedes",
+            HashMap::from([("ids", supersedes.join(", "))]),
+        ));
     }
     if let Some(superseded_by) = superseded_by {
-        parts.push(format!("superseded_by: {superseded_by}"));
+        parts.push(t.text_args(
+            "mem-governance-superseded-by",
+            HashMap::from([("id", superseded_by)]),
+        ));
     }
     if is_summary_record(record) && !source_ids.is_empty() {
-        parts.push(format!("summary sources: {}", source_ids.join(", ")));
+        parts.push(t.text_args(
+            "mem-governance-summary-sources",
+            HashMap::from([("ids", source_ids.join(", "))]),
+        ));
     }
     if let Some(archived_by_summary) = archived_by_summary {
-        parts.push(format!("archived_by_summary: {archived_by_summary}"));
+        parts.push(t.text_args(
+            "mem-governance-archived-by",
+            HashMap::from([("id", archived_by_summary)]),
+        ));
     }
     if let Some(archived_at) = archived_at {
-        parts.push(format!("archived_at: {archived_at}"));
+        parts.push(t.text_args(
+            "mem-governance-archived-at",
+            HashMap::from([("ts", archived_at)]),
+        ));
     }
     if parts.is_empty() {
-        "-".to_string()
+        t.text("mem-detail-na")
     } else {
         parts.join("; ")
     }
@@ -1791,7 +1967,12 @@ mod tests {
     use super::*;
     use klaw_config::ModelProviderConfig;
     use klaw_storage::SessionIndex;
+    use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage};
     use std::collections::BTreeMap;
+
+    fn test_translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, UiLanguage::English)
+    }
 
     fn test_config() -> AppConfig {
         let mut model_providers = BTreeMap::new();
@@ -1907,6 +2088,7 @@ mod tests {
 
     #[test]
     fn apply_form_updates_memory_embedding_config() {
+        let t = test_translator();
         let config = test_config();
         let form = MemoryConfigForm {
             enabled: true,
@@ -1914,7 +2096,7 @@ mod tests {
             model: "text-embedding-custom".to_string(),
         };
 
-        let updated = MemoryPanel::apply_form(config, &form).expect("form should apply");
+        let updated = MemoryPanel::apply_form(config, &form, &t).expect("form should apply");
 
         assert!(updated.memory.embedding.enabled);
         assert_eq!(updated.memory.embedding.provider, "anthropic");
@@ -1923,6 +2105,7 @@ mod tests {
 
     #[test]
     fn apply_form_rejects_unknown_provider() {
+        let t = test_translator();
         let config = test_config();
         let form = MemoryConfigForm {
             enabled: false,
@@ -1930,9 +2113,11 @@ mod tests {
             model: "text-embedding-3-small".to_string(),
         };
 
-        let err = MemoryPanel::apply_form(config, &form).expect_err("provider should be rejected");
+        let err =
+            MemoryPanel::apply_form(config, &form, &t).expect_err("provider should be rejected");
 
-        assert!(err.contains("not available"));
+        // The i18n key mem-notify-provider-unavailable includes the provider name
+        assert!(err.contains("missing"));
     }
 
     #[test]
@@ -1974,6 +2159,7 @@ mod tests {
 
     #[test]
     fn governance_summary_renders_supersedes_information() {
+        let t = test_translator();
         let record = MemoryRecord {
             id: "1".to_string(),
             scope: "long_term".to_string(),
@@ -1987,13 +2173,14 @@ mod tests {
             updated_at_ms: 1,
         };
 
-        let summary = governance_summary(&record);
+        let summary = governance_summary(&record, &t);
         assert!(summary.contains("old-1"));
         assert!(summary.contains("new-2"));
     }
 
     #[test]
     fn governance_summary_renders_summary_and_archive_metadata() {
+        let t = test_translator();
         let record = MemoryRecord {
             id: "summary-1".to_string(),
             scope: "long_term".to_string(),
@@ -2009,8 +2196,7 @@ mod tests {
             updated_at_ms: 1,
         };
 
-        let summary = governance_summary(&record);
-        assert!(summary.contains("summary sources"));
+        let summary = governance_summary(&record, &t);
         assert!(summary.contains("old-1"));
         assert!(summary.contains("archived_by_summary"));
         assert!(summary.contains("archived_at"));
@@ -2089,6 +2275,7 @@ mod tests {
 
     #[test]
     fn summary_label_identifies_summary_record() {
+        let t = test_translator();
         let record = MemoryRecord {
             id: "summary-1".to_string(),
             scope: "long_term".to_string(),
@@ -2102,11 +2289,12 @@ mod tests {
             updated_at_ms: 1,
         };
 
-        assert_eq!(summary_label(&record), "summary");
+        assert_eq!(summary_label(&record, &t), "summary");
     }
 
     #[test]
     fn summary_label_identifies_source_record_archived_by_summary() {
+        let t = test_translator();
         let record = MemoryRecord {
             id: "old-1".to_string(),
             scope: "long_term".to_string(),
@@ -2121,11 +2309,12 @@ mod tests {
             updated_at_ms: 1,
         };
 
-        assert_eq!(summary_label(&record), "source");
+        assert_eq!(summary_label(&record, &t), "source");
     }
 
     #[test]
     fn summary_label_returns_dash_for_normal_record() {
+        let t = test_translator();
         let record = MemoryRecord {
             id: "1".to_string(),
             scope: "long_term".to_string(),
@@ -2139,6 +2328,6 @@ mod tests {
             updated_at_ms: 1,
         };
 
-        assert_eq!(summary_label(&record), "-");
+        assert_eq!(summary_label(&record, &t), "-");
     }
 }

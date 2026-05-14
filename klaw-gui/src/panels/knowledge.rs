@@ -5,6 +5,7 @@ use crate::runtime_bridge::{
     begin_knowledge_entry_request, begin_knowledge_status_request, begin_reload_knowledge_request,
     begin_search_knowledge_request, begin_sync_knowledge_index_request,
 };
+use crate::settings::current_ui_language;
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular;
@@ -17,7 +18,8 @@ use klaw_knowledge::{
     KnowledgeSyncProgress, KnowledgeSyncProgressStage,
 };
 use klaw_model::{ModelCapability, ModelService, ModelSummary};
-use klaw_ui_kit::label_with_hint;
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -65,28 +67,28 @@ impl KnowledgeConfigForm {
         }
     }
 
-    fn to_config(&self) -> Result<KnowledgeConfig, String> {
+    fn to_config(&self, t: &Translator) -> Result<KnowledgeConfig, String> {
         let provider = self.provider.trim();
         if provider != "obsidian" {
-            return Err("knowledge.provider must be obsidian".to_string());
+            return Err(t.text("kn-validation-provider-obsidian"));
         }
         let vault_path = self.vault_path.trim();
         if self.enabled && vault_path.is_empty() {
-            return Err("knowledge.obsidian.vault_path is required when enabled".to_string());
+            return Err(t.text("kn-validation-vault-required"));
         }
-        let max_excerpt_length = parse_usize(&self.max_excerpt_length, "max_excerpt_length")?;
-        let top_k = parse_usize(&self.top_k, "top_k")?;
-        let rerank_candidates = parse_usize(&self.rerank_candidates, "rerank_candidates")?;
+        let max_excerpt_length = parse_usize(&self.max_excerpt_length, "max_excerpt_length", t)?;
+        let top_k = parse_usize(&self.top_k, "top_k", t)?;
+        let rerank_candidates = parse_usize(&self.rerank_candidates, "rerank_candidates", t)?;
         let graph_hops = self
             .graph_hops
             .trim()
             .parse::<usize>()
-            .map_err(|_| "graph_hops must be a non-negative integer".to_string())?;
+            .map_err(|_| t.text("kn-validation-graph-hops"))?;
         let temporal_decay = self
             .temporal_decay
             .trim()
             .parse::<f32>()
-            .map_err(|_| "temporal_decay must be a number".to_string())?;
+            .map_err(|_| t.text("kn-validation-temporal-decay"))?;
 
         Ok(KnowledgeConfig {
             enabled: self.enabled,
@@ -158,10 +160,15 @@ impl Default for KnowledgePanel {
 }
 
 impl KnowledgePanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
         }
+        let t = Self::translator();
         match ConfigStore::open(None) {
             Ok(store) => {
                 let snapshot = store.snapshot();
@@ -170,7 +177,10 @@ impl KnowledgePanel {
                 self.refresh_status();
                 self.refresh_model_options();
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "kn-notify-config-load-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -210,21 +220,23 @@ impl KnowledgePanel {
         if self.sync_request.is_some() {
             return;
         }
+        let t = Self::translator();
         self.sync_request = Some(begin_sync_knowledge_index_request());
         self.sync_progress = None;
-        notifications.info("Syncing knowledge index and vectors...");
+        notifications.info(t.text("kn-notify-syncing"));
     }
 
     fn begin_search(&mut self, notifications: &mut NotificationCenter) {
         if self.search_request.is_some() {
             return;
         }
+        let t = Self::translator();
         let query = self.search_query.trim().to_string();
         if query.is_empty() {
-            notifications.error("Knowledge search requires a query");
+            notifications.error(t.text("kn-notify-search-query-required"));
             return;
         }
-        let limit = match parse_usize(&self.search_limit, "limit") {
+        let limit = match parse_usize(&self.search_limit, "limit", &t) {
             Ok(limit) => limit,
             Err(err) => {
                 notifications.error(err);
@@ -244,6 +256,7 @@ impl KnowledgePanel {
     }
 
     fn poll_requests(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if let Some(mut request) = self.status_request.take() {
             match request.try_take_result() {
                 Some(Ok(status)) => {
@@ -256,7 +269,10 @@ impl KnowledgePanel {
                         self.refresh_status();
                     }
                 }
-                Some(Err(err)) => notifications.error(format!("Knowledge status failed: {err}")),
+                Some(Err(err)) => notifications.error(t.text_args(
+                    "kn-notify-status-failed",
+                    HashMap::from([("error", err.to_string())]),
+                )),
                 None => self.status_request = Some(request),
             }
         }
@@ -275,15 +291,21 @@ impl KnowledgePanel {
                         });
                         self.sync_progress = None;
                         completed = true;
-                        notifications.success(format!(
-                            "Knowledge sync complete: {} notes indexed, {} chunks embedded",
-                            result.indexed_notes, result.embedded_chunks
+                        notifications.success(t.text_args(
+                            "kn-notify-sync-complete",
+                            HashMap::from([
+                                ("notes", result.indexed_notes.to_string()),
+                                ("chunks", result.embedded_chunks.to_string()),
+                            ]),
                         ));
                     }
                     KnowledgeSyncTaskMessage::Completed(Err(err)) => {
                         self.sync_progress = None;
                         completed = true;
-                        notifications.error(format!("Knowledge sync failed: {err}"));
+                        notifications.error(t.text_args(
+                            "kn-notify-sync-failed",
+                            HashMap::from([("error", err.to_string())]),
+                        ));
                     }
                 }
             }
@@ -302,14 +324,20 @@ impl KnowledgePanel {
                         self.selected_entry = None;
                     }
                 }
-                Some(Err(err)) => notifications.error(format!("Knowledge search failed: {err}")),
+                Some(Err(err)) => notifications.error(t.text_args(
+                    "kn-notify-search-failed",
+                    HashMap::from([("error", err.to_string())]),
+                )),
                 None => self.search_request = Some(request),
             }
         }
         if let Some(mut request) = self.entry_request.take() {
             match request.try_take_result() {
                 Some(Ok(entry)) => self.selected_entry = entry,
-                Some(Err(err)) => notifications.error(format!("Knowledge entry failed: {err}")),
+                Some(Err(err)) => notifications.error(t.text_args(
+                    "kn-notify-entry-failed",
+                    HashMap::from([("error", err.to_string())]),
+                )),
                 None => self.entry_request = Some(request),
             }
         }
@@ -319,10 +347,13 @@ impl KnowledgePanel {
                     options.sort_by(|left, right| left.model_id.cmp(&right.model_id));
                     self.model_options = options;
                 }
-                Ok(Err(err)) => notifications.error(format!("Model list failed: {err}")),
+                Ok(Err(err)) => notifications.error(t.text_args(
+                    "kn-notify-models-failed",
+                    HashMap::from([("error", err.to_string())]),
+                )),
                 Err(mpsc::TryRecvError::Empty) => self.model_options_request = Some(receiver),
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    notifications.error("Model list worker closed unexpectedly");
+                    notifications.error(t.text("kn-notify-models-disconnected"));
                 }
             }
         }
@@ -337,15 +368,16 @@ impl KnowledgePanel {
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("kn-notify-store-unavailable"));
             return;
         };
         let Some(form) = self.form.clone() else {
             return;
         };
         match store.update_config(|config| {
-            config.knowledge = form.to_config().map_err(ConfigError::InvalidConfig)?;
+            config.knowledge = form.to_config(&t).map_err(ConfigError::InvalidConfig)?;
             Ok(())
         }) {
             Ok((snapshot, ())) => {
@@ -353,61 +385,64 @@ impl KnowledgePanel {
                 self.form = None;
                 self.status_request = Some(begin_reload_knowledge_request());
                 self.refresh_model_options();
-                notifications.success("Knowledge config saved");
+                notifications.success(t.text("kn-notify-config-saved"));
             }
-            Err(err) => notifications.error(format!("Save failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "kn-notify-save-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn render_status(&self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         let snapshot = self.status.as_ref();
         let status = snapshot.and_then(|snapshot| snapshot.status.as_ref());
         ui.horizontal_wrapped(|ui| {
             status_chip(
                 ui,
-                "Runtime",
+                t.text("kn-status-runtime"),
                 snapshot
-                    .map(|snapshot| runtime_state_label(snapshot.state).to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
+                    .map(|snapshot| runtime_state_label(snapshot.state, &t))
+                    .unwrap_or_else(|| t.text("kn-state-unknown")),
             );
             status_chip(
                 ui,
-                "State",
+                t.text("kn-status-state"),
                 status
                     .map(|status| {
                         if status.enabled {
-                            "enabled"
+                            t.text("kn-state-enabled")
                         } else {
-                            "disabled"
+                            t.text("kn-state-disabled-label")
                         }
                     })
-                    .unwrap_or("unknown")
-                    .to_string(),
+                    .unwrap_or_else(|| t.text("kn-state-unknown")),
             );
             status_chip(
                 ui,
-                "Provider",
+                t.text("kn-status-provider"),
                 status
                     .map(|status| status.provider.clone())
                     .unwrap_or_else(|| self.config.knowledge.provider.clone()),
             );
             status_chip(
                 ui,
-                "Entries",
+                t.text("kn-status-entries"),
                 status
                     .map(|status| status.entry_count.to_string())
                     .unwrap_or_else(|| "-".to_string()),
             );
             status_chip(
                 ui,
-                "Chunks",
+                t.text("kn-status-chunks"),
                 status
                     .map(|status| status.chunk_count.to_string())
                     .unwrap_or_else(|| "-".to_string()),
             );
             status_chip(
                 ui,
-                "Vectors",
+                t.text("kn-status-vectors"),
                 status
                     .map(|status| format!("{}/{}", status.embedded_chunk_count, status.chunk_count))
                     .unwrap_or_else(|| "-".to_string()),
@@ -419,27 +454,34 @@ impl KnowledgePanel {
         ui.add_space(4.0);
         let vault = status
             .and_then(|status| status.vault_path.as_deref())
-            .or(self.config.knowledge.obsidian.vault_path.as_deref())
-            .unwrap_or("(not configured)");
-        ui.small(format!("Vault: {vault}"));
+            .or(self.config.knowledge.obsidian.vault_path.as_deref());
+        let vault_label = match vault {
+            Some(path) => t.text_args(
+                "kn-vault-label",
+                HashMap::from([("path", path.to_string())]),
+            ),
+            None => t.text("kn-vault-not-configured"),
+        };
+        ui.small(vault_label);
     }
 
     fn render_search(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let search_enabled =
             self.search_request.is_none() && self.knowledge_runtime_accepts_search();
         ui.horizontal(|ui| {
-            ui.label("Query");
+            ui.label(t.text("kn-search-query"));
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.search_query)
                     .desired_width(360.0)
-                    .hint_text("Search notes"),
+                    .hint_text(t.text("kn-search-hint")),
             );
-            ui.label("Limit");
+            ui.label(t.text("kn-search-limit"));
             ui.add(egui::TextEdit::singleline(&mut self.search_limit).desired_width(60.0));
             let enter =
                 response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             if ui
-                .add_enabled(search_enabled, egui::Button::new("Search"))
+                .add_enabled(search_enabled, egui::Button::new(t.text("kn-btn-search")))
                 .clicked()
                 || (enter && search_enabled)
             {
@@ -447,7 +489,7 @@ impl KnowledgePanel {
             }
         });
         if !self.knowledge_runtime_accepts_search() {
-            ui.small("Knowledge runtime is not ready yet.");
+            ui.small(t.text("kn-search-not-ready"));
         }
         ui.add_space(8.0);
 
@@ -467,7 +509,11 @@ impl KnowledgePanel {
     }
 
     fn render_hits(&mut self, ui: &mut egui::Ui) {
-        ui.strong(format!("Results ({})", self.hits.len()));
+        let t = Self::translator();
+        ui.strong(t.text_args(
+            "kn-results-heading",
+            HashMap::from([("count", self.hits.len().to_string())]),
+        ));
         ui.add_space(4.0);
         let mut selected = None;
         egui::ScrollArea::vertical()
@@ -482,10 +528,10 @@ impl KnowledgePanel {
                     .column(Column::auto().at_least(52.0))
                     .header(row_height, |mut header| {
                         header.col(|ui| {
-                            ui.strong("Title");
+                            ui.strong(t.text("kn-col-title"));
                         });
                         header.col(|ui| {
-                            ui.strong("Score");
+                            ui.strong(t.text("kn-col-score"));
                         });
                     })
                     .body(|mut body| {
@@ -515,27 +561,37 @@ impl KnowledgePanel {
     }
 
     fn render_entry(&self, ui: &mut egui::Ui) {
-        ui.strong("Preview");
+        let t = Self::translator();
+        ui.strong(t.text("kn-preview-heading"));
         ui.add_space(4.0);
         if self.entry_request.is_some() {
             ui.add(egui::Spinner::new());
             return;
         }
         let Some(selected_id) = self.selected_id.as_deref() else {
-            ui.label("Select a result to inspect it.");
+            ui.label(t.text("kn-preview-empty"));
             return;
         };
         let Some(entry) = self.selected_entry.as_ref() else {
-            ui.label(format!("No entry loaded for {selected_id}."));
+            ui.label(t.text_args(
+                "kn-preview-not-loaded",
+                HashMap::from([("id", selected_id.to_string())]),
+            ));
             return;
         };
         ui.horizontal_wrapped(|ui| {
             ui.monospace(&entry.id);
             if !entry.tags.is_empty() {
-                ui.label(format!("tags: {}", entry.tags.join(", ")));
+                ui.label(t.text_args(
+                    "kn-preview-tags",
+                    HashMap::from([("tags", entry.tags.join(", "))]),
+                ));
             }
         });
-        ui.small(format!("URI: {}", entry.uri));
+        ui.small(t.text_args(
+            "kn-preview-uri",
+            HashMap::from([("uri", entry.uri.clone())]),
+        ));
         ui.add_space(6.0);
         let mut content = entry.content.clone();
         egui::ScrollArea::vertical()
@@ -555,7 +611,8 @@ impl KnowledgePanel {
         if self.sync_request.is_none() {
             return;
         }
-        egui::Window::new("Syncing Knowledge Index")
+        let t = Self::translator();
+        egui::Window::new(t.text("kn-sync-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
@@ -565,19 +622,29 @@ impl KnowledgePanel {
                 let Some(progress) = self.sync_progress.as_ref() else {
                     ui.horizontal(|ui| {
                         ui.add(egui::Spinner::new());
-                        ui.label("Preparing knowledge sync...");
+                        ui.label(t.text("kn-sync-preparing"));
                     });
                     return;
                 };
-                ui.strong(sync_stage_label(progress.stage));
+                ui.strong(sync_stage_label(progress.stage, &t));
                 if let Some(current_item) = progress.current_item.as_deref() {
-                    ui.label(format!("Current: {current_item}"));
+                    ui.label(t.text_args(
+                        "kn-sync-current",
+                        HashMap::from([("item", current_item.to_string())]),
+                    ));
                 }
                 let text = match progress.total {
-                    Some(total) if total > 0 => {
-                        format!("{} / {}", progress.completed.min(total), total)
-                    }
-                    _ => format!("{} processed", progress.completed),
+                    Some(total) if total > 0 => t.text_args(
+                        "kn-sync-progress",
+                        HashMap::from([
+                            ("completed", progress.completed.min(total).to_string()),
+                            ("total", total.to_string()),
+                        ]),
+                    ),
+                    _ => t.text_args(
+                        "kn-sync-processed",
+                        HashMap::from([("count", progress.completed.to_string())]),
+                    ),
                 };
                 if let Some(total) = progress.total.filter(|total| *total > 0) {
                     let fraction = progress.completed as f32 / total as f32;
@@ -596,6 +663,7 @@ impl KnowledgePanel {
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let mut save_clicked = false;
         let mut cancel_clicked = false;
         let mut refresh_models_clicked = false;
@@ -604,90 +672,143 @@ impl KnowledgePanel {
             return;
         };
 
-        egui::Window::new("Knowledge Config")
+        egui::Window::new(t.text("kn-form-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
             .default_width(560.0)
             .show(ui.ctx(), |ui| {
-                ui.small(status_label(self.config_path.as_deref()));
+                ui.small(status_label(self.config_path.as_deref(), &t));
                 ui.separator();
                 egui::Grid::new("knowledge-config-grid")
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        label_with_hint(ui, "Enabled", "Enable or disable the knowledge retrieval subsystem.");
-                        ui.checkbox(&mut form.enabled, "");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-enabled"),
+                            &t.text("kn-form-enabled-hint"),
+                        );
+                        ui.add(toggle(&mut form.enabled));
                         ui.end_row();
 
-                        label_with_hint(ui, "Provider", "The knowledge source provider (e.g. Obsidian vault).");
-                        provider_combo(ui, &mut form.provider);
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-provider"),
+                            &t.text("kn-form-provider-hint"),
+                        );
+                        provider_combo(ui, &mut form.provider, &t);
                         ui.end_row();
 
-                        label_with_hint(ui, "Vault path", "Absolute path to the local vault directory on your device.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-vault-path"),
+                            &t.text("kn-form-vault-path-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.vault_path);
                         ui.end_row();
 
-                        label_with_hint(ui, "Auto-index vault changes", "Automatically re-index when vault files change. Run Sync once for the initial index.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-auto-index"),
+                            &t.text("kn-form-auto-index-hint"),
+                        );
                         ui.vertical(|ui| {
-                            ui.checkbox(&mut form.auto_index, "");
-                            ui.small(
-                                "Watches changes after setup; run Sync once for the first index.",
-                            );
+                            ui.add(toggle(&mut form.auto_index));
+                            ui.small(t.text("kn-form-auto-index-note"));
                         });
                         ui.end_row();
 
-                        label_with_hint(ui, "Max excerpt length", "Maximum character length of each excerpt chunk returned in search results.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-max-excerpt"),
+                            &t.text("kn-form-max-excerpt-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.max_excerpt_length);
                         ui.end_row();
 
-                        label_with_hint(ui, "Exclude folders", "Comma-separated list of folder names to skip during indexing.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-exclude-folders"),
+                            &t.text("kn-form-exclude-folders-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.exclude_folders);
                         ui.end_row();
 
-                        label_with_hint(ui, "Top K", "Number of top results to return from a knowledge search query.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-top-k"),
+                            &t.text("kn-form-top-k-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.top_k);
                         ui.end_row();
 
-                        label_with_hint(ui, "Rerank candidates", "Number of candidate results to consider before applying reranking.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-rerank-candidates"),
+                            &t.text("kn-form-rerank-candidates-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.rerank_candidates);
                         ui.end_row();
 
-                        label_with_hint(ui, "Graph hops", "Depth of graph traversal for link-based knowledge expansion.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-graph-hops"),
+                            &t.text("kn-form-graph-hops-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.graph_hops);
                         ui.end_row();
 
-                        label_with_hint(ui, "Temporal decay", "Decay factor applied to older notes; lower values prefer recent content.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-temporal-decay"),
+                            &t.text("kn-form-temporal-decay-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.temporal_decay);
                         ui.end_row();
 
-                        label_with_hint(ui, "Embedding model id", "Model used to generate vector embeddings for indexing and retrieval.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-embedding-model"),
+                            &t.text("kn-form-embedding-model-hint"),
+                        );
                         model_combo(
                             ui,
                             "knowledge-config-embedding-model",
                             &mut form.embedding_model_id,
                             &model_options,
                             ModelCapability::Embedding,
+                            &t,
                         );
                         ui.end_row();
 
-                        label_with_hint(ui, "Orchestrator model id", "Model used to orchestrate multi-step knowledge queries and synthesis.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-orchestrator-model"),
+                            &t.text("kn-form-orchestrator-model-hint"),
+                        );
                         model_combo(
                             ui,
                             "knowledge-config-orchestrator-model",
                             &mut form.orchestrator_model_id,
                             &model_options,
                             ModelCapability::Orchestrator,
+                            &t,
                         );
                         ui.end_row();
 
-                        label_with_hint(ui, "Reranker model id", "Model used to rerank retrieval candidates for improved result ordering.");
+                        label_with_hint(
+                            ui,
+                            &t.text("kn-form-reranker-model"),
+                            &t.text("kn-form-reranker-model-hint"),
+                        );
                         model_combo(
                             ui,
                             "knowledge-config-reranker-model",
                             &mut form.reranker_model_id,
                             &model_options,
                             ModelCapability::Rerank,
+                            &t,
                         );
                         ui.end_row();
                     });
@@ -695,7 +816,7 @@ impl KnowledgePanel {
                     if ui
                         .add_enabled(
                             self.model_options_request.is_none(),
-                            egui::Button::new("Refresh models"),
+                            egui::Button::new(t.text("kn-form-refresh-models")),
                         )
                         .clicked()
                     {
@@ -703,18 +824,18 @@ impl KnowledgePanel {
                     }
                     if self.model_options_request.is_some() {
                         ui.add(egui::Spinner::new());
-                        ui.small("Loading installed models...");
+                        ui.small(t.text("kn-form-models-loading"));
                     }
                 });
                 if self.model_options_request.is_none() && model_options.is_empty() {
-                    ui.small("No installed local models were found.");
+                    ui.small(t.text("kn-form-models-empty"));
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("kn-form-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("kn-form-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -739,6 +860,7 @@ impl PanelRenderer for KnowledgePanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         self.ensure_store_loaded(notifications);
         self.poll_requests(notifications);
         if self.has_pending_request() {
@@ -746,10 +868,13 @@ impl PanelRenderer for KnowledgePanel {
         }
 
         ui.heading(ctx.tab_title);
-        ui.label("Search, index, and retrieve knowledge from your connected vaults and document sources.");
+        ui.label(t.text("kn-subtitle"));
         ui.horizontal(|ui| {
             if ui
-                .button(format!("{} Refresh", regular::ARROW_CLOCKWISE))
+                .button(t.text_args(
+                    "kn-btn-refresh",
+                    HashMap::from([("icon", regular::ARROW_CLOCKWISE.to_string())]),
+                ))
                 .clicked()
             {
                 self.refresh_status();
@@ -757,16 +882,22 @@ impl PanelRenderer for KnowledgePanel {
             if ui
                 .add_enabled(
                     self.sync_request.is_none(),
-                    egui::Button::new(format!(
-                        "{} Sync Index & Vectors",
-                        regular::ARROWS_CLOCKWISE
+                    egui::Button::new(t.text_args(
+                        "kn-btn-sync",
+                        HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
                     )),
                 )
                 .clicked()
             {
                 self.begin_sync(notifications);
             }
-            if ui.button(format!("{} Config", regular::GEAR)).clicked() {
+            if ui
+                .button(t.text_args(
+                    "kn-btn-config",
+                    HashMap::from([("icon", regular::GEAR.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_config_form();
             }
             if self.has_pending_request() {
@@ -783,10 +914,13 @@ impl PanelRenderer for KnowledgePanel {
     }
 }
 
-fn parse_usize(value: &str, label: &str) -> Result<usize, String> {
+fn parse_usize(value: &str, field: &str, t: &Translator) -> Result<usize, String> {
     match value.trim().parse::<usize>() {
         Ok(value) if value > 0 => Ok(value),
-        _ => Err(format!("{label} must be a positive integer")),
+        _ => Err(t.text_args(
+            "kn-validation-positive-integer",
+            HashMap::from([("field", field.to_string())]),
+        )),
     }
 }
 
@@ -804,14 +938,17 @@ fn optional_string(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn status_label(path: Option<&Path>) -> String {
+fn status_label(path: Option<&Path>, t: &Translator) -> String {
     match path {
-        Some(path) => format!("Path: {}", path.display()),
-        None => "Path: (not loaded)".to_string(),
+        Some(path) => t.text_args(
+            "kn-path-label",
+            HashMap::from([("path", path.display().to_string())]),
+        ),
+        None => t.text("kn-path-not-loaded"),
     }
 }
 
-fn status_chip(ui: &mut egui::Ui, label: &str, value: String) {
+fn status_chip(ui: &mut egui::Ui, label: String, value: String) {
     egui::Frame::new()
         .stroke(egui::Stroke::new(
             1.0,
@@ -827,25 +964,25 @@ fn status_chip(ui: &mut egui::Ui, label: &str, value: String) {
         });
 }
 
-fn sync_stage_label(stage: KnowledgeSyncProgressStage) -> &'static str {
+fn sync_stage_label(stage: KnowledgeSyncProgressStage, t: &Translator) -> String {
     match stage {
-        KnowledgeSyncProgressStage::IndexingNotes => "Indexing notes",
-        KnowledgeSyncProgressStage::EmbeddingChunks => "Embedding chunks",
+        KnowledgeSyncProgressStage::IndexingNotes => t.text("kn-sync-stage-indexing"),
+        KnowledgeSyncProgressStage::EmbeddingChunks => t.text("kn-sync-stage-embedding"),
     }
 }
 
-fn runtime_state_label(state: KnowledgeRuntimeState) -> &'static str {
+fn runtime_state_label(state: KnowledgeRuntimeState, t: &Translator) -> String {
     match state {
-        KnowledgeRuntimeState::Disabled => "disabled",
-        KnowledgeRuntimeState::Unconfigured => "unconfigured",
-        KnowledgeRuntimeState::Loading => "loading",
-        KnowledgeRuntimeState::Ready => "ready",
-        KnowledgeRuntimeState::Syncing => "syncing",
-        KnowledgeRuntimeState::Error => "error",
+        KnowledgeRuntimeState::Disabled => t.text("kn-state-disabled"),
+        KnowledgeRuntimeState::Unconfigured => t.text("kn-state-unconfigured"),
+        KnowledgeRuntimeState::Loading => t.text("kn-state-loading"),
+        KnowledgeRuntimeState::Ready => t.text("kn-state-ready"),
+        KnowledgeRuntimeState::Syncing => t.text("kn-state-syncing"),
+        KnowledgeRuntimeState::Error => t.text("kn-state-error"),
     }
 }
 
-fn provider_combo(ui: &mut egui::Ui, provider: &mut String) {
+fn provider_combo(ui: &mut egui::Ui, provider: &mut String, t: &Translator) {
     let selected_text = if provider.trim().is_empty() {
         "obsidian".to_string()
     } else {
@@ -865,7 +1002,10 @@ fn provider_combo(ui: &mut egui::Ui, provider: &mut String) {
             let current = provider.trim();
             if !current.is_empty() && current != "obsidian" {
                 ui.separator();
-                ui.label(format!("{current} (unsupported)"));
+                ui.label(t.text_args(
+                    "kn-provider-unsupported",
+                    HashMap::from([("name", current.to_string())]),
+                ));
             }
         });
 }
@@ -876,9 +1016,10 @@ fn model_combo(
     selected: &mut String,
     models: &[ModelSummary],
     preferred_capability: ModelCapability,
+    t: &Translator,
 ) {
     let selected_text = if selected.trim().is_empty() {
-        "Not configured".to_string()
+        t.text("kn-model-not-configured")
     } else {
         selected.clone()
     };
@@ -896,7 +1037,10 @@ fn model_combo(
         .width(360.0)
         .show_ui(ui, |ui| {
             if ui
-                .selectable_label(selected.trim().is_empty(), "Not configured")
+                .selectable_label(
+                    selected.trim().is_empty(),
+                    t.text("kn-model-not-configured"),
+                )
                 .clicked()
             {
                 selected.clear();
@@ -907,7 +1051,10 @@ fn model_combo(
             if !current_is_installed {
                 let current = selected.trim().to_string();
                 if ui
-                    .selectable_label(true, format!("{current} (not installed)"))
+                    .selectable_label(
+                        true,
+                        t.text_args("kn-model-not-installed", HashMap::from([("name", current)])),
+                    )
                     .clicked()
                 {
                     ui.close();
@@ -915,7 +1062,7 @@ fn model_combo(
             }
             for model in ordered {
                 let is_selected = selected.trim() == model.model_id;
-                let label = model_option_label(&model, preferred_capability);
+                let label = model_option_label(&model, preferred_capability, t);
                 if ui.selectable_label(is_selected, label).clicked() {
                     *selected = model.model_id;
                     ui.close();
@@ -934,41 +1081,58 @@ fn model_capability_rank(model: &ModelSummary, preferred_capability: ModelCapabi
     }
 }
 
-fn model_option_label(model: &ModelSummary, preferred_capability: ModelCapability) -> String {
+fn model_option_label(
+    model: &ModelSummary,
+    preferred_capability: ModelCapability,
+    t: &Translator,
+) -> String {
     if model.capabilities.contains(&preferred_capability) {
-        return format!(
-            "{} ({})",
-            model.model_id,
-            capability_label(preferred_capability)
+        return t.text_args(
+            "kn-model-with-capability",
+            HashMap::from([
+                ("name", model.model_id.clone()),
+                ("capability", capability_label(preferred_capability, t)),
+            ]),
         );
     }
     if model.capabilities.is_empty() {
-        return format!("{} (capability unknown)", model.model_id);
+        return t.text_args(
+            "kn-model-capability-unknown",
+            HashMap::from([("name", model.model_id.clone())]),
+        );
     }
     let capabilities = model
         .capabilities
         .iter()
-        .map(|capability| capability_label(*capability))
+        .map(|capability| capability_label(*capability, t))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("{} ({capabilities})", model.model_id)
+    t.text_args(
+        "kn-model-with-capabilities",
+        HashMap::from([
+            ("name", model.model_id.clone()),
+            ("capabilities", capabilities),
+        ]),
+    )
 }
 
-fn capability_label(capability: ModelCapability) -> &'static str {
+fn capability_label(capability: ModelCapability, t: &Translator) -> String {
     match capability {
-        ModelCapability::Embedding => "embedding",
-        ModelCapability::Rerank => "rerank",
-        ModelCapability::Chat => "chat",
-        ModelCapability::Orchestrator => "orchestrator",
+        ModelCapability::Embedding => t.text("kn-capability-embedding"),
+        ModelCapability::Rerank => t.text("kn-capability-rerank"),
+        ModelCapability::Chat => t.text("kn-capability-chat"),
+        ModelCapability::Orchestrator => t.text("kn-capability-orchestrator"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_ui_kit::UiLanguage;
 
     #[test]
     fn knowledge_form_does_not_touch_tool_config() {
+        let t = Translator::new(LocaleDomain::Gui, UiLanguage::English);
         let mut config = AppConfig::default();
         config.tools.knowledge.enabled = true;
         config.tools.knowledge.search_limit = 9;
@@ -989,7 +1153,7 @@ mod tests {
             reranker_model_id: "rerank".to_string(),
         };
 
-        config.knowledge = form.to_config().expect("form should be valid");
+        config.knowledge = form.to_config(&t).expect("form should be valid");
 
         assert_eq!(config.tools.knowledge.enabled, before.enabled);
         assert_eq!(config.tools.knowledge.search_limit, before.search_limit);

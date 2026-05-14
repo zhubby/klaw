@@ -4304,5 +4304,1079 @@ mod tests {
             ),
             "查询归档记录失败: db"
         );
+        assert_eq!(
+            translator.text_args(
+                "archive-notify-open-preview-failed",
+                HashMap::from([("error", "db".to_string())])
+            ),
+            "打开归档预览失败: db"
+        );
+    }
+
+    #[test]
+    fn gui_knowledge_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("kn-subtitle"),
+            "Search, index, and retrieve knowledge from your connected vaults and document sources."
+        );
+        assert_eq!(translator.text("kn-form-title"), "Knowledge Config");
+        assert_eq!(translator.text("kn-form-enabled"), "Enabled");
+        assert_eq!(
+            translator.text("kn-form-enabled-hint"),
+            "Enable or disable the knowledge retrieval subsystem."
+        );
+        assert_eq!(translator.text("kn-form-provider"), "Provider");
+        assert_eq!(
+            translator.text("kn-form-provider-hint"),
+            "The knowledge source provider (e.g. Obsidian vault)."
+        );
+        assert_eq!(translator.text("kn-form-vault-path"), "Vault path");
+        assert_eq!(
+            translator.text("kn-form-vault-path-hint"),
+            "Absolute path to the local vault directory on your device."
+        );
+        assert_eq!(
+            translator.text("kn-form-auto-index"),
+            "Auto-index vault changes"
+        );
+        assert_eq!(
+            translator.text("kn-form-auto-index-hint"),
+            "Automatically re-index when vault files change. Run Sync once for the initial index."
+        );
+        assert_eq!(translator.text("kn-form-save"), "Save");
+        assert_eq!(translator.text("kn-form-cancel"), "Cancel");
+        assert_eq!(translator.text("kn-form-refresh-models"), "Refresh models");
+        assert_eq!(
+            translator.text("kn-form-models-loading"),
+            "Loading installed models..."
+        );
+        assert_eq!(
+            translator.text("kn-form-models-empty"),
+            "No installed local models were found."
+        );
+        assert_eq!(translator.text("kn-model-not-configured"), "Not configured");
+        assert_eq!(translator.text("kn-status-runtime"), "Runtime");
+        assert_eq!(translator.text("kn-status-state"), "State");
+        assert_eq!(translator.text("kn-status-provider"), "Provider");
+        assert_eq!(translator.text("kn-status-entries"), "Entries");
+        assert_eq!(translator.text("kn-status-chunks"), "Chunks");
+        assert_eq!(translator.text("kn-status-vectors"), "Vectors");
+        assert_eq!(translator.text("kn-state-disabled"), "disabled");
+        assert_eq!(translator.text("kn-state-unconfigured"), "unconfigured");
+        assert_eq!(translator.text("kn-state-loading"), "loading");
+        assert_eq!(translator.text("kn-state-ready"), "ready");
+        assert_eq!(translator.text("kn-state-syncing"), "syncing");
+        assert_eq!(translator.text("kn-state-error"), "error");
+        assert_eq!(translator.text("kn-state-enabled"), "enabled");
+        assert_eq!(translator.text("kn-state-disabled-label"), "disabled");
+        assert_eq!(translator.text("kn-state-unknown"), "unknown");
+        assert_eq!(translator.text("kn-capability-embedding"), "embedding");
+        assert_eq!(translator.text("kn-capability-rerank"), "rerank");
+        assert_eq!(translator.text("kn-capability-chat"), "chat");
+        assert_eq!(
+            translator.text("kn-capability-orchestrator"),
+            "orchestrator"
+        );
+        assert_eq!(translator.text("kn-search-query"), "Query");
+        assert_eq!(translator.text("kn-search-hint"), "Search notes");
+        assert_eq!(translator.text("kn-search-limit"), "Limit");
+        assert_eq!(translator.text("kn-btn-search"), "Search");
+        assert_eq!(
+            translator.text("kn-search-not-ready"),
+            "Knowledge runtime is not ready yet."
+        );
+        assert_eq!(translator.text("kn-col-title"), "Title");
+        assert_eq!(translator.text("kn-col-score"), "Score");
+        assert_eq!(translator.text("kn-preview-heading"), "Preview");
+        assert_eq!(
+            translator.text("kn-preview-empty"),
+            "Select a result to inspect it."
+        );
+        assert_eq!(translator.text("kn-sync-stage-indexing"), "Indexing notes");
+        assert_eq!(
+            translator.text("kn-sync-stage-embedding"),
+            "Embedding chunks"
+        );
+        assert_eq!(translator.text("kn-sync-title"), "Syncing Knowledge Index");
+        assert_eq!(
+            translator.text("kn-sync-preparing"),
+            "Preparing knowledge sync..."
+        );
+        assert_eq!(
+            translator.text("kn-notify-store-unavailable"),
+            "Configuration store is not available"
+        );
+        assert_eq!(
+            translator.text("kn-notify-config-saved"),
+            "Knowledge config saved"
+        );
+        assert_eq!(
+            translator.text("kn-notify-syncing"),
+            "Syncing knowledge index and vectors..."
+        );
+        assert_eq!(
+            translator.text("kn-notify-search-query-required"),
+            "Knowledge search requires a query"
+        );
+        assert_eq!(
+            translator.text("kn-notify-models-disconnected"),
+            "Model list worker closed unexpectedly"
+        );
+        assert_eq!(
+            translator.text("kn-validation-provider-obsidian"),
+            "knowledge.provider must be obsidian"
+        );
+        assert_eq!(
+            translator.text("kn-validation-vault-required"),
+            "knowledge.obsidian.vault_path is required when enabled"
+        );
+        assert_eq!(
+            translator.text("kn-validation-graph-hops"),
+            "graph_hops must be a non-negative integer"
+        );
+        assert_eq!(
+            translator.text("kn-validation-temporal-decay"),
+            "temporal_decay must be a number"
+        );
+    }
+
+    #[test]
+    fn gui_knowledge_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("kn-subtitle"),
+            "搜索、索引和检索来自已连接 vault 及文档源的知识内容。"
+        );
+        assert_eq!(translator.text("kn-form-title"), "知识配置");
+        assert_eq!(translator.text("kn-form-enabled"), "启用");
+        assert_eq!(
+            translator.text("kn-form-enabled-hint"),
+            "启用或禁用知识检索子系统。"
+        );
+        assert_eq!(translator.text("kn-form-provider"), "提供者");
+        assert_eq!(
+            translator.text("kn-form-provider-hint"),
+            "知识源提供者（例如 Obsidian vault）。"
+        );
+        assert_eq!(translator.text("kn-form-vault-path"), "Vault 路径");
+        assert_eq!(
+            translator.text("kn-form-vault-path-hint"),
+            "本地 vault 目录在设备上的绝对路径。"
+        );
+        assert_eq!(translator.text("kn-form-auto-index"), "自动索引 vault 变更");
+        assert_eq!(
+            translator.text("kn-form-auto-index-hint"),
+            "vault 文件变更时自动重新索引。首次使用请先执行一次同步。"
+        );
+        assert_eq!(translator.text("kn-form-save"), "保存");
+        assert_eq!(translator.text("kn-form-cancel"), "取消");
+        assert_eq!(translator.text("kn-form-refresh-models"), "刷新模型列表");
+        assert_eq!(
+            translator.text("kn-form-models-loading"),
+            "正在加载已安装模型..."
+        );
+        assert_eq!(
+            translator.text("kn-form-models-empty"),
+            "未找到已安装的本地模型。"
+        );
+        assert_eq!(translator.text("kn-model-not-configured"), "未配置");
+        assert_eq!(translator.text("kn-status-runtime"), "运行时");
+        assert_eq!(translator.text("kn-status-state"), "状态");
+        assert_eq!(translator.text("kn-status-provider"), "提供者");
+        assert_eq!(translator.text("kn-status-entries"), "条目数");
+        assert_eq!(translator.text("kn-status-chunks"), "块数");
+        assert_eq!(translator.text("kn-status-vectors"), "向量数");
+        assert_eq!(translator.text("kn-state-disabled"), "已禁用");
+        assert_eq!(translator.text("kn-state-unconfigured"), "未配置");
+        assert_eq!(translator.text("kn-state-loading"), "加载中");
+        assert_eq!(translator.text("kn-state-ready"), "就绪");
+        assert_eq!(translator.text("kn-state-syncing"), "同步中");
+        assert_eq!(translator.text("kn-state-error"), "错误");
+        assert_eq!(translator.text("kn-state-enabled"), "已启用");
+        assert_eq!(translator.text("kn-state-disabled-label"), "已禁用");
+        assert_eq!(translator.text("kn-state-unknown"), "未知");
+        assert_eq!(translator.text("kn-capability-embedding"), "嵌入");
+        assert_eq!(translator.text("kn-capability-rerank"), "重排");
+        assert_eq!(translator.text("kn-capability-chat"), "聊天");
+        assert_eq!(translator.text("kn-capability-orchestrator"), "编排");
+        assert_eq!(translator.text("kn-search-query"), "查询");
+        assert_eq!(translator.text("kn-search-hint"), "搜索笔记");
+        assert_eq!(translator.text("kn-search-limit"), "限制");
+        assert_eq!(translator.text("kn-btn-search"), "搜索");
+        assert_eq!(
+            translator.text("kn-search-not-ready"),
+            "知识运行时尚未就绪。"
+        );
+        assert_eq!(translator.text("kn-col-title"), "标题");
+        assert_eq!(translator.text("kn-col-score"), "分数");
+        assert_eq!(translator.text("kn-preview-heading"), "预览");
+        assert_eq!(
+            translator.text("kn-preview-empty"),
+            "选择一个结果以查看详情。"
+        );
+        assert_eq!(translator.text("kn-sync-stage-indexing"), "正在索引笔记");
+        assert_eq!(translator.text("kn-sync-stage-embedding"), "正在嵌入块");
+        assert_eq!(translator.text("kn-sync-title"), "同步知识索引");
+        assert_eq!(translator.text("kn-sync-preparing"), "正在准备知识同步...");
+        assert_eq!(
+            translator.text("kn-notify-store-unavailable"),
+            "配置存储不可用"
+        );
+        assert_eq!(translator.text("kn-notify-config-saved"), "知识配置已保存");
+        assert_eq!(
+            translator.text("kn-notify-syncing"),
+            "正在同步知识索引与向量..."
+        );
+        assert_eq!(
+            translator.text("kn-notify-search-query-required"),
+            "知识搜索需要输入查询"
+        );
+        assert_eq!(
+            translator.text("kn-notify-models-disconnected"),
+            "模型列表加载器意外关闭"
+        );
+        assert_eq!(
+            translator.text("kn-validation-provider-obsidian"),
+            "knowledge.provider 必须为 obsidian"
+        );
+        assert_eq!(
+            translator.text("kn-validation-vault-required"),
+            "启用时 knowledge.obsidian.vault_path 为必填"
+        );
+        assert_eq!(
+            translator.text("kn-validation-graph-hops"),
+            "graph_hops 必须为非负整数"
+        );
+        assert_eq!(
+            translator.text("kn-validation-temporal-decay"),
+            "temporal_decay 必须为数字"
+        );
+    }
+
+    #[test]
+    fn gui_knowledge_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args("kn-btn-refresh", HashMap::from([("icon", "⟳".to_string())])),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args("kn-btn-sync", HashMap::from([("icon", "⟲".to_string())])),
+            "⟲ Sync Index & Vectors"
+        );
+        assert_eq!(
+            translator.text_args("kn-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ Config"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-save-failed",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "Save failed: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-sync-complete",
+                HashMap::from([("notes", "42".to_string()), ("chunks", "128".to_string()),])
+            ),
+            "Knowledge sync complete: 42 notes indexed, 128 chunks embedded"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-sync-failed",
+                HashMap::from([("error", "io error".to_string())])
+            ),
+            "Knowledge sync failed: io error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-status-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Knowledge status failed: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-search-failed",
+                HashMap::from([("error", "network".to_string())])
+            ),
+            "Knowledge search failed: network"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-entry-failed",
+                HashMap::from([("error", "missing".to_string())])
+            ),
+            "Knowledge entry failed: missing"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-models-failed",
+                HashMap::from([("error", "disk".to_string())])
+            ),
+            "Model list failed: disk"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-not-installed",
+                HashMap::from([("name", "my-model".to_string())])
+            ),
+            "my-model (not installed)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-with-capability",
+                HashMap::from([
+                    ("name", "embed-v1".to_string()),
+                    ("capability", "embedding".to_string()),
+                ])
+            ),
+            "embed-v1 (embedding)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-capability-unknown",
+                HashMap::from([("name", "unknown-m".to_string())])
+            ),
+            "unknown-m (capability unknown)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-with-capabilities",
+                HashMap::from([
+                    ("name", "multi-m".to_string()),
+                    ("capabilities", "embedding, rerank".to_string()),
+                ])
+            ),
+            "multi-m (embedding, rerank)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-provider-unsupported",
+                HashMap::from([("name", "notion".to_string())])
+            ),
+            "notion (unsupported)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-vault-label",
+                HashMap::from([("path", "/tmp/vault".to_string())])
+            ),
+            "Vault: /tmp/vault"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-path-label",
+                HashMap::from([("path", "/home/config".to_string())])
+            ),
+            "Path: /home/config"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-results-heading",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "Results (5)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-preview-not-loaded",
+                HashMap::from([("id", "note-1".to_string())])
+            ),
+            "No entry loaded for note-1."
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-preview-tags",
+                HashMap::from([("tags", "rust, cli".to_string())])
+            ),
+            "tags: rust, cli"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-preview-uri",
+                HashMap::from([("uri", "file:///vault/note.md".to_string())])
+            ),
+            "URI: file:///vault/note.md"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-sync-current",
+                HashMap::from([("item", "readme.md".to_string())])
+            ),
+            "Current: readme.md"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-sync-progress",
+                HashMap::from([("completed", "10".to_string()), ("total", "50".to_string()),])
+            ),
+            "10 / 50"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-sync-processed",
+                HashMap::from([("count", "12".to_string())])
+            ),
+            "12 processed"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-validation-positive-integer",
+                HashMap::from([("field", "top_k".to_string())])
+            ),
+            "top_k must be a positive integer"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-config-load-failed",
+                HashMap::from([("error", "disk".to_string())])
+            ),
+            "Failed to load config: disk"
+        );
+    }
+
+    #[test]
+    fn gui_knowledge_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args("kn-btn-refresh", HashMap::from([("icon", "⟳".to_string())])),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args("kn-btn-sync", HashMap::from([("icon", "⟲".to_string())])),
+            "⟲ 同步索引与向量"
+        );
+        assert_eq!(
+            translator.text_args("kn-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ 配置"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-save-failed",
+                HashMap::from([("error", "磁盘错误".to_string())])
+            ),
+            "保存失败: 磁盘错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-sync-complete",
+                HashMap::from([("notes", "42".to_string()), ("chunks", "128".to_string()),])
+            ),
+            "知识同步完成: 已索引 42 条笔记, 已嵌入 128 个块"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-sync-failed",
+                HashMap::from([("error", "io 错误".to_string())])
+            ),
+            "知识同步失败: io 错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-status-failed",
+                HashMap::from([("error", "超时".to_string())])
+            ),
+            "知识状态加载失败: 超时"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-search-failed",
+                HashMap::from([("error", "网络".to_string())])
+            ),
+            "知识搜索失败: 网络"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-entry-failed",
+                HashMap::from([("error", "缺失".to_string())])
+            ),
+            "知识条目加载失败: 缺失"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-models-failed",
+                HashMap::from([("error", "磁盘".to_string())])
+            ),
+            "模型列表加载失败: 磁盘"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-not-installed",
+                HashMap::from([("name", "my-model".to_string())])
+            ),
+            "my-model（未安装）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-with-capability",
+                HashMap::from([
+                    ("name", "embed-v1".to_string()),
+                    ("capability", "嵌入".to_string()),
+                ])
+            ),
+            "embed-v1（嵌入）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-capability-unknown",
+                HashMap::from([("name", "unknown-m".to_string())])
+            ),
+            "unknown-m（能力未知）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-model-with-capabilities",
+                HashMap::from([
+                    ("name", "multi-m".to_string()),
+                    ("capabilities", "嵌入, 重排".to_string()),
+                ])
+            ),
+            "multi-m（嵌入, 重排）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-provider-unsupported",
+                HashMap::from([("name", "notion".to_string())])
+            ),
+            "notion（不支持）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-vault-label",
+                HashMap::from([("path", "/tmp/vault".to_string())])
+            ),
+            "Vault: /tmp/vault"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-path-label",
+                HashMap::from([("path", "/home/config".to_string())])
+            ),
+            "路径: /home/config"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-results-heading",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "结果（5）"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-preview-not-loaded",
+                HashMap::from([("id", "note-1".to_string())])
+            ),
+            "无法加载条目 note-1。"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-preview-tags",
+                HashMap::from([("tags", "rust, cli".to_string())])
+            ),
+            "标签: rust, cli"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-preview-uri",
+                HashMap::from([("uri", "file:///vault/note.md".to_string())])
+            ),
+            "URI: file:///vault/note.md"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-sync-current",
+                HashMap::from([("item", "readme.md".to_string())])
+            ),
+            "当前: readme.md"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-sync-progress",
+                HashMap::from([("completed", "10".to_string()), ("total", "50".to_string()),])
+            ),
+            "10 / 50"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-sync-processed",
+                HashMap::from([("count", "12".to_string())])
+            ),
+            "已处理 12"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-validation-positive-integer",
+                HashMap::from([("field", "top_k".to_string())])
+            ),
+            "top_k 必须为正整数"
+        );
+        assert_eq!(
+            translator.text_args(
+                "kn-notify-config-load-failed",
+                HashMap::from([("error", "磁盘".to_string())])
+            ),
+            "加载配置失败: 磁盘"
+        );
+    }
+
+    #[test]
+    fn gui_memory_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("mem-subtitle"),
+            "Store, search, and manage persistent memory records across sessions."
+        );
+        assert_eq!(translator.text("mem-btn-archive"), "Archive Now");
+        assert_eq!(translator.text("mem-status-archiving"), "Archiving...");
+        assert_eq!(translator.text("mem-status-deleting"), "Deleting...");
+        assert_eq!(translator.text("mem-status-loading"), "Loading...");
+        assert_eq!(
+            translator.text("mem-status-no-data"),
+            "No memory data available yet."
+        );
+        assert_eq!(translator.text("mem-tab-long-term"), "Long-term");
+        assert_eq!(translator.text("mem-tab-session-search"), "Session Search");
+        assert_eq!(translator.text("mem-tab-diagnostics"), "Diagnostics");
+        assert_eq!(translator.text("mem-filter-status-active"), "Active");
+        assert_eq!(
+            translator.text("mem-filter-status-superseded"),
+            "Superseded"
+        );
+        assert_eq!(translator.text("mem-filter-status-archived"), "Archived");
+        assert_eq!(translator.text("mem-filter-status-rejected"), "Rejected");
+        assert_eq!(translator.text("mem-filter-status-all"), "All");
+        assert_eq!(translator.text("mem-filter-kind-all"), "All kinds");
+        assert_eq!(translator.text("mem-filter-kind-identity"), "identity");
+        assert_eq!(translator.text("mem-filter-kind-preference"), "preference");
+        assert_eq!(
+            translator.text("mem-filter-kind-project-rule"),
+            "project_rule"
+        );
+        assert_eq!(translator.text("mem-filter-kind-workflow"), "workflow");
+        assert_eq!(translator.text("mem-filter-kind-fact"), "fact");
+        assert_eq!(translator.text("mem-filter-kind-constraint"), "constraint");
+        assert_eq!(translator.text("mem-topic-label"), "Topic");
+        assert_eq!(translator.text("mem-col-id"), "ID");
+        assert_eq!(translator.text("mem-col-kind"), "Kind");
+        assert_eq!(translator.text("mem-col-status"), "Status");
+        assert_eq!(translator.text("mem-col-priority"), "Priority");
+        assert_eq!(translator.text("mem-col-topic"), "Topic");
+        assert_eq!(translator.text("mem-col-pin"), "Pin");
+        assert_eq!(translator.text("mem-col-summary"), "Summary");
+        assert_eq!(translator.text("mem-col-content"), "Content");
+        assert_eq!(translator.text("mem-col-updated"), "Updated");
+        assert_eq!(translator.text("mem-pin-yes"), "yes");
+        assert_eq!(translator.text("mem-pin-no"), "no");
+        assert_eq!(translator.text("mem-summary-type"), "summary");
+        assert_eq!(translator.text("mem-summary-source"), "source");
+        assert_eq!(translator.text("mem-summary-none"), "-");
+        assert_eq!(translator.text("mem-priority-none"), "-");
+        assert_eq!(
+            translator.text("mem-config-title"),
+            "Long-term Memory Embedding Config"
+        );
+        assert_eq!(translator.text("mem-config-enabled"), "Embedding enabled");
+        assert_eq!(translator.text("mem-config-provider"), "Provider");
+        assert_eq!(translator.text("mem-config-model"), "Model");
+        assert_eq!(translator.text("mem-config-save"), "Save");
+        assert_eq!(translator.text("mem-config-cancel"), "Cancel");
+        assert_eq!(translator.text("mem-stats-title"), "Memory Info");
+        assert_eq!(translator.text("mem-stats-total-records"), "Total Records");
+        assert_eq!(
+            translator.text("mem-stats-pinned-records"),
+            "Pinned Records"
+        );
+        assert_eq!(
+            translator.text("mem-stats-embedded-records"),
+            "Embedded Records"
+        );
+        assert_eq!(
+            translator.text("mem-stats-distinct-scopes"),
+            "Distinct Scopes"
+        );
+        assert_eq!(translator.text("mem-stats-updated-24h"), "Updated Last 24h");
+        assert_eq!(translator.text("mem-stats-updated-7d"), "Updated Last 7d");
+        assert_eq!(translator.text("mem-stats-fts-enabled"), "FTS Enabled");
+        assert_eq!(
+            translator.text("mem-stats-vector-enabled"),
+            "Vector Index Enabled"
+        );
+        assert_eq!(
+            translator.text("mem-stats-avg-content"),
+            "Avg Content Length"
+        );
+        assert_eq!(translator.text("mem-stats-created-min"), "Created Min");
+        assert_eq!(translator.text("mem-stats-created-max"), "Created Max");
+        assert_eq!(translator.text("mem-stats-updated-max"), "Updated Max");
+    }
+
+    #[test]
+    fn gui_memory_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("mem-subtitle"),
+            "存储、搜索和管理跨会话的持久记忆记录。"
+        );
+        assert_eq!(translator.text("mem-btn-archive"), "立即归档");
+        assert_eq!(translator.text("mem-status-archiving"), "正在归档...");
+        assert_eq!(translator.text("mem-status-deleting"), "正在删除...");
+        assert_eq!(translator.text("mem-status-loading"), "加载中...");
+        assert_eq!(
+            translator.text("mem-status-no-data"),
+            "尚无可用的记忆数据。"
+        );
+        assert_eq!(translator.text("mem-tab-long-term"), "长期记忆");
+        assert_eq!(translator.text("mem-tab-session-search"), "会话搜索");
+        assert_eq!(translator.text("mem-tab-diagnostics"), "诊断");
+        assert_eq!(translator.text("mem-filter-status-active"), "活动中");
+        assert_eq!(translator.text("mem-filter-status-superseded"), "已取代");
+        assert_eq!(translator.text("mem-filter-status-archived"), "已归档");
+        assert_eq!(translator.text("mem-filter-status-rejected"), "已拒绝");
+        assert_eq!(translator.text("mem-filter-status-all"), "全部");
+        assert_eq!(translator.text("mem-filter-kind-all"), "全部类型");
+        assert_eq!(translator.text("mem-filter-kind-identity"), "身份");
+        assert_eq!(translator.text("mem-filter-kind-preference"), "偏好");
+        assert_eq!(translator.text("mem-filter-kind-project-rule"), "项目规则");
+        assert_eq!(translator.text("mem-filter-kind-workflow"), "工作流");
+        assert_eq!(translator.text("mem-filter-kind-fact"), "事实");
+        assert_eq!(translator.text("mem-filter-kind-constraint"), "约束");
+        assert_eq!(translator.text("mem-topic-label"), "主题");
+        assert_eq!(translator.text("mem-col-id"), "ID");
+        assert_eq!(translator.text("mem-col-kind"), "类型");
+        assert_eq!(translator.text("mem-col-status"), "状态");
+        assert_eq!(translator.text("mem-col-priority"), "优先级");
+        assert_eq!(translator.text("mem-col-topic"), "主题");
+        assert_eq!(translator.text("mem-col-pin"), "固定");
+        assert_eq!(translator.text("mem-col-summary"), "概要");
+        assert_eq!(translator.text("mem-col-content"), "内容");
+        assert_eq!(translator.text("mem-col-updated"), "更新时间");
+        assert_eq!(translator.text("mem-pin-yes"), "是");
+        assert_eq!(translator.text("mem-pin-no"), "否");
+        assert_eq!(translator.text("mem-summary-type"), "概要");
+        assert_eq!(translator.text("mem-summary-source"), "来源");
+        assert_eq!(translator.text("mem-summary-none"), "-");
+        assert_eq!(translator.text("mem-priority-none"), "-");
+        assert_eq!(translator.text("mem-config-title"), "长期记忆嵌入配置");
+        assert_eq!(translator.text("mem-config-enabled"), "嵌入已启用");
+        assert_eq!(translator.text("mem-config-provider"), "提供者");
+        assert_eq!(translator.text("mem-config-model"), "模型");
+        assert_eq!(translator.text("mem-config-save"), "保存");
+        assert_eq!(translator.text("mem-config-cancel"), "取消");
+        assert_eq!(translator.text("mem-stats-title"), "记忆信息");
+        assert_eq!(translator.text("mem-stats-total-records"), "总记录数");
+        assert_eq!(translator.text("mem-stats-pinned-records"), "固定记录数");
+        assert_eq!(
+            translator.text("mem-stats-embedded-records"),
+            "已嵌入记录数"
+        );
+        assert_eq!(translator.text("mem-stats-distinct-scopes"), "作用域数");
+        assert_eq!(translator.text("mem-stats-updated-24h"), "最近 24 小时更新");
+        assert_eq!(translator.text("mem-stats-updated-7d"), "最近 7 天更新");
+        assert_eq!(translator.text("mem-stats-fts-enabled"), "FTS 已启用");
+        assert_eq!(
+            translator.text("mem-stats-vector-enabled"),
+            "向量索引已启用"
+        );
+        assert_eq!(translator.text("mem-stats-avg-content"), "平均内容长度");
+        assert_eq!(translator.text("mem-stats-created-min"), "最早创建时间");
+        assert_eq!(translator.text("mem-stats-created-max"), "最晚创建时间");
+        assert_eq!(translator.text("mem-stats-updated-max"), "最晚更新时间");
+    }
+
+    #[test]
+    fn gui_memory_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "mem-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args("mem-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ Config"
+        );
+        assert_eq!(
+            translator.text_args("mem-btn-info", HashMap::from([("icon", "ℹ".to_string())])),
+            "ℹ Info"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-records-count",
+                HashMap::from([("count", "42".to_string())])
+            ),
+            "Records: 42"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-detail-title",
+                HashMap::from([("id", "abc123".to_string())])
+            ),
+            "Memory Detail — abc123"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-ctx-detail",
+                HashMap::from([("icon", "📄".to_string())])
+            ),
+            "📄 Detail"
+        );
+        assert_eq!(
+            translator.text_args("mem-ctx-delete", HashMap::from([("icon", "🗑".to_string())])),
+            "🗑 Delete"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-delete-prompt",
+                HashMap::from([("id", "abc123".to_string())])
+            ),
+            "Are you sure you want to delete memory record 'abc123'?"
+        );
+        assert_eq!(
+            translator.text_args("mem-delete-btn", HashMap::from([("icon", "🗑".to_string())])),
+            "🗑 Delete"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-load-failed",
+                HashMap::from([("error", "disk".to_string())])
+            ),
+            "Failed to load memory panel: disk"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-save-failed",
+                HashMap::from([("error", "write".to_string())])
+            ),
+            "Save failed: write"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-provider-unavailable",
+                HashMap::from([("provider", "missing".to_string())])
+            ),
+            "Provider 'missing' is not available"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-session-search-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Session search failed: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-delete-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to delete record: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-archive-failed",
+                HashMap::from([("error", "net".to_string())])
+            ),
+            "Archive run failed: net"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-supersedes",
+                HashMap::from([("ids", "old-1, old-2".to_string())])
+            ),
+            "supersedes: old-1, old-2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-superseded-by",
+                HashMap::from([("id", "new-2".to_string())])
+            ),
+            "superseded_by: new-2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-summary-sources",
+                HashMap::from([("ids", "old-1, old-2".to_string())])
+            ),
+            "summary sources: old-1, old-2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-archived-by",
+                HashMap::from([("id", "summary-1".to_string())])
+            ),
+            "archived_by_summary: summary-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-session-input",
+                HashMap::from([("key", "sess-1".to_string())])
+            ),
+            "Input session: sess-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-session-base",
+                HashMap::from([("key", "base-1".to_string())])
+            ),
+            "Resolved base session: base-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-session-window",
+                HashMap::from([("days", "3".to_string()), ("limit", "8".to_string())])
+            ),
+            "Window: 3 day(s), limit 8"
+        );
+    }
+
+    #[test]
+    fn gui_memory_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "mem-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args("mem-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ 配置"
+        );
+        assert_eq!(
+            translator.text_args("mem-btn-info", HashMap::from([("icon", "ℹ".to_string())])),
+            "ℹ 信息"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-records-count",
+                HashMap::from([("count", "42".to_string())])
+            ),
+            "记录: 42"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-detail-title",
+                HashMap::from([("id", "abc123".to_string())])
+            ),
+            "记忆详情 — abc123"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-ctx-detail",
+                HashMap::from([("icon", "📄".to_string())])
+            ),
+            "📄 详情"
+        );
+        assert_eq!(
+            translator.text_args("mem-ctx-delete", HashMap::from([("icon", "🗑".to_string())])),
+            "🗑 删除"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-delete-prompt",
+                HashMap::from([("id", "abc123".to_string())])
+            ),
+            "确定要删除记忆记录 'abc123' 吗？"
+        );
+        assert_eq!(
+            translator.text_args("mem-delete-btn", HashMap::from([("icon", "🗑".to_string())])),
+            "🗑 删除"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-load-failed",
+                HashMap::from([("error", "磁盘".to_string())])
+            ),
+            "加载记忆面板失败: 磁盘"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-save-failed",
+                HashMap::from([("error", "写入".to_string())])
+            ),
+            "保存失败: 写入"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-provider-unavailable",
+                HashMap::from([("provider", "missing".to_string())])
+            ),
+            "提供者 'missing' 不可用"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-session-search-failed",
+                HashMap::from([("error", "超时".to_string())])
+            ),
+            "会话搜索失败: 超时"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-delete-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "删除记录失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-notify-archive-failed",
+                HashMap::from([("error", "net".to_string())])
+            ),
+            "归档运行失败: net"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-supersedes",
+                HashMap::from([("ids", "old-1, old-2".to_string())])
+            ),
+            "取代: old-1, old-2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-superseded-by",
+                HashMap::from([("id", "new-2".to_string())])
+            ),
+            "被取代: new-2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-summary-sources",
+                HashMap::from([("ids", "old-1, old-2".to_string())])
+            ),
+            "概要来源: old-1, old-2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-governance-archived-by",
+                HashMap::from([("id", "summary-1".to_string())])
+            ),
+            "被概要归档: summary-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-session-input",
+                HashMap::from([("key", "sess-1".to_string())])
+            ),
+            "输入会话: sess-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-session-base",
+                HashMap::from([("key", "base-1".to_string())])
+            ),
+            "解析基础会话: base-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "mem-session-window",
+                HashMap::from([("days", "3".to_string()), ("limit", "8".to_string())])
+            ),
+            "窗口: 3 天, 限制 8"
+        );
     }
 }
