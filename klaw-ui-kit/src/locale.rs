@@ -5379,4 +5379,207 @@ mod tests {
             "窗口: 3 天, 限制 8"
         );
     }
+
+    #[test]
+    fn gui_observability_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("obs-section-general"), "General");
+        assert_eq!(translator.text("obs-section-metrics"), "Metrics");
+        assert_eq!(translator.text("obs-section-traces"), "Traces");
+        assert_eq!(translator.text("obs-section-otlp"), "OTLP Exporter");
+        assert_eq!(
+            translator.text("obs-section-prometheus"),
+            "Prometheus Exporter"
+        );
+        assert_eq!(translator.text("obs-section-audit"), "Audit");
+        assert_eq!(
+            translator.text("obs-section-local-store"),
+            "Local Analysis Store"
+        );
+        assert_eq!(translator.text("obs-section-pricing"), "Model Pricing");
+        assert_eq!(translator.text("obs-field-enabled"), "Enabled");
+        assert_eq!(translator.text("obs-field-service-name"), "Service Name");
+        assert_eq!(
+            translator.text("obs-field-service-version"),
+            "Service Version"
+        );
+        assert_eq!(
+            translator.text("obs-field-export-interval"),
+            "Export Interval (seconds)"
+        );
+        assert_eq!(
+            translator.text("obs-field-sample-rate"),
+            "Sample Rate (0.0-1.0)"
+        );
+        assert_eq!(translator.text("obs-field-endpoint"), "Endpoint");
+        assert_eq!(translator.text("obs-field-listen-port"), "Listen Port");
+        assert_eq!(translator.text("obs-field-path"), "Path");
+        assert_eq!(
+            translator.text("obs-field-output-path"),
+            "Output Path (optional)"
+        );
+        assert_eq!(
+            translator.text("obs-field-retention-days"),
+            "Retention Days"
+        );
+        assert_eq!(
+            translator.text("obs-field-flush-interval"),
+            "Flush Interval (seconds)"
+        );
+        assert_eq!(translator.text("obs-status-label"), "Status:");
+        assert_eq!(translator.text("obs-status-enabled"), "Enabled");
+        assert_eq!(translator.text("obs-status-disabled"), "Disabled");
+        assert_eq!(translator.text("obs-status-unsaved"), "(unsaved changes)");
+        assert_eq!(
+            translator.text("obs-note-restart"),
+            "Note: Changes require restart to take effect."
+        );
+    }
+
+    #[test]
+    fn gui_observability_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("obs-section-general"), "通用");
+        assert_eq!(translator.text("obs-section-metrics"), "指标");
+        assert_eq!(translator.text("obs-section-traces"), "链路追踪");
+        assert_eq!(translator.text("obs-section-otlp"), "OTLP 导出器");
+        assert_eq!(
+            translator.text("obs-section-prometheus"),
+            "Prometheus 导出器"
+        );
+        assert_eq!(translator.text("obs-section-audit"), "审计");
+        assert_eq!(translator.text("obs-section-local-store"), "本地分析存储");
+        assert_eq!(translator.text("obs-section-pricing"), "模型定价");
+        assert_eq!(translator.text("obs-field-enabled"), "启用");
+        assert_eq!(translator.text("obs-field-service-name"), "服务名称");
+        assert_eq!(translator.text("obs-field-service-version"), "服务版本");
+        assert_eq!(
+            translator.text("obs-field-export-interval"),
+            "导出间隔（秒）"
+        );
+        assert_eq!(translator.text("obs-field-sample-rate"), "采样率 (0.0-1.0)");
+        assert_eq!(translator.text("obs-field-endpoint"), "端点");
+        assert_eq!(translator.text("obs-field-listen-port"), "监听端口");
+        assert_eq!(translator.text("obs-field-path"), "路径");
+        assert_eq!(translator.text("obs-field-output-path"), "输出路径（可选）");
+        assert_eq!(translator.text("obs-field-retention-days"), "保留天数");
+        assert_eq!(
+            translator.text("obs-field-flush-interval"),
+            "刷新间隔（秒）"
+        );
+        assert_eq!(translator.text("obs-status-label"), "状态:");
+        assert_eq!(translator.text("obs-status-enabled"), "已启用");
+        assert_eq!(translator.text("obs-status-disabled"), "已禁用");
+        assert_eq!(translator.text("obs-status-unsaved"), "(未保存的更改)");
+        assert_eq!(
+            translator.text("obs-note-restart"),
+            "注意：更改需要重启才能生效。"
+        );
+    }
+
+    #[test]
+    fn gui_observability_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-config-load-failed",
+                HashMap::from([("error", "disk error".to_string())])
+            ),
+            "Failed to load config: disk error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-save-parse-failed",
+                HashMap::from([("error", "parse error".to_string())])
+            ),
+            "Save failed: parse error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-save-write-failed",
+                HashMap::from([("error", "write error".to_string())])
+            ),
+            "Save failed: write error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-reload-failed",
+                HashMap::from([("error", "io error".to_string())])
+            ),
+            "Reload failed: io error"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-price-duplicate",
+                HashMap::from([
+                    ("provider", "openai".to_string()),
+                    ("model", "gpt-4".to_string())
+                ])
+            ),
+            "Price entry for openai/gpt-4 already exists"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-price-delete-prompt",
+                HashMap::from([
+                    ("provider", "openai".to_string()),
+                    ("model", "gpt-4".to_string())
+                ])
+            ),
+            "Delete price entry for openai/gpt-4?"
+        );
+    }
+
+    #[test]
+    fn gui_observability_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-config-load-failed",
+                HashMap::from([("error", "磁盘错误".to_string())])
+            ),
+            "加载配置失败: 磁盘错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-save-parse-failed",
+                HashMap::from([("error", "解析错误".to_string())])
+            ),
+            "保存失败: 解析错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-save-write-failed",
+                HashMap::from([("error", "写入错误".to_string())])
+            ),
+            "保存失败: 写入错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-reload-failed",
+                HashMap::from([("error", "IO错误".to_string())])
+            ),
+            "重载失败: IO错误"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-notify-price-duplicate",
+                HashMap::from([
+                    ("provider", "openai".to_string()),
+                    ("model", "gpt-4".to_string())
+                ])
+            ),
+            "提供者 openai/模型 gpt-4 的定价条目已存在"
+        );
+        assert_eq!(
+            translator.text_args(
+                "obs-price-delete-prompt",
+                HashMap::from([
+                    ("provider", "openai".to_string()),
+                    ("model", "gpt-4".to_string())
+                ])
+            ),
+            "确定删除定价条目 openai/gpt-4 吗？"
+        );
+    }
 }

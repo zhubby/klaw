@@ -1,9 +1,12 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use egui::{Color32, RichText};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{ConfigStore, ObservabilityConfig, PriceEntry, PriceTable};
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
+use std::collections::HashMap;
 
 const PRICE_TABLE_HEIGHT: f32 = 280.0;
 const PRICE_ROW_HEIGHT: f32 = 24.0;
@@ -41,28 +44,28 @@ impl PriceForm {
         }
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self, t: &Translator) -> String {
         if self.original_provider.is_some() {
-            "Edit Price Entry"
+            t.text("obs-price-form-title-edit")
         } else {
-            "Add Price Entry"
+            t.text("obs-price-form-title-add")
         }
     }
 
-    fn validate(&self) -> Result<(String, String, PriceEntry), String> {
+    fn validate(&self, t: &Translator) -> Result<(String, String, PriceEntry), String> {
         let provider = self.provider.trim().to_string();
         if provider.is_empty() {
-            return Err("Provider must not be empty".to_string());
+            return Err(t.text("obs-validation-price-provider-empty"));
         }
         let model = self.model.trim().to_string();
         if model.is_empty() {
-            return Err("Model must not be empty".to_string());
+            return Err(t.text("obs-validation-price-model-empty"));
         }
         if self.input_rate < 0.0 {
-            return Err("Input rate must not be negative".to_string());
+            return Err(t.text("obs-validation-price-input-negative"));
         }
         if self.output_rate < 0.0 {
-            return Err("Output rate must not be negative".to_string());
+            return Err(t.text("obs-validation-price-output-negative"));
         }
         Ok((
             provider,
@@ -97,10 +100,15 @@ pub struct ObservabilityPanel {
 }
 
 impl ObservabilityPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded {
             return;
         }
+        let t = Self::translator();
         match ConfigStore::open(None) {
             Ok(store) => {
                 let snapshot = store.snapshot();
@@ -108,10 +116,13 @@ impl ObservabilityPanel {
                 self.store = Some(store);
                 self.sync_buffers_from_config();
                 self.loaded = true;
-                notifications.success("Observability config loaded");
+                notifications.success(t.text("obs-notify-config-loaded"));
             }
             Err(err) => {
-                notifications.error(format!("Failed to load config: {err}"));
+                notifications.error(t.text_args(
+                    "obs-notify-config-load-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
@@ -130,7 +141,7 @@ impl ObservabilityPanel {
             self.config.local_store.flush_interval_seconds.to_string();
     }
 
-    fn parse_config_from_buffers(&self) -> Result<ObservabilityConfig, String> {
+    fn parse_config_from_buffers(&self, t: &Translator) -> Result<ObservabilityConfig, String> {
         let mut next = self.config.clone();
         next.otlp.endpoint = self.endpoint_buffer.trim().to_string();
         next.service_name = self.service_name_buffer.trim().to_string();
@@ -146,9 +157,9 @@ impl ObservabilityPanel {
             .prometheus_port_buffer
             .trim()
             .parse::<u16>()
-            .map_err(|_| "Prometheus listen port must be a valid integer".to_string())?;
+            .map_err(|_| t.text("obs-validation-prometheus-port-invalid"))?;
         if prometheus_port == 0 {
-            return Err("Prometheus listen port must be greater than 0".to_string());
+            return Err(t.text("obs-validation-prometheus-port-zero"));
         }
         next.prometheus.listen_port = prometheus_port;
 
@@ -156,9 +167,9 @@ impl ObservabilityPanel {
             .sample_rate_buffer
             .trim()
             .parse::<f64>()
-            .map_err(|_| "Trace sample rate must be a valid number".to_string())?;
+            .map_err(|_| t.text("obs-validation-sample-rate-invalid"))?;
         if !(0.0..=1.0).contains(&sample_rate) {
-            return Err("Trace sample rate must be in range [0.0, 1.0]".to_string());
+            return Err(t.text("obs-validation-sample-rate-range"));
         }
         next.traces.sample_rate = sample_rate;
 
@@ -166,9 +177,9 @@ impl ObservabilityPanel {
             .export_interval_buffer
             .trim()
             .parse::<u64>()
-            .map_err(|_| "Metrics export interval must be a valid integer".to_string())?;
+            .map_err(|_| t.text("obs-validation-export-interval-invalid"))?;
         if export_interval_seconds == 0 {
-            return Err("Metrics export interval must be greater than 0".to_string());
+            return Err(t.text("obs-validation-export-interval-zero"));
         }
         next.metrics.export_interval_seconds = export_interval_seconds;
 
@@ -176,9 +187,9 @@ impl ObservabilityPanel {
             .local_store_retention_days_buffer
             .trim()
             .parse::<u16>()
-            .map_err(|_| "Local store retention days must be a valid integer".to_string())?;
+            .map_err(|_| t.text("obs-validation-retention-days-invalid"))?;
         if retention_days == 0 {
-            return Err("Local store retention days must be greater than 0".to_string());
+            return Err(t.text("obs-validation-retention-days-zero"));
         }
         next.local_store.retention_days = retention_days;
 
@@ -186,9 +197,9 @@ impl ObservabilityPanel {
             .local_store_flush_interval_buffer
             .trim()
             .parse::<u64>()
-            .map_err(|_| "Local store flush interval must be a valid integer".to_string())?;
+            .map_err(|_| t.text("obs-validation-flush-interval-invalid"))?;
         if flush_interval_seconds == 0 {
-            return Err("Local store flush interval must be greater than 0".to_string());
+            return Err(t.text("obs-validation-flush-interval-zero"));
         }
         next.local_store.flush_interval_seconds = flush_interval_seconds;
 
@@ -204,14 +215,18 @@ impl ObservabilityPanel {
     }
 
     fn handle_save(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.clone() else {
-            notifications.error("Config store is not available");
+            notifications.error(t.text("obs-notify-store-unavailable"));
             return;
         };
-        let parsed = match self.parse_config_from_buffers() {
+        let parsed = match self.parse_config_from_buffers(&t) {
             Ok(parsed) => parsed,
             Err(err) => {
-                notifications.error(format!("Save failed: {err}"));
+                notifications.error(t.text_args(
+                    "obs-notify-save-parse-failed",
+                    HashMap::from([("error", err)]),
+                ));
                 return;
             }
         };
@@ -220,17 +235,21 @@ impl ObservabilityPanel {
                 self.config = parsed;
                 self.sync_buffers_from_config();
                 self.dirty = false;
-                notifications.success("Observability config saved");
+                notifications.success(t.text("obs-notify-config-saved"));
             }
             Err(err) => {
-                notifications.error(format!("Save failed: {err}"));
+                notifications.error(t.text_args(
+                    "obs-notify-save-write-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
 
     fn handle_reload(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.clone() else {
-            notifications.error("Config store is not available");
+            notifications.error(t.text("obs-notify-store-unavailable"));
             return;
         };
         match store.reload() {
@@ -238,23 +257,31 @@ impl ObservabilityPanel {
                 self.config = snapshot.config.observability.clone();
                 self.sync_buffers_from_config();
                 self.dirty = false;
-                notifications.success("Observability config reloaded");
+                notifications.success(t.text("obs-notify-config-reloaded"));
             }
             Err(err) => {
-                notifications.error(format!("Reload failed: {err}"));
+                notifications.error(t.text_args(
+                    "obs-notify-reload-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
 
-    fn status_indicator(&self) -> (bool, &'static str, &'static str) {
-        (self.config.enabled, "Enabled", "Disabled")
+    fn status_indicator(&self, t: &Translator) -> (bool, String, String) {
+        (
+            self.config.enabled,
+            t.text("obs-status-enabled"),
+            t.text("obs-status-disabled"),
+        )
     }
 
     fn save_price_form(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(form) = self.price_form.take() else {
             return;
         };
-        match form.validate() {
+        match form.validate(&t) {
             Ok((provider, model, entry)) => {
                 if let Some(old_provider) = &form.original_provider
                     && let Some(old_model) = &form.original_model
@@ -269,8 +296,10 @@ impl ObservabilityPanel {
                     .get(&provider)
                     .is_some_and(|m| m.contains_key(&model));
                 if is_dup && form.original_provider.is_none() {
-                    notifications
-                        .error(format!("Price entry for {provider}/{model} already exists"));
+                    notifications.error(t.text_args(
+                        "obs-notify-price-duplicate",
+                        HashMap::from([("provider", provider.clone()), ("model", model.clone())]),
+                    ));
                     self.price_form = Some(form);
                     return;
                 }
@@ -328,30 +357,31 @@ impl ObservabilityPanel {
     }
 
     fn render_price_section(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         let mut edit_provider = None;
         let mut edit_model = None;
         let mut delete_provider = None;
         let mut delete_model = None;
 
-        ui.collapsing("Model Pricing", |ui| {
+        ui.collapsing(t.text("obs-section-pricing"), |ui| {
             ui.horizontal(|ui| {
                 if ui
-                    .add(egui::Button::new(format!(
-                        "{} Add Price Entry",
-                        regular::PLUS_CIRCLE
+                    .add(egui::Button::new(t.text_args(
+                        "obs-price-btn-add",
+                        HashMap::from([("icon", regular::PLUS_CIRCLE.to_string())]),
                     )))
                     .clicked()
                 {
                     self.price_form = Some(PriceForm::new());
                 }
-                ui.label("Rates are per 1M tokens in USD");
+                ui.label(t.text("obs-price-rates-note"));
             });
             ui.add_space(4.0);
 
             let rows = Self::flattened_price_rows(&self.config.price);
 
             if rows.is_empty() {
-                ui.label("No price entries configured. Click Add to create one.");
+                ui.label(t.text("obs-price-no-entries"));
                 return;
             }
 
@@ -369,16 +399,16 @@ impl ObservabilityPanel {
                 .sense(egui::Sense::click())
                 .header(PRICE_ROW_HEIGHT, |mut header| {
                     header.col(|ui| {
-                        ui.strong("Provider");
+                        ui.strong(t.text("obs-price-col-provider"));
                     });
                     header.col(|ui| {
-                        ui.strong("Model");
+                        ui.strong(t.text("obs-price-col-model"));
                     });
                     header.col(|ui| {
-                        ui.strong("Input Rate");
+                        ui.strong(t.text("obs-price-col-input-rate"));
                     });
                     header.col(|ui| {
-                        ui.strong("Output Rate");
+                        ui.strong(t.text("obs-price-col-output-rate"));
                     });
                 })
                 .body(|body| {
@@ -415,7 +445,10 @@ impl ObservabilityPanel {
                         let m = model.clone();
                         response.context_menu(|ui: &mut egui::Ui| {
                             if ui
-                                .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                .button(t.text_args(
+                                    "obs-price-ctx-edit",
+                                    HashMap::from([("icon", regular::PENCIL_SIMPLE.to_string())]),
+                                ))
                                 .clicked()
                             {
                                 edit_provider = Some(p.clone());
@@ -425,8 +458,11 @@ impl ObservabilityPanel {
                             ui.separator();
                             if ui
                                 .add(egui::Button::new(
-                                    RichText::new(format!("{} Delete", regular::TRASH))
-                                        .color(ui.visuals().warn_fg_color),
+                                    RichText::new(t.text_args(
+                                        "obs-price-ctx-delete",
+                                        HashMap::from([("icon", regular::TRASH.to_string())]),
+                                    ))
+                                    .color(ui.visuals().warn_fg_color),
                                 ))
                                 .clicked()
                             {
@@ -458,6 +494,7 @@ impl ObservabilityPanel {
         ui: &mut egui::Ui,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         let providers = self.known_providers();
         let Some(form) = self.price_form.as_mut() else {
             return;
@@ -465,7 +502,10 @@ impl ObservabilityPanel {
         let mut save_clicked = false;
         let mut cancel_clicked = false;
 
-        egui::Window::new(form.title())
+        let placeholder = t.text("obs-price-form-provider-placeholder");
+        let custom_label = t.text("obs-price-form-provider-custom");
+
+        egui::Window::new(form.title(&t))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -475,16 +515,19 @@ impl ObservabilityPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("Provider");
+                        ui.label(t.text("obs-price-form-provider"));
                         egui::ComboBox::from_id_salt("price-form-provider")
                             .selected_text(if form.provider.is_empty() {
-                                "Select or type"
+                                placeholder.as_str()
                             } else {
                                 &form.provider
                             })
                             .show_ui(ui, |ui| {
                                 if ui
-                                    .selectable_label(form.provider.is_empty(), "(custom)")
+                                    .selectable_label(
+                                        form.provider.is_empty(),
+                                        custom_label.as_str(),
+                                    )
                                     .clicked()
                                 {
                                     form.provider.clear();
@@ -497,11 +540,11 @@ impl ObservabilityPanel {
                             });
                         ui.end_row();
 
-                        ui.label("Model");
+                        ui.label(t.text("obs-price-form-model"));
                         ui.text_edit_singleline(&mut form.model);
                         ui.end_row();
 
-                        ui.label("Input Rate ($/1M tokens)");
+                        ui.label(t.text("obs-price-form-input-rate"));
                         ui.add(
                             egui::DragValue::new(&mut form.input_rate)
                                 .speed(0.01)
@@ -511,7 +554,7 @@ impl ObservabilityPanel {
                         );
                         ui.end_row();
 
-                        ui.label("Output Rate ($/1M tokens)");
+                        ui.label(t.text("obs-price-form-output-rate"));
                         ui.add(
                             egui::DragValue::new(&mut form.output_rate)
                                 .speed(0.01)
@@ -523,10 +566,10 @@ impl ObservabilityPanel {
                     });
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("obs-price-form-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("obs-price-form-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -541,35 +584,43 @@ impl ObservabilityPanel {
     }
 
     fn render_price_delete_confirm(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         let Some((provider, model)) = self.price_delete_confirm.clone() else {
             return;
         };
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new("Delete Price Entry")
+        egui::Window::new(t.text("obs-price-delete-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 ui.set_min_width(360.0);
                 ui.label(
-                    RichText::new(format!("Delete price entry for {provider}/{model}?")).strong(),
+                    RichText::new(t.text_args(
+                        "obs-price-delete-prompt",
+                        HashMap::from([("provider", provider.clone()), ("model", model.clone())]),
+                    ))
+                    .strong(),
                 );
                 ui.add_space(8.0);
-                ui.label("This removes the pricing rule from config.toml.");
+                ui.label(t.text("obs-price-delete-warning"));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new(format!("{} Delete", regular::TRASH))
-                                .color(ui.visuals().warn_fg_color),
+                            RichText::new(t.text_args(
+                                "obs-price-delete-btn",
+                                HashMap::from([("icon", regular::TRASH.to_string())]),
+                            ))
+                            .color(ui.visuals().warn_fg_color),
                         ))
                         .clicked()
                     {
                         confirmed = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("obs-price-delete-cancel")).clicked() {
                         cancelled = true;
                     }
                 });
@@ -596,25 +647,38 @@ impl PanelRenderer for ObservabilityPanel {
 
         self.ensure_loaded(notifications);
 
-        let (status_enabled, enabled_label, disabled_label) = self.status_indicator();
+        let t = Self::translator();
+        let (status_enabled, enabled_label, disabled_label) = self.status_indicator(&t);
 
         let mut render_strip = |ui: &mut egui::Ui, this: &mut ObservabilityPanel| {
             ui.heading(ctx.tab_title);
             ui.horizontal(|ui| {
-                ui.label("Status:");
-                render_boolean_status(ui, status_enabled, enabled_label, disabled_label);
+                ui.label(t.text("obs-status-label"));
+                render_boolean_status(ui, status_enabled, &enabled_label, &disabled_label);
                 if this.is_dirty() {
-                    ui.colored_label(Color32::YELLOW, "(unsaved changes)");
+                    ui.colored_label(Color32::YELLOW, t.text("obs-status-unsaved"));
                 }
             });
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if ui
+                    .button(t.text_args(
+                        "obs-btn-save",
+                        HashMap::from([("icon", regular::FLOPPY_DISK.to_string())]),
+                    ))
+                    .clicked()
+                {
                     this.handle_save(notifications);
                 }
-                if ui.button("Reload").clicked() {
+                if ui
+                    .button(t.text_args(
+                        "obs-btn-reload",
+                        HashMap::from([("icon", regular::ARROW_COUNTER_CLOCKWISE.to_string())]),
+                    ))
+                    .clicked()
+                {
                     this.handle_reload(notifications);
                 }
-                ui.label("Note: Changes require restart to take effect.");
+                ui.label(t.text("obs-note-restart"));
             });
 
             ui.separator();
@@ -627,15 +691,23 @@ impl PanelRenderer for ObservabilityPanel {
                             .id_salt("observability-scroll")
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                ui.collapsing("General", |ui| {
+                                ui.collapsing(t.text("obs-section-general"), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Enabled:");
-                                        if ui.checkbox(&mut this.config.enabled, "").changed() {
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-enabled"),
+                                            &t.text("obs-field-enabled-hint"),
+                                        );
+                                        if ui.add(toggle(&mut this.config.enabled)).changed() {
                                             this.mark_dirty();
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Service Name:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-service-name"),
+                                            &t.text("obs-field-service-name-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(&mut this.service_name_buffer)
                                             .changed()
@@ -644,7 +716,11 @@ impl PanelRenderer for ObservabilityPanel {
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Service Version:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-service-version"),
+                                            &t.text("obs-field-service-version-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(&mut this.service_version_buffer)
                                             .changed()
@@ -656,18 +732,26 @@ impl PanelRenderer for ObservabilityPanel {
 
                                 ui.separator();
 
-                                ui.collapsing("Metrics", |ui| {
+                                ui.collapsing(t.text("obs-section-metrics"), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Enabled:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-enabled"),
+                                            &t.text("obs-field-enabled-hint"),
+                                        );
                                         if ui
-                                            .checkbox(&mut this.config.metrics.enabled, "")
+                                            .add(toggle(&mut this.config.metrics.enabled))
                                             .changed()
                                         {
                                             this.mark_dirty();
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Export Interval (seconds):");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-export-interval"),
+                                            &t.text("obs-field-export-interval-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(&mut this.export_interval_buffer)
                                             .changed()
@@ -679,18 +763,24 @@ impl PanelRenderer for ObservabilityPanel {
 
                                 ui.separator();
 
-                                ui.collapsing("Traces", |ui| {
+                                ui.collapsing(t.text("obs-section-traces"), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Enabled:");
-                                        if ui
-                                            .checkbox(&mut this.config.traces.enabled, "")
-                                            .changed()
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-enabled"),
+                                            &t.text("obs-field-enabled-hint"),
+                                        );
+                                        if ui.add(toggle(&mut this.config.traces.enabled)).changed()
                                         {
                                             this.mark_dirty();
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Sample Rate (0.0-1.0):");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-sample-rate"),
+                                            &t.text("obs-field-sample-rate-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(&mut this.sample_rate_buffer)
                                             .changed()
@@ -702,16 +792,23 @@ impl PanelRenderer for ObservabilityPanel {
 
                                 ui.separator();
 
-                                ui.collapsing("OTLP Exporter", |ui| {
+                                ui.collapsing(t.text("obs-section-otlp"), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Enabled:");
-                                        if ui.checkbox(&mut this.config.otlp.enabled, "").changed()
-                                        {
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-enabled"),
+                                            &t.text("obs-field-enabled-hint"),
+                                        );
+                                        if ui.add(toggle(&mut this.config.otlp.enabled)).changed() {
                                             this.mark_dirty();
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Endpoint:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-endpoint"),
+                                            &t.text("obs-field-endpoint-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(&mut this.endpoint_buffer)
                                             .changed()
@@ -719,9 +816,9 @@ impl PanelRenderer for ObservabilityPanel {
                                             this.mark_dirty();
                                         }
                                     });
-                                    ui.label("Headers (from config file):");
+                                    ui.label(t.text("obs-field-headers"));
                                     if this.config.otlp.headers.is_empty() {
-                                        ui.label("  (none)");
+                                        ui.label(t.text("obs-field-headers-none"));
                                     } else {
                                         for (key, value) in &this.config.otlp.headers {
                                             ui.label(format!("  {key}: {value}"));
@@ -731,18 +828,26 @@ impl PanelRenderer for ObservabilityPanel {
 
                                 ui.separator();
 
-                                ui.collapsing("Prometheus Exporter", |ui| {
+                                ui.collapsing(t.text("obs-section-prometheus"), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Enabled:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-enabled"),
+                                            &t.text("obs-field-enabled-hint"),
+                                        );
                                         if ui
-                                            .checkbox(&mut this.config.prometheus.enabled, "")
+                                            .add(toggle(&mut this.config.prometheus.enabled))
                                             .changed()
                                         {
                                             this.mark_dirty();
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Listen Port:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-listen-port"),
+                                            &t.text("obs-field-listen-port-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(&mut this.prometheus_port_buffer)
                                             .changed()
@@ -751,7 +856,11 @@ impl PanelRenderer for ObservabilityPanel {
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Path:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-path"),
+                                            &t.text("obs-field-path-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(&mut this.prometheus_path_buffer)
                                             .changed()
@@ -763,16 +872,24 @@ impl PanelRenderer for ObservabilityPanel {
 
                                 ui.separator();
 
-                                ui.collapsing("Audit", |ui| {
+                                ui.collapsing(t.text("obs-section-audit"), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Enabled:");
-                                        if ui.checkbox(&mut this.config.audit.enabled, "").changed()
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-enabled"),
+                                            &t.text("obs-field-enabled-hint"),
+                                        );
+                                        if ui.add(toggle(&mut this.config.audit.enabled)).changed()
                                         {
                                             this.mark_dirty();
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Output Path (optional):");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-output-path"),
+                                            &t.text("obs-field-output-path-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(
                                                 &mut this.audit_output_path_buffer,
@@ -786,18 +903,26 @@ impl PanelRenderer for ObservabilityPanel {
 
                                 ui.separator();
 
-                                ui.collapsing("Local Analysis Store", |ui| {
+                                ui.collapsing(t.text("obs-section-local-store"), |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label("Enabled:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-enabled"),
+                                            &t.text("obs-field-enabled-hint"),
+                                        );
                                         if ui
-                                            .checkbox(&mut this.config.local_store.enabled, "")
+                                            .add(toggle(&mut this.config.local_store.enabled))
                                             .changed()
                                         {
                                             this.mark_dirty();
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Retention Days:");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-retention-days"),
+                                            &t.text("obs-field-retention-days-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(
                                                 &mut this.local_store_retention_days_buffer,
@@ -808,7 +933,11 @@ impl PanelRenderer for ObservabilityPanel {
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Flush Interval (seconds):");
+                                        label_with_hint(
+                                            ui,
+                                            &t.text("obs-field-flush-interval"),
+                                            &t.text("obs-field-flush-interval-hint"),
+                                        );
                                         if ui
                                             .text_edit_singleline(
                                                 &mut this.local_store_flush_interval_buffer,
