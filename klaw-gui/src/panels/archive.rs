@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use egui::{ColorImage, TextureHandle};
 use egui_extras::{Column, TableBuilder};
@@ -8,8 +9,10 @@ use klaw_archive::{
     ArchiveBlob, ArchiveError, ArchiveMediaKind, ArchiveQuery, ArchiveRecord, ArchiveService,
     ArchiveSourceKind, SqliteArchiveService, open_default_archive_service,
 };
+use klaw_ui_kit::{LocaleDomain, Translator};
 #[cfg(target_os = "macos")]
 use klaw_util::command_search_path;
+use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::ffi::OsStr;
 #[cfg(target_os = "macos")]
@@ -44,6 +47,10 @@ pub struct ArchivePanel {
 }
 
 impl ArchivePanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded {
             return;
@@ -60,7 +67,10 @@ impl ArchivePanel {
             Ok(session_keys) => {
                 self.session_keys = session_keys;
             }
-            Err(err) => notifications.error(format!("Failed to load filters: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "archive-notify-load-filters-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -89,7 +99,10 @@ impl ArchivePanel {
                 self.items = items;
                 self.loaded = true;
             }
-            Err(err) => notifications.error(format!("Failed to query archives: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "archive-notify-query-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -115,9 +128,15 @@ impl ArchivePanel {
         ) {
             Ok(blob) => match build_preview(ctx, blob, capability) {
                 Ok(preview) => self.preview = Some(preview),
-                Err(err) => notifications.error(format!("Failed to preview archive: {err}")),
+                Err(err) => notifications.error(Self::translator().text_args(
+                    "archive-notify-preview-failed",
+                    HashMap::from([("error", err.to_string())]),
+                )),
             },
-            Err(err) => notifications.error(format!("Failed to open archive for preview: {err}")),
+            Err(err) => notifications.error(Self::translator().text_args(
+                "archive-notify-open-preview-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 }
@@ -131,12 +150,24 @@ impl PanelRenderer for ArchivePanel {
     ) {
         self.ensure_loaded(notifications);
 
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
+        ui.label(t.text("archive-subtitle"));
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(t.text_args(
+                    "archive-btn-refresh",
+                    HashMap::from([("icon", regular::ARROW_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.refresh(notifications);
             }
-            ui.label(format!("Total: {}", self.total_items));
+            ui.label(t.text_args(
+                "archive-label-total",
+                HashMap::from([("count", self.total_items.to_string())]),
+            ));
         });
 
         ui.separator();
@@ -146,15 +177,20 @@ impl PanelRenderer for ArchivePanel {
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Session Key");
-                    let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
+                    ui.label(t.text("archive-filter-session-key"));
+                    let all_text = t.text("archive-filter-all");
+                    let selected_text = self.session_key_filter.as_deref().unwrap_or(&all_text);
                     let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
                         .selected_text(selected_text)
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.session_key_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.session_key_filter,
+                                    None,
+                                    t.text("archive-filter-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -178,7 +214,7 @@ impl PanelRenderer for ArchivePanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Chat ID");
+                    ui.label(t.text("archive-filter-chat-id"));
                     if ui
                         .add_sized(
                             [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -190,15 +226,21 @@ impl PanelRenderer for ArchivePanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Source Kind");
-                    let selected_text = self.source_kind_filter.map_or("All", |s| s.as_str());
+                    ui.label(t.text("archive-filter-source-kind"));
+                    let selected_text = self
+                        .source_kind_filter
+                        .map_or_else(|| t.text("archive-filter-all"), |s| s.as_str().to_string());
                     let combo_resp = egui::ComboBox::from_id_salt("source_kind_filter")
                         .selected_text(selected_text)
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.source_kind_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.source_kind_filter,
+                                    None,
+                                    t.text("archive-filter-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -226,15 +268,21 @@ impl PanelRenderer for ArchivePanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Media Kind");
-                    let selected_text = self.media_kind_filter.map_or("All", |s| s.as_str());
+                    ui.label(t.text("archive-filter-media-kind"));
+                    let selected_text = self
+                        .media_kind_filter
+                        .map_or_else(|| t.text("archive-filter-all"), |s| s.as_str().to_string());
                     let combo_resp = egui::ComboBox::from_id_salt("media_kind_filter")
                         .selected_text(selected_text)
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.media_kind_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.media_kind_filter,
+                                    None,
+                                    t.text("archive-filter-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -264,7 +312,7 @@ impl PanelRenderer for ArchivePanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Filename");
+                    ui.label(t.text("archive-filter-filename"));
                     if ui
                         .add_sized(
                             [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -276,7 +324,7 @@ impl PanelRenderer for ArchivePanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Page");
+                    ui.label(t.text("archive-filter-page"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -286,7 +334,7 @@ impl PanelRenderer for ArchivePanel {
                     {
                         need_refresh = true;
                     }
-                    ui.label("Size");
+                    ui.label(t.text("archive-filter-size"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -308,7 +356,7 @@ impl PanelRenderer for ArchivePanel {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if self.items.is_empty() {
-                    ui.label("No archive records found.");
+                    ui.label(t.text("archive-no-records"));
                 } else {
                     let table_width = ui.available_width();
                     ui.set_min_width(table_width);
@@ -331,25 +379,25 @@ impl PanelRenderer for ArchivePanel {
                         .sense(egui::Sense::click())
                         .header(20.0, |mut header| {
                             header.col(|ui| {
-                                ui.strong("ID");
+                                ui.strong(t.text("archive-col-id"));
                             });
                             header.col(|ui| {
-                                ui.strong("Source");
+                                ui.strong(t.text("archive-col-source"));
                             });
                             header.col(|ui| {
-                                ui.strong("Media");
+                                ui.strong(t.text("archive-col-media"));
                             });
                             header.col(|ui| {
-                                ui.strong("Filename");
+                                ui.strong(t.text("archive-col-filename"));
                             });
                             header.col(|ui| {
-                                ui.strong("MIME");
+                                ui.strong(t.text("archive-col-mime"));
                             });
                             header.col(|ui| {
-                                ui.strong("Size");
+                                ui.strong(t.text("archive-col-size"));
                             });
                             header.col(|ui| {
-                                ui.strong("Created At");
+                                ui.strong(t.text("archive-col-created-at"));
                             });
                         })
                         .body(|body| {
@@ -400,13 +448,24 @@ impl PanelRenderer for ArchivePanel {
                                 let item_id = item.id.clone();
                                 response.context_menu(|ui| {
                                     if can_preview
-                                        && ui.button(format!("{} Preview", regular::EYE)).clicked()
+                                        && ui
+                                            .button(t.text_args(
+                                                "archive-ctx-preview",
+                                                HashMap::from([("icon", regular::EYE.to_string())]),
+                                            ))
+                                            .clicked()
                                     {
                                         preview_item = Some(item.clone());
                                         ui.close();
                                     }
                                     if ui
-                                        .button(format!("{} Details", regular::FILE_TEXT))
+                                        .button(t.text_args(
+                                            "archive-ctx-details",
+                                            HashMap::from([(
+                                                "icon",
+                                                regular::FILE_TEXT.to_string(),
+                                            )]),
+                                        ))
                                         .clicked()
                                     {
                                         view_detail_id = Some(item_id.clone());
@@ -415,7 +474,13 @@ impl PanelRenderer for ArchivePanel {
                                     if can_preview {
                                         ui.separator();
                                     }
-                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                    if ui
+                                        .button(t.text_args(
+                                            "archive-ctx-copy-id",
+                                            HashMap::from([("icon", regular::COPY.to_string())]),
+                                        ))
+                                        .clicked()
+                                    {
                                         ui.ctx().output_mut(|o| {
                                             o.commands.push(egui::OutputCommand::CopyText(
                                                 item.id.clone(),
@@ -437,37 +502,58 @@ impl PanelRenderer for ArchivePanel {
             });
 
         if let Some(item) = self.selected_item().cloned() {
-            egui::Window::new("Archive Details")
+            egui::Window::new(t.text("archive-detail-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(true)
                 .show(ui.ctx(), |ui| {
                     ui.set_min_width(620.0);
-                    ui.label(format!("ID: {}", item.id));
-                    ui.label(format!("source_kind: {}", item.source_kind.as_str()));
-                    ui.label(format!("media_kind: {}", item.media_kind.as_str()));
-                    ui.label(format!("mime_type: {}", item.mime_type.unwrap_or_default()));
-                    ui.label(format!(
-                        "original_filename: {}",
-                        item.original_filename.unwrap_or_default()
+                    ui.label(t.text_args(
+                        "archive-detail-id",
+                        HashMap::from([("value", item.id.clone())]),
                     ));
-                    ui.label(format!("size: {}", format_bytes(item.size_bytes)));
-                    ui.label(format!("storage_rel_path: {}", item.storage_rel_path));
-                    ui.label(format!(
-                        "session_key: {}",
-                        item.session_key.unwrap_or_default()
+                    ui.label(t.text_args(
+                        "archive-detail-source-kind",
+                        HashMap::from([("value", item.source_kind.as_str().to_string())]),
                     ));
-                    ui.label(format!("chat_id: {}", item.chat_id.unwrap_or_default()));
-                    ui.label(format!(
-                        "message_id: {}",
-                        item.message_id.unwrap_or_default()
+                    ui.label(t.text_args(
+                        "archive-detail-media-kind",
+                        HashMap::from([("value", item.media_kind.as_str().to_string())]),
                     ));
-                    ui.label(format!(
-                        "created_at: {}",
-                        format_timestamp_millis(item.created_at_ms)
+                    ui.label(t.text_args(
+                        "archive-detail-mime-type",
+                        HashMap::from([("value", item.mime_type.unwrap_or_default())]),
+                    ));
+                    ui.label(t.text_args(
+                        "archive-detail-original-filename",
+                        HashMap::from([("value", item.original_filename.unwrap_or_default())]),
+                    ));
+                    ui.label(t.text_args(
+                        "archive-detail-size",
+                        HashMap::from([("value", format_bytes(item.size_bytes))]),
+                    ));
+                    ui.label(t.text_args(
+                        "archive-detail-storage-rel-path",
+                        HashMap::from([("value", item.storage_rel_path.clone())]),
+                    ));
+                    ui.label(t.text_args(
+                        "archive-detail-session-key",
+                        HashMap::from([("value", item.session_key.unwrap_or_default())]),
+                    ));
+                    ui.label(t.text_args(
+                        "archive-detail-chat-id",
+                        HashMap::from([("value", item.chat_id.unwrap_or_default())]),
+                    ));
+                    ui.label(t.text_args(
+                        "archive-detail-message-id",
+                        HashMap::from([("value", item.message_id.unwrap_or_default())]),
+                    ));
+                    ui.label(t.text_args(
+                        "archive-detail-created-at",
+                        HashMap::from([("value", format_timestamp_millis(item.created_at_ms))]),
                     ));
                     ui.separator();
-                    ui.label("metadata_json");
+                    ui.label(t.text("archive-detail-metadata-json"));
                     let mut metadata_json = item.metadata_json;
                     ui.add(
                         egui::TextEdit::multiline(&mut metadata_json)
@@ -475,7 +561,7 @@ impl PanelRenderer for ArchivePanel {
                             .desired_width(f32::INFINITY)
                             .interactive(false),
                     );
-                    if ui.button("Close").clicked() {
+                    if ui.button(t.text("archive-detail-close")).clicked() {
                         self.detail_id = None;
                     }
                 });
@@ -483,57 +569,69 @@ impl PanelRenderer for ArchivePanel {
 
         if let Some(preview) = &mut self.preview {
             let mut open = true;
-            egui::Window::new(format!("Preview: {}", preview.title))
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .default_width(840.0)
-                .default_height(640.0)
-                .resizable(true)
-                .open(&mut open)
-                .show(ui.ctx(), |ui| {
-                    ui.label(format!("ID: {}", preview.archive_id));
-                    if let Some(mime_type) = &preview.mime_type {
-                        ui.label(format!("MIME: {mime_type}"));
-                    }
-                    ui.label(format!("Path: {}", preview.storage_rel_path));
-                    if let Some(note) = &preview.note {
-                        ui.label(note);
-                    }
-                    ui.separator();
+            egui::Window::new(t.text_args(
+                "archive-preview-title",
+                HashMap::from([("title", preview.title.clone())]),
+            ))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .default_width(840.0)
+            .default_height(640.0)
+            .resizable(true)
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                ui.label(t.text_args(
+                    "archive-preview-id",
+                    HashMap::from([("value", preview.archive_id.clone())]),
+                ));
+                if let Some(mime_type) = &preview.mime_type {
+                    ui.label(t.text_args(
+                        "archive-preview-mime",
+                        HashMap::from([("mime", mime_type.clone())]),
+                    ));
+                }
+                ui.label(t.text_args(
+                    "archive-preview-path",
+                    HashMap::from([("value", preview.storage_rel_path.clone())]),
+                ));
+                if let Some(note) = &preview.note {
+                    ui.label(note);
+                }
+                ui.separator();
 
-                    match &mut preview.content {
-                        ArchivePreviewContent::Text(text) => {
-                            egui::ScrollArea::both()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    ui.add(
-                                        egui::TextEdit::multiline(text)
-                                            .desired_width(f32::INFINITY)
-                                            .desired_rows(30)
-                                            .interactive(false),
-                                    );
-                                });
-                        }
-                        ArchivePreviewContent::Image(texture) => {
-                            let source_size = texture.size_vec2();
-                            egui::ScrollArea::both()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    let available = ui.available_size();
-                                    let width_scale = if source_size.x > 0.0 {
-                                        available.x / source_size.x
-                                    } else {
-                                        1.0
-                                    };
-                                    let scale = width_scale.clamp(0.1, 1.0);
-                                    let desired_size = source_size * scale;
-                                    ui.add(
-                                        egui::Image::from_texture(&*texture)
-                                            .fit_to_exact_size(desired_size),
-                                    );
-                                });
-                        }
+                match &mut preview.content {
+                    ArchivePreviewContent::Text(text) => {
+                        egui::ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(text)
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(30)
+                                        .interactive(false),
+                                );
+                            });
                     }
-                });
+                    ArchivePreviewContent::Image(texture) => {
+                        let source_size = texture.size_vec2();
+                        egui::ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let available = ui.available_size();
+                                let width_scale = if source_size.x > 0.0 {
+                                    available.x / source_size.x
+                                } else {
+                                    1.0
+                                };
+                                let scale = width_scale.clamp(0.1, 1.0);
+                                let desired_size = source_size * scale;
+                                ui.add(
+                                    egui::Image::from_texture(&*texture)
+                                        .fit_to_exact_size(desired_size),
+                                );
+                            });
+                    }
+                }
+            });
             if !open {
                 self.preview = None;
             }

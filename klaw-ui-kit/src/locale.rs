@@ -1628,6 +1628,10 @@ mod tests {
             translator.text("skills-mgr-subtitle"),
             "Install, view, and manage skills from registries or local sources."
         );
+        assert_eq!(
+            translator.text("archive-subtitle"),
+            "Browse, filter, and preview archived files and attachments stored in the workspace."
+        );
     }
 
     #[test]
@@ -1648,6 +1652,10 @@ mod tests {
         assert_eq!(
             translator.text("skills-mgr-subtitle"),
             "从注册源或本地来源安装、查看和管理技能。"
+        );
+        assert_eq!(
+            translator.text("archive-subtitle"),
+            "浏览、筛选和预览工作区中存储的归档文件和附件。"
         );
     }
 
@@ -4014,6 +4022,255 @@ mod tests {
                 HashMap::from([("error", "io".to_string())])
             ),
             "清理会话失败: io"
+        );
+    }
+
+    #[test]
+    fn gui_archive_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("archive-subtitle"),
+            "Browse, filter, and preview archived files and attachments stored in the workspace."
+        );
+        assert_eq!(translator.text("archive-filter-session-key"), "Session Key");
+        assert_eq!(translator.text("archive-filter-chat-id"), "Chat ID");
+        assert_eq!(translator.text("archive-filter-source-kind"), "Source Kind");
+        assert_eq!(translator.text("archive-filter-media-kind"), "Media Kind");
+        assert_eq!(translator.text("archive-filter-filename"), "Filename");
+        assert_eq!(translator.text("archive-filter-page"), "Page");
+        assert_eq!(translator.text("archive-filter-size"), "Size");
+        assert_eq!(translator.text("archive-filter-all"), "All");
+        assert_eq!(translator.text("archive-col-id"), "ID");
+        assert_eq!(translator.text("archive-col-source"), "Source");
+        assert_eq!(translator.text("archive-col-media"), "Media");
+        assert_eq!(translator.text("archive-col-filename"), "Filename");
+        assert_eq!(translator.text("archive-col-mime"), "MIME");
+        assert_eq!(translator.text("archive-col-size"), "Size");
+        assert_eq!(translator.text("archive-col-created-at"), "Created At");
+        assert_eq!(
+            translator.text("archive-no-records"),
+            "No archive records found."
+        );
+        assert_eq!(translator.text("archive-detail-title"), "Archive Details");
+        assert_eq!(translator.text("archive-detail-close"), "Close");
+    }
+
+    #[test]
+    fn gui_archive_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("archive-subtitle"),
+            "浏览、筛选和预览工作区中存储的归档文件和附件。"
+        );
+        assert_eq!(translator.text("archive-filter-session-key"), "会话标识");
+        assert_eq!(translator.text("archive-filter-chat-id"), "聊天 ID");
+        assert_eq!(translator.text("archive-filter-source-kind"), "来源类型");
+        assert_eq!(translator.text("archive-filter-media-kind"), "媒体类型");
+        assert_eq!(translator.text("archive-filter-filename"), "文件名");
+        assert_eq!(translator.text("archive-filter-page"), "页码");
+        assert_eq!(translator.text("archive-filter-size"), "每页数量");
+        assert_eq!(translator.text("archive-filter-all"), "全部");
+        assert_eq!(translator.text("archive-col-id"), "ID");
+        assert_eq!(translator.text("archive-col-source"), "来源");
+        assert_eq!(translator.text("archive-col-media"), "媒体");
+        assert_eq!(translator.text("archive-col-filename"), "文件名");
+        assert_eq!(translator.text("archive-col-mime"), "MIME");
+        assert_eq!(translator.text("archive-col-size"), "大小");
+        assert_eq!(translator.text("archive-col-created-at"), "创建时间");
+        assert_eq!(translator.text("archive-no-records"), "未找到归档记录。");
+        assert_eq!(translator.text("archive-detail-title"), "归档详情");
+        assert_eq!(translator.text("archive-detail-close"), "关闭");
+    }
+
+    #[test]
+    fn gui_archive_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "archive-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-label-total",
+                HashMap::from([("count", "42".to_string())])
+            ),
+            "Total: 42"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-ctx-preview",
+                HashMap::from([("icon", "👁".to_string())])
+            ),
+            "👁 Preview"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-ctx-details",
+                HashMap::from([("icon", "📄".to_string())])
+            ),
+            "📄 Details"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 Copy ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-detail-id",
+                HashMap::from([("value", "abc".to_string())])
+            ),
+            "ID: abc"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-detail-source-kind",
+                HashMap::from([("value", "user_upload".to_string())])
+            ),
+            "Source Kind: user_upload"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-title",
+                HashMap::from([("title", "test.png".to_string())])
+            ),
+            "Preview: test.png"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-id",
+                HashMap::from([("value", "abc".to_string())])
+            ),
+            "ID: abc"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-mime",
+                HashMap::from([("mime", "image/png".to_string())])
+            ),
+            "MIME: image/png"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-path",
+                HashMap::from([("value", "/data/test.png".to_string())])
+            ),
+            "Path: /data/test.png"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-notify-load-filters-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to load filters: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-notify-query-failed",
+                HashMap::from([("error", "db".to_string())])
+            ),
+            "Failed to query archives: db"
+        );
+    }
+
+    #[test]
+    fn gui_archive_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "archive-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-label-total",
+                HashMap::from([("count", "42".to_string())])
+            ),
+            "总数: 42"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-ctx-preview",
+                HashMap::from([("icon", "👁".to_string())])
+            ),
+            "👁 预览"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-ctx-details",
+                HashMap::from([("icon", "📄".to_string())])
+            ),
+            "📄 详情"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 复制 ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-detail-id",
+                HashMap::from([("value", "abc".to_string())])
+            ),
+            "ID: abc"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-detail-source-kind",
+                HashMap::from([("value", "user_upload".to_string())])
+            ),
+            "来源类型: user_upload"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-title",
+                HashMap::from([("title", "test.png".to_string())])
+            ),
+            "预览: test.png"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-id",
+                HashMap::from([("value", "abc".to_string())])
+            ),
+            "ID: abc"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-mime",
+                HashMap::from([("mime", "image/png".to_string())])
+            ),
+            "MIME: image/png"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-preview-path",
+                HashMap::from([("value", "/data/test.png".to_string())])
+            ),
+            "路径: /data/test.png"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-notify-load-filters-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "加载筛选条件失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "archive-notify-query-failed",
+                HashMap::from([("error", "db".to_string())])
+            ),
+            "查询归档记录失败: db"
         );
     }
 }
