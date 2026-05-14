@@ -1159,4 +1159,138 @@ channel-delete-info = This action cannot be undone.
 channel-delete-btn = { $icon } Delete
 channel-delete-cancel = Cancel
 
+## Webhook panel
+webhook-subtitle = Manage webhook endpoints for inbound event and agent prompts.
+webhook-btn-refresh = { $icon } Refresh
+webhook-btn-config = { $icon } Config
+webhook-btn-create-prompt = { $icon } Create Prompt
+webhook-btn-inspect-prompt = { $icon } Inspect Prompt
+webhook-label-rows = Rows: { $count }
+
+webhook-filter-type = Type
+webhook-filter-events = Events
+webhook-filter-agents = Agents
+webhook-filter-source = Source
+webhook-filter-event-type = Event Type
+webhook-filter-hook-id = Hook ID
+webhook-filter-session = Session
+webhook-filter-status = Status
+webhook-filter-all = All
+webhook-filter-start-date = Start Date
+webhook-filter-end-date = End Date
+webhook-filter-page = Page
+webhook-filter-size = Size
+
+webhook-status-accepted = Accepted
+webhook-status-processed = Processed
+webhook-status-failed = Failed
+
+webhook-no-rows = No webhook rows found.
+
+webhook-col-source = Source
+webhook-col-hook-id = Hook ID
+webhook-col-event-type = Event Type
+webhook-col-session = Session
+webhook-col-status = Status
+webhook-col-sender = Sender
+
+webhook-sort-time-asc = Time ↑
+webhook-sort-time-desc = Time ↓
+
+webhook-ctx-view-reply = { $icon } View Reply
+webhook-ctx-raw-json = { $icon } Raw JSON
+webhook-ctx-copy-id = { $icon } Copy ID
+
+webhook-raw-title = Raw JSON: { $id }
+webhook-raw-payload = Payload
+webhook-raw-metadata = Metadata
+
+webhook-summary-title = Response Summary: { $id }
+
+webhook-config-title = Webhook Config
+webhook-config-enabled = Enabled
+webhook-config-enabled-hint = Enable or disable the entire webhook subsystem.
+webhook-config-events-header = Events Endpoint
+webhook-config-events-enabled = Enabled
+webhook-config-events-enabled-hint = Enable the events endpoint to receive inbound webhook events.
+webhook-config-events-path = Path
+webhook-config-events-path-hint = URL path for the events endpoint (read-only, auto-assigned).
+webhook-config-events-max-body = Max Body Bytes
+webhook-config-events-max-body-hint = Maximum request body size in bytes accepted by the events endpoint.
+webhook-config-agents-header = Agents Endpoint
+webhook-config-agents-enabled = Enabled
+webhook-config-agents-enabled-hint = Enable the agents endpoint to receive inbound agent prompts.
+webhook-config-agents-path = Path
+webhook-config-agents-path-hint = URL path for the agents endpoint (read-only, auto-assigned).
+webhook-config-agents-max-body = Max Body Bytes
+webhook-config-agents-max-body-hint = Maximum request body size in bytes accepted by the agents endpoint.
+webhook-config-reload = Reload
+webhook-config-save = Save
+
+webhook-prompt-create-title = Create Prompt
+webhook-prompt-edit-title = Edit Prompt
+webhook-prompt-hook-id = Hook ID
+webhook-prompt-save-to = Save To: { $path }
+webhook-prompt-markdown = Markdown
+webhook-prompt-save = Save
+webhook-prompt-save-changes = Save Changes
+
+webhook-inspect-title = Inspect Prompt
+webhook-inspect-reload = Reload
+webhook-inspect-templates = Templates: { $count }
+webhook-inspect-directory = Directory: { $path }
+webhook-inspect-no-templates = No prompt templates found.
+webhook-inspect-col-hook-id = Hook ID
+webhook-inspect-col-path = Path
+
+webhook-inspect-ctx-edit = { $icon } Edit
+webhook-inspect-ctx-view = { $icon } View
+webhook-inspect-ctx-trick = { $icon } Trick
+webhook-inspect-ctx-delete = { $icon } Delete
+
+webhook-view-title = View Prompt: { $hook_id }
+webhook-view-preview = Preview
+
+webhook-delete-title = Delete Prompt
+webhook-delete-message = Delete prompt template '{ $hook_id }'?
+webhook-delete-btn = { $icon } Delete
+webhook-delete-cancel = Cancel
+
+webhook-trick-title = Trick Prompt: { $hook_id }
+webhook-trick-hook-id = Hook ID
+webhook-trick-base-session = Base Session
+webhook-trick-select-session = Select a base session
+webhook-trick-provider = Provider
+webhook-trick-select-provider = Select a provider
+webhook-trick-model = Model
+webhook-trick-no-sessions = No delivery-ready base sessions found. Send a fresh message from a supported IM chat first.
+webhook-trick-generate = Generate
+webhook-trick-url-label = Webhook URL
+webhook-trick-copy-url = { $icon } Copy URL
+webhook-trick-url-copied = Webhook URL copied to clipboard
+
+webhook-notify-config-loaded = Webhook config loaded
+webhook-notify-config-save-restart = Webhook config saved. Restart gateway to apply runtime changes.
+webhook-notify-config-saved = Webhook config saved
+webhook-notify-config-reloaded = Webhook config reloaded from disk
+webhook-notify-rows-failed = Failed to load webhook rows: { $error }
+webhook-notify-rows-disconnected = Webhook rows worker closed unexpectedly
+webhook-notify-status-failed = Failed to load gateway status: { $error }
+webhook-notify-status-disconnected = Gateway status worker closed unexpectedly
+webhook-notify-store-unavailable = Configuration store is not available
+webhook-notify-save-failed = Save failed: { $error }
+webhook-notify-reload-failed = Reload failed: { $error }
+webhook-notify-prompt-dir-unavailable = Prompt directory is unavailable because the data root could not be resolved.
+webhook-notify-prompt-dir-not-exist = Prompt directory does not exist yet: { $path }
+webhook-notify-prompt-dir-create-failed = Failed to create prompt directory { $path }: { $error }
+webhook-notify-prompt-save-failed = Failed to save { $path }: { $error }
+webhook-notify-prompt-updated = Updated prompt template `{ $hook_id }`.
+webhook-notify-prompt-saved = Saved prompt template `{ $hook_id }`.
+webhook-notify-prompt-deleted = Deleted prompt template `{ $hook_id }`.
+webhook-notify-prompt-delete-failed = Failed to delete { $path }: { $error }
+webhook-notify-trick-webhook-disabled = Webhook is disabled in config.
+webhook-notify-trick-agents-disabled = Agents webhook endpoint is disabled in config.
+webhook-notify-trick-gateway-not-running = Gateway is not running.
+webhook-notify-trick-info-unavailable = Gateway runtime info is unavailable.
+
 test-english-only = English only

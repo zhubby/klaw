@@ -1158,3 +1158,137 @@ channel-delete-message = 确定要删除通道 '{ $id }' 吗？
 channel-delete-info = 此操作无法撤销。
 channel-delete-btn = { $icon } 删除
 channel-delete-cancel = 取消
+
+## Webhook 面板
+webhook-subtitle = 管理 Webhook 端点以接收传入事件和代理提示词。
+webhook-btn-refresh = { $icon } 刷新
+webhook-btn-config = { $icon } 配置
+webhook-btn-create-prompt = { $icon } 创建提示词
+webhook-btn-inspect-prompt = { $icon } 检查提示词
+webhook-label-rows = 行数: { $count }
+
+webhook-filter-type = 类型
+webhook-filter-events = 事件
+webhook-filter-agents = 代理
+webhook-filter-source = 来源
+webhook-filter-event-type = 事件类型
+webhook-filter-hook-id = Hook ID
+webhook-filter-session = 会话
+webhook-filter-status = 状态
+webhook-filter-all = 全部
+webhook-filter-start-date = 开始日期
+webhook-filter-end-date = 结束日期
+webhook-filter-page = 页码
+webhook-filter-size = 每页数量
+
+webhook-status-accepted = 已接受
+webhook-status-processed = 已处理
+webhook-status-failed = 失败
+
+webhook-no-rows = 未找到 Webhook 行数据。
+
+webhook-col-source = 来源
+webhook-col-hook-id = Hook ID
+webhook-col-event-type = 事件类型
+webhook-col-session = 会话
+webhook-col-status = 状态
+webhook-col-sender = 发送者
+
+webhook-sort-time-asc = 时间 ↑
+webhook-sort-time-desc = 时间 ↓
+
+webhook-ctx-view-reply = { $icon } 查看回复
+webhook-ctx-raw-json = { $icon } Raw JSON
+webhook-ctx-copy-id = { $icon } 复制 ID
+
+webhook-raw-title = Raw JSON: { $id }
+webhook-raw-payload = 载荷
+webhook-raw-metadata = 元数据
+
+webhook-summary-title = 回复摘要: { $id }
+
+webhook-config-title = Webhook 配置
+webhook-config-enabled = 启用
+webhook-config-enabled-hint = 启用或禁用整个 Webhook 子系统。
+webhook-config-events-header = 事件端点
+webhook-config-events-enabled = 启用
+webhook-config-events-enabled-hint = 启用事件端点以接收传入的 Webhook 事件。
+webhook-config-events-path = 路径
+webhook-config-events-path-hint = 事件端点的 URL 路径（只读，自动分配）。
+webhook-config-events-max-body = 最大请求体字节数
+webhook-config-events-max-body-hint = 事件端点接受的最大请求体字节数。
+webhook-config-agents-header = 代理端点
+webhook-config-agents-enabled = 启用
+webhook-config-agents-enabled-hint = 启用代理端点以接收传入的代理提示词。
+webhook-config-agents-path = 路径
+webhook-config-agents-path-hint = 代理端点的 URL 路径（只读，自动分配）。
+webhook-config-agents-max-body = 最大请求体字节数
+webhook-config-agents-max-body-hint = 代理端点接受的最大请求体字节数。
+webhook-config-reload = 重载
+webhook-config-save = 保存
+
+webhook-prompt-create-title = 创建提示词
+webhook-prompt-edit-title = 编辑提示词
+webhook-prompt-hook-id = Hook ID
+webhook-prompt-save-to = 保存至: { $path }
+webhook-prompt-markdown = Markdown
+webhook-prompt-save = 保存
+webhook-prompt-save-changes = 保存更改
+
+webhook-inspect-title = 检查提示词
+webhook-inspect-reload = 重载
+webhook-inspect-templates = 提示词模板: { $count }
+webhook-inspect-directory = 目录: { $path }
+webhook-inspect-no-templates = 未找到提示词模板。
+webhook-inspect-col-hook-id = Hook ID
+webhook-inspect-col-path = 路径
+
+webhook-inspect-ctx-edit = { $icon } 编辑
+webhook-inspect-ctx-view = { $icon } 查看
+webhook-inspect-ctx-trick = { $icon } Trick
+webhook-inspect-ctx-delete = { $icon } 删除
+
+webhook-view-title = 查看提示词: { $hook_id }
+webhook-view-preview = 预览
+
+webhook-delete-title = 删除提示词
+webhook-delete-message = 确定要删除提示词模板 '{ $hook_id }' 吗？
+webhook-delete-btn = { $icon } 删除
+webhook-delete-cancel = 取消
+
+webhook-trick-title = Trick 提示词: { $hook_id }
+webhook-trick-hook-id = Hook ID
+webhook-trick-base-session = 基础会话
+webhook-trick-select-session = 选择基础会话
+webhook-trick-provider = 提供商
+webhook-trick-select-provider = 选择提供商
+webhook-trick-model = 模型
+webhook-trick-no-sessions = 未找到可交付的基础会话。请先从支持的 IM 聊天中发送一条新消息。
+webhook-trick-generate = 生成
+webhook-trick-url-label = Webhook URL
+webhook-trick-copy-url = { $icon } 复制 URL
+webhook-trick-url-copied = Webhook URL 已复制到剪贴板
+
+webhook-notify-config-loaded = Webhook 配置已加载
+webhook-notify-config-save-restart = Webhook 配置已保存。重启网关以应用运行时变更。
+webhook-notify-config-saved = Webhook 配置已保存
+webhook-notify-config-reloaded = Webhook 配置已从磁盘重新加载
+webhook-notify-rows-failed = 加载 Webhook 行数据失败: { $error }
+webhook-notify-rows-disconnected = Webhook 行数据加载器意外关闭
+webhook-notify-status-failed = 加载网关状态失败: { $error }
+webhook-notify-status-disconnected = 网关状态加载器意外关闭
+webhook-notify-store-unavailable = 配置存储不可用
+webhook-notify-save-failed = 保存失败: { $error }
+webhook-notify-reload-failed = 重载失败: { $error }
+webhook-notify-prompt-dir-unavailable = 提示词目录不可用，因为无法解析数据根目录。
+webhook-notify-prompt-dir-not-exist = 提示词目录尚未创建: { $path }
+webhook-notify-prompt-dir-create-failed = 创建提示词目录 { $path } 失败: { $error }
+webhook-notify-prompt-save-failed = 保存 { $path } 失败: { $error }
+webhook-notify-prompt-updated = 已更新提示词模板 `{ $hook_id }`。
+webhook-notify-prompt-saved = 已保存提示词模板 `{ $hook_id }`。
+webhook-notify-prompt-deleted = 已删除提示词模板 `{ $hook_id }`。
+webhook-notify-prompt-delete-failed = 删除 { $path } 失败: { $error }
+webhook-notify-trick-webhook-disabled = 配置中 Webhook 已禁用。
+webhook-notify-trick-agents-disabled = 配置中代理 Webhook 端点已禁用。
+webhook-notify-trick-gateway-not-running = 网关未运行。
+webhook-notify-trick-info-unavailable = 网关运行时信息不可用。

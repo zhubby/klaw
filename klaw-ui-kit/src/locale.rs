@@ -1799,4 +1799,112 @@ mod tests {
             "确定要删除通道 'ops' 吗？"
         );
     }
+
+    #[test]
+    fn gui_webhook_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("webhook-subtitle"),
+            "Manage webhook endpoints for inbound event and agent prompts."
+        );
+        assert_eq!(translator.text("webhook-no-rows"), "No webhook rows found.");
+        assert_eq!(translator.text("webhook-filter-type"), "Type");
+        assert_eq!(translator.text("webhook-filter-events"), "Events");
+        assert_eq!(translator.text("webhook-filter-agents"), "Agents");
+        assert_eq!(translator.text("webhook-filter-session"), "Session");
+        assert_eq!(translator.text("webhook-filter-status"), "Status");
+        assert_eq!(translator.text("webhook-filter-all"), "All");
+        assert_eq!(translator.text("webhook-col-source"), "Source");
+        assert_eq!(translator.text("webhook-col-hook-id"), "Hook ID");
+        assert_eq!(translator.text("webhook-status-accepted"), "Accepted");
+        assert_eq!(translator.text("webhook-status-processed"), "Processed");
+        assert_eq!(translator.text("webhook-status-failed"), "Failed");
+        assert_eq!(translator.text("webhook-config-title"), "Webhook Config");
+        assert_eq!(
+            translator.text("webhook-prompt-create-title"),
+            "Create Prompt"
+        );
+        assert_eq!(translator.text("webhook-prompt-edit-title"), "Edit Prompt");
+        assert_eq!(translator.text("webhook-inspect-title"), "Inspect Prompt");
+        assert_eq!(translator.text("webhook-delete-title"), "Delete Prompt");
+        assert_eq!(translator.text("webhook-trick-generate"), "Generate");
+    }
+
+    #[test]
+    fn gui_webhook_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("webhook-subtitle"),
+            "管理 Webhook 端点以接收传入事件和代理提示词。"
+        );
+        assert_eq!(
+            translator.text("webhook-no-rows"),
+            "未找到 Webhook 行数据。"
+        );
+        assert_eq!(translator.text("webhook-filter-type"), "类型");
+        assert_eq!(translator.text("webhook-filter-events"), "事件");
+        assert_eq!(translator.text("webhook-filter-agents"), "代理");
+        assert_eq!(translator.text("webhook-filter-session"), "会话");
+        assert_eq!(translator.text("webhook-filter-all"), "全部");
+        assert_eq!(translator.text("webhook-col-source"), "来源");
+        assert_eq!(translator.text("webhook-status-accepted"), "已接受");
+        assert_eq!(translator.text("webhook-status-failed"), "失败");
+        assert_eq!(translator.text("webhook-config-title"), "Webhook 配置");
+        assert_eq!(translator.text("webhook-prompt-create-title"), "创建提示词");
+        assert_eq!(translator.text("webhook-inspect-title"), "检查提示词");
+        assert_eq!(translator.text("webhook-delete-title"), "删除提示词");
+        assert_eq!(translator.text("webhook-trick-generate"), "生成");
+    }
+
+    #[test]
+    fn gui_webhook_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "webhook-btn-refresh",
+                HashMap::from([("icon", "\u{1F504}".to_string())])
+            ),
+            "\u{1F504} Refresh"
+        );
+        assert_eq!(
+            translator.text_args(
+                "webhook-btn-config",
+                HashMap::from([("icon", "\u{1F39B}".to_string())])
+            ),
+            "\u{1F39B} Config"
+        );
+        assert_eq!(
+            translator.text_args(
+                "webhook-delete-message",
+                HashMap::from([("hook_id", "order_sync".to_string())])
+            ),
+            "Delete prompt template 'order_sync'?"
+        );
+    }
+
+    #[test]
+    fn gui_webhook_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "webhook-btn-refresh",
+                HashMap::from([("icon", "\u{1F504}".to_string())])
+            ),
+            "\u{1F504} 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "webhook-btn-config",
+                HashMap::from([("icon", "\u{1F39B}".to_string())])
+            ),
+            "\u{1F39B} 配置"
+        );
+        assert_eq!(
+            translator.text_args(
+                "webhook-delete-message",
+                HashMap::from([("hook_id", "order_sync".to_string())])
+            ),
+            "确定要删除提示词模板 'order_sync' 吗？"
+        );
+    }
 }

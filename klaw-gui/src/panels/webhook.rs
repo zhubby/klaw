@@ -2,6 +2,7 @@ use crate::GatewayStatusSnapshot;
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge::request_gateway_status;
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::{markdown, show_json_tree_with_id};
 use chrono::{Datelike, Local, NaiveDate};
@@ -18,9 +19,10 @@ use klaw_session::{
     WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
     WebhookEventStatus,
 };
-use klaw_ui_kit::{label_with_hint, toggle::toggle};
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
 use klaw_util::default_data_dir;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -279,6 +281,10 @@ impl Default for WebhookPanel {
 }
 
 impl WebhookPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         self.ensure_store_loaded(notifications);
         if self.loaded {
@@ -292,13 +298,17 @@ impl WebhookPanel {
         if self.store.is_some() {
             return;
         }
+        let t = Self::translator();
         match ConfigStore::open(None) {
             Ok(store) => {
                 let snapshot = store.snapshot();
                 self.store = Some(store);
                 self.apply_snapshot(snapshot);
             }
-            Err(err) => notifications.error(format!("Failed to load config: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "config-notify-load-failed",
+                HashMap::from([("error", format!("{err}"))]),
+            )),
         }
     }
 
@@ -376,6 +386,7 @@ impl WebhookPanel {
         let Some(request) = self.rows_request.take() else {
             return;
         };
+        let t = Self::translator();
 
         match request.receiver.try_recv() {
             Ok(result) => match result {
@@ -389,7 +400,10 @@ impl WebhookPanel {
                     }
                 }
                 Err(err) => {
-                    notifications.error(format!("Failed to load webhook rows: {err}"));
+                    notifications.error(t.text_args(
+                        "webhook-notify-rows-failed",
+                        HashMap::from([("error", format!("{err}"))]),
+                    ));
                     if self.rows_refresh_queued {
                         self.rows_refresh_queued = false;
                         self.refresh(notifications);
@@ -400,7 +414,7 @@ impl WebhookPanel {
                 self.rows_request = Some(request);
             }
             Err(TryRecvError::Disconnected) => {
-                notifications.error("Webhook rows worker closed unexpectedly");
+                notifications.error(t.text("webhook-notify-rows-disconnected"));
             }
         }
     }
@@ -447,6 +461,7 @@ impl WebhookPanel {
         let Some(receiver) = self.gateway_status_request.take() else {
             return;
         };
+        let t = Self::translator();
 
         match receiver.try_recv() {
             Ok(result) => match result {
@@ -454,14 +469,17 @@ impl WebhookPanel {
                     self.gateway_status = Some(status);
                 }
                 Err(err) => {
-                    notifications.error(format!("Failed to load gateway status: {err}"));
+                    notifications.error(t.text_args(
+                        "webhook-notify-status-failed",
+                        HashMap::from([("error", format!("{err}"))]),
+                    ));
                 }
             },
             Err(TryRecvError::Empty) => {
                 self.gateway_status_request = Some(receiver);
             }
             Err(TryRecvError::Disconnected) => {
-                notifications.error("Gateway status worker closed unexpectedly");
+                notifications.error(t.text("webhook-notify-status-disconnected"));
             }
         }
     }
@@ -473,16 +491,18 @@ impl WebhookPanel {
         };
     }
 
-    fn sort_label(&self) -> &'static str {
+    fn sort_label(&self) -> String {
+        let t = Self::translator();
         match self.sort_order {
-            WebhookEventSortOrder::ReceivedAtAsc => "Time ↑",
-            WebhookEventSortOrder::ReceivedAtDesc => "Time ↓",
+            WebhookEventSortOrder::ReceivedAtAsc => t.text("webhook-sort-time-asc"),
+            WebhookEventSortOrder::ReceivedAtDesc => t.text("webhook-sort-time-desc"),
         }
     }
 
     fn save_webhook_config(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("webhook-notify-store-unavailable"));
             return;
         };
 
@@ -503,28 +523,34 @@ impl WebhookPanel {
                     .map(|status| status.running)
                     .unwrap_or(false);
                 if running {
-                    notifications
-                        .success("Webhook config saved. Restart gateway to apply runtime changes.");
+                    notifications.success(t.text("webhook-notify-config-save-restart"));
                 } else {
-                    notifications.success("Webhook config saved");
+                    notifications.success(t.text("webhook-notify-config-saved"));
                 }
             }
-            Err(err) => notifications.error(format!("Save failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "webhook-notify-save-failed",
+                HashMap::from([("error", format!("{err}"))]),
+            )),
         }
     }
 
     fn reload_config(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(store) = self.store.as_ref() else {
-            notifications.error("Configuration store is not available");
+            notifications.error(t.text("webhook-notify-store-unavailable"));
             return;
         };
         match store.reload() {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
                 self.refresh_gateway_status();
-                notifications.success("Webhook config reloaded from disk");
+                notifications.success(t.text("webhook-notify-config-reloaded"));
             }
-            Err(err) => notifications.error(format!("Reload failed: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "webhook-notify-reload-failed",
+                HashMap::from([("error", format!("{err}"))]),
+            )),
         }
     }
 
@@ -560,12 +586,11 @@ impl WebhookPanel {
     }
 
     fn refresh_prompt_templates(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(prompt_dir) = self.prompt_dir.clone() else {
             self.inspect_prompt.templates.clear();
-            self.inspect_prompt.error_message = Some(
-                "Prompt directory is unavailable because the data root could not be resolved."
-                    .to_string(),
-            );
+            self.inspect_prompt.error_message =
+                Some(t.text("webhook-notify-prompt-dir-unavailable"));
             return;
         };
 
@@ -575,9 +600,9 @@ impl WebhookPanel {
                 self.inspect_prompt.error_message = if prompt_dir.exists() {
                     None
                 } else {
-                    Some(format!(
-                        "Prompt directory does not exist yet: {}",
-                        prompt_dir.display()
+                    Some(t.text_args(
+                        "webhook-notify-prompt-dir-not-exist",
+                        HashMap::from([("path", prompt_dir.display().to_string())]),
                     ))
                 };
                 if self
@@ -604,14 +629,13 @@ impl WebhookPanel {
     }
 
     fn save_prompt_template(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         self.create_prompt.status_message = None;
         self.create_prompt.error_message = None;
 
         let Some(prompt_dir) = self.prompt_dir.clone() else {
-            self.create_prompt.error_message = Some(
-                "Prompt directory is unavailable because the data root could not be resolved."
-                    .to_string(),
-            );
+            self.create_prompt.error_message =
+                Some(t.text("webhook-notify-prompt-dir-unavailable"));
             return;
         };
 
@@ -625,28 +649,42 @@ impl WebhookPanel {
         let path = prompt_template_path(&prompt_dir, &hook_id);
         let existed = path.exists();
         if let Err(err) = fs::create_dir_all(&prompt_dir) {
-            self.create_prompt.error_message = Some(format!(
-                "Failed to create prompt directory {}: {err}",
-                prompt_dir.display()
+            self.create_prompt.error_message = Some(t.text_args(
+                "webhook-notify-prompt-dir-create-failed",
+                HashMap::from([
+                    ("path", prompt_dir.display().to_string()),
+                    ("error", format!("{err}")),
+                ]),
             ));
             return;
         }
         if let Err(err) = fs::write(&path, self.create_prompt.markdown.as_bytes()) {
-            self.create_prompt.error_message =
-                Some(format!("Failed to save {}: {err}", path.display()));
+            self.create_prompt.error_message = Some(t.text_args(
+                "webhook-notify-prompt-save-failed",
+                HashMap::from([
+                    ("path", path.display().to_string()),
+                    ("error", format!("{err}")),
+                ]),
+            ));
             return;
         }
 
         self.create_prompt.status_message = Some(if existed {
-            format!("Updated prompt template `{hook_id}`.")
+            t.text_args(
+                "webhook-notify-prompt-updated",
+                HashMap::from([("hook_id", hook_id.clone())]),
+            )
         } else {
-            format!("Saved prompt template `{hook_id}`.")
+            t.text_args(
+                "webhook-notify-prompt-saved",
+                HashMap::from([("hook_id", hook_id.clone())]),
+            )
         });
         notifications.success(
             self.create_prompt
                 .status_message
                 .clone()
-                .unwrap_or_else(|| "Prompt template saved".to_string()),
+                .unwrap_or_else(|| t.text("webhook-notify-prompt-saved-default")),
         );
         self.refresh_prompt_templates(notifications);
     }
@@ -713,9 +751,13 @@ impl WebhookPanel {
         path: &Path,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         match fs::remove_file(path) {
             Ok(()) => {
-                notifications.success(format!("Deleted prompt template `{hook_id}`."));
+                notifications.success(t.text_args(
+                    "webhook-notify-prompt-deleted",
+                    HashMap::from([("hook_id", hook_id.to_string())]),
+                ));
                 self.refresh_prompt_templates(notifications);
                 if self
                     .view_prompt
@@ -735,11 +777,18 @@ impl WebhookPanel {
                     self.inspect_prompt.selected_hook_id = None;
                 }
             }
-            Err(err) => notifications.error(format!("Failed to delete {}: {err}", path.display())),
+            Err(err) => notifications.error(t.text_args(
+                "webhook-notify-prompt-delete-failed",
+                HashMap::from([
+                    ("path", path.display().to_string()),
+                    ("error", format!("{err}")),
+                ]),
+            )),
         }
     }
 
     fn render_raw_json_window(&mut self, ui: &mut egui::Ui) {
+        let t = Self::translator();
         if let Some(raw_state) = &mut self.raw_json_popup {
             let mut keep_open = true;
             egui::Window::new(&raw_state.title)
@@ -749,11 +798,11 @@ impl WebhookPanel {
                 .default_width(720.0)
                 .default_height(480.0)
                 .show(ui.ctx(), |ui| {
-                    ui.heading("Payload");
+                    ui.heading(t.text("webhook-raw-payload"));
                     show_json_tree_with_id(ui, &raw_state.payload, "webhook-raw-json-payload");
                     if let Some(metadata) = &raw_state.metadata {
                         ui.add_space(8.0);
-                        ui.heading("Metadata");
+                        ui.heading(t.text("webhook-raw-metadata"));
                         show_json_tree_with_id(ui, metadata, "webhook-raw-json-metadata");
                     }
                 });
@@ -778,25 +827,54 @@ impl PanelRenderer for WebhookPanel {
             ui.ctx().request_repaint();
         }
 
+        let t = Self::translator();
+
         ui.heading(ctx.tab_title);
-        render_webhook_config_summary(ui);
+        ui.label(t.text("webhook-subtitle"));
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(t.text_args(
+                    "webhook-btn-refresh",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.refresh_gateway_status();
                 self.refresh(notifications);
             }
-            if ui.button("Config").clicked() {
+            if ui
+                .button(t.text_args(
+                    "webhook-btn-config",
+                    HashMap::from([("icon", regular::SLIDERS.to_string())]),
+                ))
+                .clicked()
+            {
                 self.config_form = WebhookConfigForm::from_config(&self.config.gateway.webhook);
                 self.config_window_open = true;
             }
-            if ui.button("Create Prompt").clicked() {
+            if ui
+                .button(t.text_args(
+                    "webhook-btn-create-prompt",
+                    HashMap::from([("icon", regular::PLUS.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_create_prompt();
             }
-            if ui.button("Inspect Prompt").clicked() {
+            if ui
+                .button(t.text_args(
+                    "webhook-btn-inspect-prompt",
+                    HashMap::from([("icon", regular::MAGNIFYING_GLASS.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_inspect_prompt(notifications);
             }
-            ui.label(format!("Rows: {}", self.rows.len()));
+            ui.label(t.text_args(
+                "webhook-label-rows",
+                HashMap::from([("count", self.rows.len().to_string())]),
+            ));
         });
 
         ui.separator();
@@ -806,9 +884,12 @@ impl PanelRenderer for WebhookPanel {
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Type");
+                    ui.label(t.text("webhook-filter-type"));
                     let events_selected = self.query_kind == WebhookQueryKind::Events;
-                    if ui.selectable_label(events_selected, "Events").clicked() && !events_selected
+                    if ui
+                        .selectable_label(events_selected, t.text("webhook-filter-events"))
+                        .clicked()
+                        && !events_selected
                     {
                         self.query_kind = WebhookQueryKind::Events;
                         self.page = 1;
@@ -817,7 +898,10 @@ impl PanelRenderer for WebhookPanel {
                         need_refresh = true;
                     }
                     let agents_selected = self.query_kind == WebhookQueryKind::Agents;
-                    if ui.selectable_label(agents_selected, "Agents").clicked() && !agents_selected
+                    if ui
+                        .selectable_label(agents_selected, t.text("webhook-filter-agents"))
+                        .clicked()
+                        && !agents_selected
                     {
                         self.query_kind = WebhookQueryKind::Agents;
                         self.page = 1;
@@ -827,7 +911,7 @@ impl PanelRenderer for WebhookPanel {
                     }
                     ui.separator();
                     if self.query_kind == WebhookQueryKind::Events {
-                        ui.label("Source");
+                        ui.label(t.text("webhook-filter-source"));
                         if ui
                             .add_sized(
                                 [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -842,9 +926,9 @@ impl PanelRenderer for WebhookPanel {
                     ui.label(query_mode_primary_label(self.query_kind));
                     let selected_event_type = self.event_type_filter.as_str();
                     let event_type_text = if selected_event_type.is_empty() {
-                        "All"
+                        t.text("webhook-filter-all")
                     } else {
-                        selected_event_type
+                        selected_event_type.to_string()
                     };
                     let combo_resp = egui::ComboBox::from_id_salt("webhook-event-type-filter")
                         .selected_text(event_type_text)
@@ -852,7 +936,10 @@ impl PanelRenderer for WebhookPanel {
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_label(self.event_type_filter.is_empty(), "All")
+                                .selectable_label(
+                                    self.event_type_filter.is_empty(),
+                                    t.text("webhook-filter-all"),
+                                )
                                 .clicked()
                             {
                                 self.event_type_filter.clear();
@@ -874,12 +961,12 @@ impl PanelRenderer for WebhookPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Session");
+                    ui.label(t.text("webhook-filter-session"));
                     let selected_session = self.session_filter.as_str();
                     let session_text = if selected_session.is_empty() {
-                        "All"
+                        t.text("webhook-filter-all")
                     } else {
-                        selected_session
+                        selected_session.to_string()
                     };
                     let combo_resp = egui::ComboBox::from_id_salt("webhook-session-filter")
                         .selected_text(session_text)
@@ -887,7 +974,10 @@ impl PanelRenderer for WebhookPanel {
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_label(self.session_filter.is_empty(), "All")
+                                .selectable_label(
+                                    self.session_filter.is_empty(),
+                                    t.text("webhook-filter-all"),
+                                )
                                 .clicked()
                             {
                                 self.session_filter.clear();
@@ -909,14 +999,25 @@ impl PanelRenderer for WebhookPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Status");
+                    ui.label(t.text("webhook-filter-status"));
                     let combo_resp = egui::ComboBox::from_id_salt("webhook-status-filter")
-                        .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
+                        .selected_text(self.status_filter.map_or(
+                            t.text("webhook-filter-all"),
+                            |s| match s {
+                                WebhookEventStatus::Accepted => t.text("webhook-status-accepted"),
+                                WebhookEventStatus::Processed => t.text("webhook-status-processed"),
+                                WebhookEventStatus::Failed => t.text("webhook-status-failed"),
+                            },
+                        ))
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.status_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.status_filter,
+                                    None,
+                                    t.text("webhook-filter-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -926,12 +1027,17 @@ impl PanelRenderer for WebhookPanel {
                                 WebhookEventStatus::Processed,
                                 WebhookEventStatus::Failed,
                             ] {
+                                let label = match status {
+                                    WebhookEventStatus::Accepted => {
+                                        t.text("webhook-status-accepted")
+                                    }
+                                    WebhookEventStatus::Processed => {
+                                        t.text("webhook-status-processed")
+                                    }
+                                    WebhookEventStatus::Failed => t.text("webhook-status-failed"),
+                                };
                                 if ui
-                                    .selectable_value(
-                                        &mut self.status_filter,
-                                        Some(status),
-                                        status.as_str(),
-                                    )
+                                    .selectable_value(&mut self.status_filter, Some(status), label)
                                     .changed()
                                 {
                                     changed = true;
@@ -944,17 +1050,17 @@ impl PanelRenderer for WebhookPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Start Date");
+                    ui.label(t.text("webhook-filter-start-date"));
                     if render_date_picker(ui, &mut self.start_date, "webhook-start-date") {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("End Date");
+                    ui.label(t.text("webhook-filter-end-date"));
                     if render_date_picker(ui, &mut self.end_date, "webhook-end-date") {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Page");
+                    ui.label(t.text("webhook-filter-page"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -964,7 +1070,7 @@ impl PanelRenderer for WebhookPanel {
                     {
                         need_refresh = true;
                     }
-                    ui.label("Size");
+                    ui.label(t.text("webhook-filter-size"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -993,7 +1099,7 @@ impl PanelRenderer for WebhookPanel {
             .show(ui, |ui| {
                 ui.set_min_width(table_width);
                 if self.rows.is_empty() {
-                    ui.label("No webhook rows found.");
+                    ui.label(t.text("webhook-no-rows"));
                     return;
                 }
                 TableBuilder::new(ui)
@@ -1015,34 +1121,34 @@ impl PanelRenderer for WebhookPanel {
                         });
                         header.col(|ui| {
                             ui.strong(if self.query_kind == WebhookQueryKind::Events {
-                                "Source"
+                                t.text("webhook-col-source")
                             } else {
-                                "Hook ID"
+                                t.text("webhook-col-hook-id")
                             });
                         });
                         header.col(|ui| {
                             ui.strong(if self.query_kind == WebhookQueryKind::Events {
-                                "Event Type"
+                                t.text("webhook-col-event-type")
                             } else {
-                                "Session"
+                                t.text("webhook-col-session")
                             });
                         });
                         header.col(|ui| {
                             ui.strong(if self.query_kind == WebhookQueryKind::Events {
-                                "Session"
+                                t.text("webhook-col-session")
                             } else {
-                                "Status"
+                                t.text("webhook-col-status")
                             });
                         });
                         header.col(|ui| {
                             ui.strong(if self.query_kind == WebhookQueryKind::Events {
-                                "Status"
+                                t.text("webhook-col-status")
                             } else {
-                                "Sender"
+                                t.text("webhook-col-sender")
                             });
                         });
                         header.col(|ui| {
-                            ui.strong("Sender");
+                            ui.strong(t.text("webhook-col-sender"));
                         });
                     })
                     .body(|body| {
@@ -1104,7 +1210,10 @@ impl PanelRenderer for WebhookPanel {
                                 if ui
                                     .add_enabled(
                                         summary_state.is_some(),
-                                        egui::Button::new(format!("{} View Reply", regular::EYE)),
+                                        egui::Button::new(t.text_args(
+                                            "webhook-ctx-view-reply",
+                                            HashMap::from([("icon", regular::EYE.to_string())]),
+                                        )),
                                     )
                                     .clicked()
                                 {
@@ -1115,7 +1224,10 @@ impl PanelRenderer for WebhookPanel {
                                 if ui
                                     .add_enabled(
                                         raw_state.is_some(),
-                                        egui::Button::new(format!("{} Raw JSON", regular::CODE)),
+                                        egui::Button::new(t.text_args(
+                                            "webhook-ctx-raw-json",
+                                            HashMap::from([("icon", regular::CODE.to_string())]),
+                                        )),
                                     )
                                     .clicked()
                                 {
@@ -1123,7 +1235,13 @@ impl PanelRenderer for WebhookPanel {
                                     ui.close();
                                 }
                                 ui.separator();
-                                if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                if ui
+                                    .button(t.text_args(
+                                        "webhook-ctx-copy-id",
+                                        HashMap::from([("icon", regular::COPY.to_string())]),
+                                    ))
+                                    .clicked()
+                                {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             item.id().to_string(),
@@ -1175,7 +1293,7 @@ impl PanelRenderer for WebhookPanel {
 
         if self.config_window_open {
             let mut open = self.config_window_open;
-            egui::Window::new("Webhook Config")
+            egui::Window::new(t.text("webhook-config-title"))
                 .id(egui::Id::new("webhook-config-window"))
                 .open(&mut open)
                 .resizable(true)
@@ -1185,61 +1303,93 @@ impl PanelRenderer for WebhookPanel {
                         .num_columns(2)
                         .spacing([12.0, 8.0])
                         .show(ui, |ui| {
-                            label_with_hint(ui, "Enabled", "Enable or disable the entire webhook subsystem.");
+                            label_with_hint(
+                                ui,
+                                &t.text("webhook-config-enabled"),
+                                &t.text("webhook-config-enabled-hint"),
+                            );
                             ui.add(toggle(&mut self.config_form.enabled));
                             ui.end_row();
                         });
 
                     ui.separator();
-                    ui.strong("Events Endpoint");
+                    ui.strong(t.text("webhook-config-events-header"));
                     egui::Grid::new("webhook-config-events-grid")
                         .num_columns(2)
                         .spacing([12.0, 8.0])
                         .show(ui, |ui| {
-                            label_with_hint(ui, "Enabled", "Enable the events endpoint to receive inbound webhook events.");
+                            label_with_hint(
+                                ui,
+                                &t.text("webhook-config-events-enabled"),
+                                &t.text("webhook-config-events-enabled-hint"),
+                            );
                             ui.add(toggle(&mut self.config_form.events_enabled));
                             ui.end_row();
 
-                            label_with_hint(ui, "Path", "URL path for the events endpoint (read-only, auto-assigned).");
+                            label_with_hint(
+                                ui,
+                                &t.text("webhook-config-events-path"),
+                                &t.text("webhook-config-events-path-hint"),
+                            );
                             ui.monospace(Route::WebhookEvents.as_str());
                             ui.end_row();
 
-                            label_with_hint(ui, "Max Body Bytes", "Maximum request body size in bytes accepted by the events endpoint.");
+                            label_with_hint(
+                                ui,
+                                &t.text("webhook-config-events-max-body"),
+                                &t.text("webhook-config-events-max-body-hint"),
+                            );
                             ui.add_sized(
                                 [160.0, ui.spacing().interact_size.y],
-                                egui::TextEdit::singleline(&mut self.config_form.events_max_body_bytes),
+                                egui::TextEdit::singleline(
+                                    &mut self.config_form.events_max_body_bytes,
+                                ),
                             );
                             ui.end_row();
                         });
 
                     ui.separator();
-                    ui.strong("Agents Endpoint");
+                    ui.strong(t.text("webhook-config-agents-header"));
                     egui::Grid::new("webhook-config-agents-grid")
                         .num_columns(2)
                         .spacing([12.0, 8.0])
                         .show(ui, |ui| {
-                            label_with_hint(ui, "Enabled", "Enable the agents endpoint to receive inbound agent prompts.");
+                            label_with_hint(
+                                ui,
+                                &t.text("webhook-config-agents-enabled"),
+                                &t.text("webhook-config-agents-enabled-hint"),
+                            );
                             ui.add(toggle(&mut self.config_form.agents_enabled));
                             ui.end_row();
 
-                            label_with_hint(ui, "Path", "URL path for the agents endpoint (read-only, auto-assigned).");
+                            label_with_hint(
+                                ui,
+                                &t.text("webhook-config-agents-path"),
+                                &t.text("webhook-config-agents-path-hint"),
+                            );
                             ui.monospace(Route::WebhookAgents.as_str());
                             ui.end_row();
 
-                            label_with_hint(ui, "Max Body Bytes", "Maximum request body size in bytes accepted by the agents endpoint.");
+                            label_with_hint(
+                                ui,
+                                &t.text("webhook-config-agents-max-body"),
+                                &t.text("webhook-config-agents-max-body-hint"),
+                            );
                             ui.add_sized(
                                 [160.0, ui.spacing().interact_size.y],
-                                egui::TextEdit::singleline(&mut self.config_form.agents_max_body_bytes),
+                                egui::TextEdit::singleline(
+                                    &mut self.config_form.agents_max_body_bytes,
+                                ),
                             );
                             ui.end_row();
                         });
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Reload").clicked() {
+                        if ui.button(t.text("webhook-config-reload")).clicked() {
                             self.reload_config(notifications);
                         }
-                        if ui.button("Save").clicked() {
+                        if ui.button(t.text("webhook-config-save")).clicked() {
                             self.save_webhook_config(notifications);
                         }
                     });
@@ -1251,9 +1401,9 @@ impl PanelRenderer for WebhookPanel {
             let mut open = self.create_prompt_open;
             let is_editing = self.prompt_editor_mode == PromptEditorMode::Edit;
             egui::Window::new(if is_editing {
-                "Edit Prompt"
+                t.text("webhook-prompt-edit-title")
             } else {
-                "Create Prompt"
+                t.text("webhook-prompt-create-title")
             })
             .id(egui::Id::new("webhook-create-prompt"))
             .open(&mut open)
@@ -1262,7 +1412,7 @@ impl PanelRenderer for WebhookPanel {
             .default_height(620.0)
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Hook ID");
+                    ui.label(t.text("webhook-prompt-hook-id"));
                     ui.add_enabled_ui(!is_editing, |ui| {
                         ui.add_sized(
                             [280.0, ui.spacing().interact_size.y],
@@ -1270,7 +1420,10 @@ impl PanelRenderer for WebhookPanel {
                         );
                     });
                     if let Some(prompt_dir) = &self.prompt_dir {
-                        ui.label(format!("Save To: {}", prompt_dir.display()));
+                        ui.label(t.text_args(
+                            "webhook-prompt-save-to",
+                            HashMap::from([("path", prompt_dir.display().to_string())]),
+                        ));
                     }
                 });
                 if let Some(message) = &self.create_prompt.status_message {
@@ -1281,7 +1434,7 @@ impl PanelRenderer for WebhookPanel {
                 }
                 ui.separator();
                 let mut layouter = markdown::text_layouter;
-                ui.label("Markdown");
+                ui.label(t.text("webhook-prompt-markdown"));
                 ui.add_sized(
                     [ui.available_width(), PROMPT_TEXT_HEIGHT],
                     egui::TextEdit::multiline(&mut self.create_prompt.markdown)
@@ -1293,7 +1446,11 @@ impl PanelRenderer for WebhookPanel {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui
-                        .button(if is_editing { "Save Changes" } else { "Save" })
+                        .button(if is_editing {
+                            t.text("webhook-prompt-save-changes")
+                        } else {
+                            t.text("webhook-prompt-save")
+                        })
                         .clicked()
                     {
                         self.save_prompt_template(notifications);
@@ -1312,7 +1469,7 @@ impl PanelRenderer for WebhookPanel {
             let mut open_edit: Option<PromptTemplateRecord> = None;
             let mut open_trick: Option<PromptTemplateRecord> = None;
             let mut confirm_delete: Option<DeletePromptState> = None;
-            egui::Window::new("Inspect Prompt")
+            egui::Window::new(t.text("webhook-inspect-title"))
                 .id(egui::Id::new("webhook-inspect-prompt"))
                 .open(&mut open)
                 .resizable(true)
@@ -1320,16 +1477,22 @@ impl PanelRenderer for WebhookPanel {
                 .default_height(480.0)
                 .show(ui.ctx(), |ui| {
                     ui.horizontal(|ui| {
-                        if ui.button("Reload").clicked() {
+                        if ui.button(t.text("webhook-inspect-reload")).clicked() {
                             self.refresh_prompt_templates(notifications);
                         }
-                        ui.label(format!(
-                            "Templates: {}",
-                            self.inspect_prompt.templates.len()
+                        ui.label(t.text_args(
+                            "webhook-inspect-templates",
+                            HashMap::from([(
+                                "count",
+                                self.inspect_prompt.templates.len().to_string(),
+                            )]),
                         ));
                     });
                     if let Some(prompt_dir) = &self.prompt_dir {
-                        ui.label(format!("Directory: {}", prompt_dir.display()));
+                        ui.label(t.text_args(
+                            "webhook-inspect-directory",
+                            HashMap::from([("path", prompt_dir.display().to_string())]),
+                        ));
                     }
                     if let Some(message) = &self.inspect_prompt.error_message {
                         ui.colored_label(ui.visuals().error_fg_color, message);
@@ -1340,7 +1503,7 @@ impl PanelRenderer for WebhookPanel {
                         .max_height(PROMPT_LIST_HEIGHT)
                         .show(ui, |ui| {
                             if self.inspect_prompt.templates.is_empty() {
-                                ui.label("No prompt templates found.");
+                                ui.label(t.text("webhook-inspect-no-templates"));
                                 return;
                             }
                             TableBuilder::new(ui)
@@ -1351,10 +1514,10 @@ impl PanelRenderer for WebhookPanel {
                                 .sense(egui::Sense::click())
                                 .header(20.0, |mut header| {
                                     header.col(|ui| {
-                                        ui.strong("Hook ID");
+                                        ui.strong(t.text("webhook-inspect-col-hook-id"));
                                     });
                                     header.col(|ui| {
-                                        ui.strong("Path");
+                                        ui.strong(t.text("webhook-inspect-col-path"));
                                     });
                                 })
                                 .body(|body| {
@@ -1388,14 +1551,26 @@ impl PanelRenderer for WebhookPanel {
                                             let item_for_menu = item.clone();
                                             response.context_menu(|ui| {
                                                 if ui
-                                                    .button(format!("{} Edit", regular::PENCIL))
+                                                    .button(t.text_args(
+                                                        "webhook-inspect-ctx-edit",
+                                                        HashMap::from([(
+                                                            "icon",
+                                                            regular::PENCIL.to_string(),
+                                                        )]),
+                                                    ))
                                                     .clicked()
                                                 {
                                                     open_edit = Some(item_for_menu.clone());
                                                     ui.close();
                                                 }
                                                 if ui
-                                                    .button(format!("{} View", regular::EYE))
+                                                    .button(t.text_args(
+                                                        "webhook-inspect-ctx-view",
+                                                        HashMap::from([(
+                                                            "icon",
+                                                            regular::EYE.to_string(),
+                                                        )]),
+                                                    ))
                                                     .clicked()
                                                 {
                                                     open_view = Some(item_for_menu.clone());
@@ -1409,9 +1584,12 @@ impl PanelRenderer for WebhookPanel {
                                                 if ui
                                                     .add_enabled(
                                                         trick_enabled,
-                                                        egui::Button::new(format!(
-                                                            "{} Trick",
-                                                            regular::MAGIC_WAND
+                                                        egui::Button::new(t.text_args(
+                                                            "webhook-inspect-ctx-trick",
+                                                            HashMap::from([(
+                                                                "icon",
+                                                                regular::MAGIC_WAND.to_string(),
+                                                            )]),
                                                         )),
                                                     )
                                                     .clicked()
@@ -1422,9 +1600,12 @@ impl PanelRenderer for WebhookPanel {
                                                 ui.separator();
                                                 if ui
                                                     .add(egui::Button::new(
-                                                        RichText::new(format!(
-                                                            "{} Delete",
-                                                            regular::TRASH
+                                                        RichText::new(t.text_args(
+                                                            "webhook-inspect-ctx-delete",
+                                                            HashMap::from([(
+                                                                "icon",
+                                                                regular::TRASH.to_string(),
+                                                            )]),
                                                         ))
                                                         .color(ui.visuals().warn_fg_color),
                                                     ))
@@ -1459,25 +1640,28 @@ impl PanelRenderer for WebhookPanel {
 
         if let Some(view_state) = &mut self.view_prompt {
             let mut open = true;
-            egui::Window::new(format!("View Prompt: {}", view_state.hook_id))
-                .id(egui::Id::new(("webhook-view-prompt", &view_state.hook_id)))
-                .open(&mut open)
-                .resizable(true)
-                .default_width(720.0)
-                .default_height(620.0)
-                .show(ui.ctx(), |ui| {
-                    ui.label("Preview");
-                    egui::ScrollArea::vertical()
-                        .id_salt(("webhook-view-prompt-preview", &view_state.hook_id))
-                        .max_height(ui.available_height())
-                        .show(ui, |ui| {
-                            markdown::render(
-                                ui,
-                                &mut self.view_prompt_preview_cache,
-                                &view_state.markdown,
-                            );
-                        });
-                });
+            egui::Window::new(t.text_args(
+                "webhook-view-title",
+                HashMap::from([("hook_id", view_state.hook_id.clone())]),
+            ))
+            .id(egui::Id::new(("webhook-view-prompt", &view_state.hook_id)))
+            .open(&mut open)
+            .resizable(true)
+            .default_width(720.0)
+            .default_height(620.0)
+            .show(ui.ctx(), |ui| {
+                ui.label(t.text("webhook-view-preview"));
+                egui::ScrollArea::vertical()
+                    .id_salt(("webhook-view-prompt-preview", &view_state.hook_id))
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
+                        markdown::render(
+                            ui,
+                            &mut self.view_prompt_preview_cache,
+                            &view_state.markdown,
+                        );
+                    });
+            });
             if !open {
                 self.view_prompt = None;
             }
@@ -1486,15 +1670,15 @@ impl PanelRenderer for WebhookPanel {
         if let Some(delete_state) = self.delete_prompt.clone() {
             let mut confirmed = false;
             let mut cancelled = false;
-            egui::Window::new("Delete Prompt")
+            egui::Window::new(t.text("webhook-delete-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
                     ui.label(
-                        RichText::new(format!(
-                            "Delete prompt template '{}'?",
-                            delete_state.hook_id
+                        RichText::new(t.text_args(
+                            "webhook-delete-message",
+                            HashMap::from([("hook_id", delete_state.hook_id.clone())]),
                         ))
                         .strong(),
                     );
@@ -1504,14 +1688,17 @@ impl PanelRenderer for WebhookPanel {
                     ui.horizontal(|ui| {
                         if ui
                             .add(egui::Button::new(
-                                RichText::new(format!("{} Delete", regular::TRASH))
-                                    .color(ui.visuals().warn_fg_color),
+                                RichText::new(t.text_args(
+                                    "webhook-delete-btn",
+                                    HashMap::from([("icon", regular::TRASH.to_string())]),
+                                ))
+                                .color(ui.visuals().warn_fg_color),
                             ))
                             .clicked()
                         {
                             confirmed = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(t.text("webhook-delete-cancel")).clicked() {
                             cancelled = true;
                         }
                     });
@@ -1531,147 +1718,147 @@ impl PanelRenderer for WebhookPanel {
 
         if let Some(trick_state) = &mut self.trick_prompt {
             let mut open = true;
-            egui::Window::new(format!("Trick Prompt: {}", trick_state.hook_id))
-                .id(egui::Id::new((
-                    "webhook-trick-prompt",
-                    &trick_state.hook_id,
-                )))
-                .open(&mut open)
-                .resizable(true)
-                .default_width(700.0)
-                .default_height(420.0)
-                .show(ui.ctx(), |ui| {
-                    if let Some(message) =
-                        trick_ready_error(&self.config, self.gateway_status.as_ref())
-                    {
-                        ui.colored_label(ui.visuals().error_fg_color, message);
-                    }
-                    if let Some(message) = &trick_state.error_message {
-                        ui.colored_label(ui.visuals().error_fg_color, message);
-                    }
-                    egui::Grid::new("webhook-trick-grid")
-                        .num_columns(2)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.label("Hook ID");
-                            ui.label(&trick_state.hook_id);
-                            ui.end_row();
+            egui::Window::new(t.text_args(
+                "webhook-trick-title",
+                HashMap::from([("hook_id", trick_state.hook_id.clone())]),
+            ))
+            .id(egui::Id::new((
+                "webhook-trick-prompt",
+                &trick_state.hook_id,
+            )))
+            .open(&mut open)
+            .resizable(true)
+            .default_width(700.0)
+            .default_height(420.0)
+            .show(ui.ctx(), |ui| {
+                if let Some(message) = trick_ready_error(&self.config, self.gateway_status.as_ref())
+                {
+                    ui.colored_label(ui.visuals().error_fg_color, message);
+                }
+                if let Some(message) = &trick_state.error_message {
+                    ui.colored_label(ui.visuals().error_fg_color, message);
+                }
+                egui::Grid::new("webhook-trick-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label(t.text("webhook-trick-hook-id"));
+                        ui.label(&trick_state.hook_id);
+                        ui.end_row();
 
-                            ui.label("Base Session");
-                            egui::ComboBox::from_id_salt((
-                                "webhook-trick-session",
-                                &trick_state.hook_id,
-                            ))
-                            .selected_text(
-                                trick_state
-                                    .session_options
-                                    .iter()
-                                    .find(|item| {
-                                        item.base_session_key == trick_state.base_session_key
-                                    })
-                                    .map(|item| item.label.as_str())
-                                    .unwrap_or("Select a base session"),
-                            )
-                            .width(420.0)
-                            .show_ui(ui, |ui| {
-                                for option in &trick_state.session_options {
-                                    let selected =
-                                        trick_state.base_session_key == option.base_session_key;
-                                    if ui.selectable_label(selected, &option.label).clicked() {
-                                        trick_state.base_session_key =
-                                            option.base_session_key.clone();
-                                    }
+                        ui.label(t.text("webhook-trick-base-session"));
+                        egui::ComboBox::from_id_salt((
+                            "webhook-trick-session",
+                            &trick_state.hook_id,
+                        ))
+                        .selected_text(
+                            trick_state
+                                .session_options
+                                .iter()
+                                .find(|item| item.base_session_key == trick_state.base_session_key)
+                                .map(|item| item.label.as_str())
+                                .unwrap_or(&t.text("webhook-trick-select-session")),
+                        )
+                        .width(420.0)
+                        .show_ui(ui, |ui| {
+                            for option in &trick_state.session_options {
+                                let selected =
+                                    trick_state.base_session_key == option.base_session_key;
+                                if ui.selectable_label(selected, &option.label).clicked() {
+                                    trick_state.base_session_key = option.base_session_key.clone();
                                 }
-                            });
-                            ui.end_row();
-
-                            ui.label("Provider");
-                            egui::ComboBox::from_id_salt((
-                                "webhook-trick-provider",
-                                &trick_state.hook_id,
-                            ))
-                            .selected_text(if trick_state.provider.is_empty() {
-                                "Select a provider"
-                            } else {
-                                trick_state.provider.as_str()
-                            })
-                            .width(320.0)
-                            .show_ui(ui, |ui| {
-                                for provider_id in self.config.model_providers.keys() {
-                                    let selected = trick_state.provider == *provider_id;
-                                    if ui.selectable_label(selected, provider_id).clicked() {
-                                        trick_state.provider = provider_id.clone();
-                                        trick_state.model =
-                                            default_webhook_model(&self.config, provider_id);
-                                    }
-                                }
-                            });
-                            ui.end_row();
-
-                            ui.label("Model");
-                            ui.add_sized(
-                                [420.0, ui.spacing().interact_size.y],
-                                egui::TextEdit::singleline(&mut trick_state.model),
-                            );
-                            ui.end_row();
-                        });
-                    if trick_state.session_options.is_empty() {
-                        ui.colored_label(
-                            ui.visuals().warn_fg_color,
-                            "No delivery-ready base sessions found. Send a fresh message from a supported IM chat first.",
-                        );
-                    }
-                    ui.add_space(8.0);
-                    let generate_enabled = trick_state.error_message.is_none()
-                        && trick_ready_error(&self.config, self.gateway_status.as_ref()).is_none()
-                        && !trick_state.base_session_key.trim().is_empty()
-                        && !trick_state.provider.trim().is_empty();
-                    if ui
-                        .add_enabled(generate_enabled, egui::Button::new("Generate"))
-                        .clicked()
-                    {
-                        trick_state.generated_url = None;
-                        trick_state.error_message = None;
-                        match build_trick_url(
-                            &self.config,
-                            self.gateway_status.as_ref(),
-                            trick_state,
-                        ) {
-                            Ok(url) => trick_state.generated_url = Some(url),
-                            Err(err) => trick_state.error_message = Some(err),
-                        }
-                    }
-                    if let Some(url) = &trick_state.generated_url {
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label("Webhook URL");
-                            if ui.button(format!("{} Copy URL", regular::COPY)).clicked() {
-                                ui.ctx().output_mut(|output| {
-                                    output
-                                        .commands
-                                        .push(egui::OutputCommand::CopyText(url.clone()));
-                                });
-                                notifications.success("Webhook URL copied to clipboard");
                             }
                         });
-                        let mut copy = url.clone();
-                        ui.add(
-                            egui::TextEdit::multiline(&mut copy)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(3)
-                                .interactive(false),
+                        ui.end_row();
+
+                        ui.label(t.text("webhook-trick-provider"));
+                        egui::ComboBox::from_id_salt((
+                            "webhook-trick-provider",
+                            &trick_state.hook_id,
+                        ))
+                        .selected_text(if trick_state.provider.is_empty() {
+                            t.text("webhook-trick-select-provider")
+                        } else {
+                            trick_state.provider.clone()
+                        })
+                        .width(320.0)
+                        .show_ui(ui, |ui| {
+                            for provider_id in self.config.model_providers.keys() {
+                                let selected = trick_state.provider == *provider_id;
+                                if ui.selectable_label(selected, provider_id).clicked() {
+                                    trick_state.provider = provider_id.clone();
+                                    trick_state.model =
+                                        default_webhook_model(&self.config, provider_id);
+                                }
+                            }
+                        });
+                        ui.end_row();
+
+                        ui.label(t.text("webhook-trick-model"));
+                        ui.add_sized(
+                            [420.0, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut trick_state.model),
                         );
+                        ui.end_row();
+                    });
+                if trick_state.session_options.is_empty() {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        t.text("webhook-trick-no-sessions"),
+                    );
+                }
+                ui.add_space(8.0);
+                let generate_enabled = trick_state.error_message.is_none()
+                    && trick_ready_error(&self.config, self.gateway_status.as_ref()).is_none()
+                    && !trick_state.base_session_key.trim().is_empty()
+                    && !trick_state.provider.trim().is_empty();
+                if ui
+                    .add_enabled(
+                        generate_enabled,
+                        egui::Button::new(t.text("webhook-trick-generate")),
+                    )
+                    .clicked()
+                {
+                    trick_state.generated_url = None;
+                    trick_state.error_message = None;
+                    match build_trick_url(&self.config, self.gateway_status.as_ref(), trick_state) {
+                        Ok(url) => trick_state.generated_url = Some(url),
+                        Err(err) => trick_state.error_message = Some(err),
                     }
-                });
+                }
+                if let Some(url) = &trick_state.generated_url {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(t.text("webhook-trick-url-label"));
+                        if ui
+                            .button(t.text_args(
+                                "webhook-trick-copy-url",
+                                HashMap::from([("icon", regular::COPY.to_string())]),
+                            ))
+                            .clicked()
+                        {
+                            ui.ctx().output_mut(|output| {
+                                output
+                                    .commands
+                                    .push(egui::OutputCommand::CopyText(url.clone()));
+                            });
+                            notifications.success(t.text("webhook-trick-url-copied"));
+                        }
+                    });
+                    let mut copy = url.clone();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut copy)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(3)
+                            .interactive(false),
+                    );
+                }
+            });
             if !open {
                 self.trick_prompt = None;
             }
         }
     }
-}
-
-fn render_webhook_config_summary(ui: &mut egui::Ui) {
-    ui.label("Manage webhook endpoints for inbound event and agent prompts.");
 }
 
 fn webhook_summary_state(item: &WebhookListRow) -> Option<WebhookSummaryState> {
@@ -1714,10 +1901,11 @@ fn normalize_filter(raw: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn query_mode_primary_label(kind: WebhookQueryKind) -> &'static str {
+fn query_mode_primary_label(kind: WebhookQueryKind) -> String {
+    let t = Translator::new(LocaleDomain::Gui, current_ui_language());
     match kind {
-        WebhookQueryKind::Events => "Event Type",
-        WebhookQueryKind::Agents => "Hook ID",
+        WebhookQueryKind::Events => t.text("webhook-filter-event-type"),
+        WebhookQueryKind::Agents => t.text("webhook-filter-hook-id"),
     }
 }
 
@@ -1881,18 +2069,19 @@ fn trick_ready_error(
     config: &AppConfig,
     gateway_status: Option<&GatewayStatusSnapshot>,
 ) -> Option<String> {
+    let t = Translator::new(LocaleDomain::Gui, current_ui_language());
     if !config.gateway.webhook.enabled {
-        return Some("Webhook is disabled in config.".to_string());
+        return Some(t.text("webhook-notify-trick-webhook-disabled"));
     }
     if !config.gateway.webhook.agents.enabled {
-        return Some("Agents webhook endpoint is disabled in config.".to_string());
+        return Some(t.text("webhook-notify-trick-agents-disabled"));
     }
     let status = gateway_status?;
     if !status.running {
-        return Some("Gateway is not running.".to_string());
+        return Some(t.text("webhook-notify-trick-gateway-not-running"));
     }
     if status.info.is_none() {
-        return Some("Gateway runtime info is unavailable.".to_string());
+        return Some(t.text("webhook-notify-trick-info-unavailable"));
     }
     None
 }
