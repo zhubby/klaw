@@ -4967,6 +4967,7 @@ dependencies = [
  "egui_commonmark",
  "egui_extras",
  "ehttp 0.5.0",
+ "image",
  "js-sys",
  "klaw-ui-kit",
  "serde",

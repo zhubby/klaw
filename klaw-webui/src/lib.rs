@@ -717,6 +717,88 @@ pub(crate) struct WebArchiveAttachment {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WebArchiveResource {
+    pub(crate) archive_id: String,
+    #[serde(default)]
+    pub(crate) filename: Option<String>,
+    #[serde(default)]
+    pub(crate) mime_type: Option<String>,
+    #[serde(default)]
+    pub(crate) size_bytes: i64,
+    #[serde(default)]
+    pub(crate) kind: Option<String>,
+    #[serde(default)]
+    pub(crate) caption: Option<String>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn archive_resource_card_action(resource: &WebArchiveResource) -> &'static str {
+    if archive_resource_is_previewable(resource) {
+        "Preview"
+    } else {
+        "Download"
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn archive_resource_is_previewable(resource: &WebArchiveResource) -> bool {
+    archive_resource_is_image(resource) || archive_resource_is_text(resource)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn archive_resource_is_image(resource: &WebArchiveResource) -> bool {
+    resource
+        .mime_type
+        .as_deref()
+        .is_some_and(content_type_is_image)
+        || resource
+            .kind
+            .as_deref()
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("image"))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn archive_resource_is_text(resource: &WebArchiveResource) -> bool {
+    resource
+        .mime_type
+        .as_deref()
+        .is_some_and(content_type_is_text)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn content_type_is_image(content_type: &str) -> bool {
+    normalized_content_type(content_type).starts_with("image/")
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) fn content_type_is_text(content_type: &str) -> bool {
+    let normalized = normalized_content_type(content_type);
+    normalized.starts_with("text/")
+        || matches!(
+            normalized.as_str(),
+            "application/json"
+                | "application/javascript"
+                | "application/ecmascript"
+                | "application/xml"
+                | "application/yaml"
+                | "application/x-yaml"
+                | "application/toml"
+                | "application/x-toml"
+        )
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn normalized_content_type(content_type: &str) -> String {
+    content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase()
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PageMode {
     ConnectionGuide,
@@ -959,15 +1041,16 @@ mod tests {
     use super::{
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, ImCardKind, MessageRole, PageMode,
         ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
-        StreamMessageAction, WebArchiveAttachment, apply_slash_completion,
-        attachment_action_in_progress, build_websocket_turn_start_params, can_trigger_file_picker,
-        classify_message_role, classify_stream_message_action, connection_action_label,
-        delete_confirmation_body, derive_page_mode, detect_active_slash_command,
-        has_exact_slash_command_match, next_pending_attachments_after_submit,
-        normalize_gateway_token_input, resolve_assistant_bubble_palette, resolve_gateway_token,
-        resolve_im_card, resolve_im_card_palette, resolve_session_route_inputs,
-        session_card_activity_label, should_activate_session_window,
-        should_cancel_file_picker_selection, should_clear_active_stream_assistant_message,
+        StreamMessageAction, WebArchiveAttachment, WebArchiveResource, apply_slash_completion,
+        archive_resource_card_action, attachment_action_in_progress,
+        build_websocket_turn_start_params, can_trigger_file_picker, classify_message_role,
+        classify_stream_message_action, connection_action_label, delete_confirmation_body,
+        derive_page_mode, detect_active_slash_command, has_exact_slash_command_match,
+        next_pending_attachments_after_submit, normalize_gateway_token_input,
+        resolve_assistant_bubble_palette, resolve_gateway_token, resolve_im_card,
+        resolve_im_card_palette, resolve_session_route_inputs, session_card_activity_label,
+        should_activate_session_window, should_cancel_file_picker_selection,
+        should_clear_active_stream_assistant_message,
         should_prompt_for_gateway_token_before_connect, should_register_non_stream_fade,
         should_show_thinking_placeholder, slash_command_matches,
         sort_session_entries_by_created_at_desc,
@@ -976,6 +1059,72 @@ mod tests {
     #[test]
     fn connected_state_uses_friendly_status_copy() {
         assert_eq!(ConnectionState::Connected.status_text(), "Ready");
+    }
+
+    #[test]
+    fn archive_resource_payload_deserializes_optional_preview_fields() {
+        let resource: WebArchiveResource = serde_json::from_value(json!({
+            "archive_id": "arch-1",
+            "filename": "chart.png",
+            "mime_type": "image/png",
+            "size_bytes": 42,
+            "kind": "image",
+            "caption": "latest chart"
+        }))
+        .expect("archive resource should deserialize");
+
+        assert_eq!(resource.archive_id, "arch-1");
+        assert_eq!(resource.filename.as_deref(), Some("chart.png"));
+        assert_eq!(resource.mime_type.as_deref(), Some("image/png"));
+        assert_eq!(resource.size_bytes, 42);
+        assert_eq!(resource.kind.as_deref(), Some("image"));
+        assert_eq!(resource.caption.as_deref(), Some("latest chart"));
+    }
+
+    #[test]
+    fn archive_resource_card_action_previews_images_and_text() {
+        let image = WebArchiveResource {
+            archive_id: "arch-image".to_string(),
+            filename: Some("chart.png".to_string()),
+            mime_type: Some("image/png".to_string()),
+            size_bytes: 42,
+            kind: None,
+            caption: None,
+        };
+        let json = WebArchiveResource {
+            archive_id: "arch-json".to_string(),
+            filename: Some("payload.json".to_string()),
+            mime_type: Some("application/json".to_string()),
+            size_bytes: 42,
+            kind: None,
+            caption: None,
+        };
+        let text = WebArchiveResource {
+            archive_id: "arch-text".to_string(),
+            filename: Some("notes.txt".to_string()),
+            mime_type: Some("text/plain; charset=utf-8".to_string()),
+            size_bytes: 42,
+            kind: None,
+            caption: None,
+        };
+
+        assert_eq!(archive_resource_card_action(&image), "Preview");
+        assert_eq!(archive_resource_card_action(&json), "Preview");
+        assert_eq!(archive_resource_card_action(&text), "Preview");
+    }
+
+    #[test]
+    fn archive_resource_card_action_downloads_non_previewable_files() {
+        let pdf = WebArchiveResource {
+            archive_id: "arch-pdf".to_string(),
+            filename: Some("report.pdf".to_string()),
+            mime_type: Some("application/pdf".to_string()),
+            size_bytes: 42,
+            kind: None,
+            caption: None,
+        };
+
+        assert_eq!(archive_resource_card_action(&pdf), "Download");
     }
 
     #[test]

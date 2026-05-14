@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-14
+
+### Added
+
+- Gateway WebSocket responses now enrich returned `channel_attachment` outputs with archive-backed `archive.resources` metadata, auto-archiving local path attachments when permitted so web clients can preview generated files through Gateway archive APIs.
+
 ## 2026-05-08
 
 ### Fixed

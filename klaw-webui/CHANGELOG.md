@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-14
+
+### Added
+
+- WebUI chat now renders archive-backed resource cards for returned channel attachments and opens image or file previews in an in-app dialog through Gateway archive downloads.
+
 ## 2026-05-09
 
 ### Added
