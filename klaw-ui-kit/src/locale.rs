@@ -2249,4 +2249,1771 @@ mod tests {
             "⚙ 配置"
         );
     }
+
+    #[test]
+    fn gui_cron_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("cron-form-title-edit"), "Edit Cron Job");
+        assert_eq!(translator.text("cron-form-title-add"), "Add Cron Job");
+        assert_eq!(translator.text("cron-col-id"), "ID");
+        assert_eq!(translator.text("cron-col-name"), "Name");
+        assert_eq!(translator.text("cron-col-kind"), "Kind");
+        assert_eq!(translator.text("cron-col-expr"), "Expr");
+        assert_eq!(translator.text("cron-col-enabled"), "Enabled");
+        assert_eq!(translator.text("cron-col-next-run"), "Next Run At");
+        assert_eq!(translator.text("cron-col-last-run"), "Last Run At");
+        assert_eq!(translator.text("cron-col-updated-at"), "Updated At");
+        assert_eq!(
+            translator.text("cron-no-rows"),
+            "No cron jobs found in database."
+        );
+        assert_eq!(translator.text("cron-delete-title"), "Delete cron job");
+        assert_eq!(translator.text("cron-delete-btn"), "Delete");
+        assert_eq!(translator.text("cron-delete-cancel"), "Cancel");
+        assert_eq!(translator.text("cron-form-id"), "ID");
+        assert_eq!(translator.text("cron-form-name"), "Name");
+        assert_eq!(translator.text("cron-form-schedule-kind"), "Schedule Kind");
+        assert_eq!(translator.text("cron-form-schedule-expr"), "Schedule Expr");
+        assert_eq!(
+            translator.text("cron-form-schedule-expr-hint"),
+            "The schedule expression (e.g. 5m for every, or standard cron format)."
+        );
+        assert_eq!(translator.text("cron-form-timezone"), "Timezone");
+        assert_eq!(translator.text("cron-form-enabled"), "Enabled");
+        assert_eq!(
+            translator.text("cron-form-enabled-hint"),
+            "Enable or disable this cron job."
+        );
+        assert_eq!(translator.text("cron-form-payload"), "Payload JSON");
+        assert_eq!(
+            translator.text("cron-form-payload-hint"),
+            "JSON payload matching the InboundMessage schema."
+        );
+        assert_eq!(translator.text("cron-form-save"), "Save");
+        assert_eq!(translator.text("cron-form-cancel"), "Cancel");
+        assert_eq!(translator.text("cron-runs-refresh"), "Refresh Runs");
+        assert_eq!(translator.text("cron-runs-run-now"), "Run Now");
+        assert_eq!(translator.text("cron-runs-no-rows"), "No task runs found.");
+        assert_eq!(translator.text("cron-runs-col-id"), "Run ID");
+        assert_eq!(translator.text("cron-runs-col-status"), "Status");
+        assert_eq!(translator.text("cron-runs-col-scheduled"), "Scheduled At");
+        assert_eq!(translator.text("cron-runs-col-started"), "Started At");
+        assert_eq!(translator.text("cron-runs-col-finished"), "Finished At");
+        assert_eq!(translator.text("cron-runs-col-error"), "Error");
+        assert_eq!(translator.text("cron-status-pending"), "pending");
+        assert_eq!(translator.text("cron-status-running"), "running");
+        assert_eq!(translator.text("cron-status-success"), "success");
+        assert_eq!(translator.text("cron-status-failed"), "failed");
+        assert_eq!(translator.text("cron-kind-cron"), "cron");
+        assert_eq!(translator.text("cron-kind-every"), "every");
+        assert_eq!(translator.text("cron-enabled-yes"), "yes");
+        assert_eq!(translator.text("cron-enabled-no"), "no");
+        assert_eq!(translator.text("cron-filter-name"), "Name");
+        assert_eq!(translator.text("cron-filter-kind"), "Kind");
+        assert_eq!(translator.text("cron-filter-kind-all"), "All");
+        assert_eq!(translator.text("cron-filter-kind-cron"), "cron");
+        assert_eq!(translator.text("cron-filter-kind-every"), "every");
+        assert_eq!(translator.text("cron-filter-created-from"), "Created From");
+        assert_eq!(translator.text("cron-filter-created-to"), "Created To");
+        assert_eq!(translator.text("cron-filter-page"), "Page");
+        assert_eq!(translator.text("cron-filter-size"), "Size");
+        assert_eq!(translator.text("cron-sort-updated-desc"), "Updated At ↓");
+        assert_eq!(translator.text("cron-sort-created-desc"), "Created At ↓");
+        assert_eq!(translator.text("cron-sort-updated-asc"), "Updated At ↑");
+        assert_eq!(translator.text("cron-sort-created-asc"), "Created At ↑");
+        assert_eq!(
+            translator.text("cron-notify-form-unavailable"),
+            "Cron form is not available"
+        );
+        assert_eq!(
+            translator.text("cron-notify-id-empty"),
+            "Cron ID cannot be empty"
+        );
+        assert_eq!(
+            translator.text("cron-notify-name-empty"),
+            "Cron name cannot be empty"
+        );
+        assert_eq!(
+            translator.text("cron-notify-expr-empty"),
+            "Schedule expression cannot be empty"
+        );
+        assert_eq!(
+            translator.text("cron-notify-payload-empty"),
+            "Payload JSON cannot be empty"
+        );
+        assert_eq!(
+            translator.text("cron-notify-timezone-empty"),
+            "Timezone cannot be empty"
+        );
+        assert_eq!(translator.text("cron-notify-updated"), "Cron job updated");
+        assert_eq!(translator.text("cron-notify-created"), "Cron job created");
+        assert_eq!(translator.text("cron-notify-enabled"), "Cron enabled");
+        assert_eq!(translator.text("cron-notify-disabled"), "Cron disabled");
+        assert_eq!(translator.text("cron-notify-deleted"), "Cron job deleted");
+        assert_eq!(
+            translator.text("cron-notify-already-running"),
+            "A cron run is already in progress"
+        );
+    }
+
+    #[test]
+    fn gui_cron_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("cron-form-title-edit"), "编辑定时任务");
+        assert_eq!(translator.text("cron-form-title-add"), "添加定时任务");
+        assert_eq!(translator.text("cron-col-id"), "ID");
+        assert_eq!(translator.text("cron-col-name"), "名称");
+        assert_eq!(translator.text("cron-col-kind"), "类型");
+        assert_eq!(translator.text("cron-col-expr"), "表达式");
+        assert_eq!(translator.text("cron-col-enabled"), "启用");
+        assert_eq!(translator.text("cron-col-next-run"), "下次运行时间");
+        assert_eq!(translator.text("cron-col-last-run"), "上次运行时间");
+        assert_eq!(translator.text("cron-col-updated-at"), "更新时间");
+        assert_eq!(translator.text("cron-no-rows"), "数据库中未找到定时任务。");
+        assert_eq!(translator.text("cron-delete-title"), "删除定时任务");
+        assert_eq!(translator.text("cron-delete-btn"), "删除");
+        assert_eq!(translator.text("cron-delete-cancel"), "取消");
+        assert_eq!(translator.text("cron-form-id"), "ID");
+        assert_eq!(translator.text("cron-form-name"), "名称");
+        assert_eq!(translator.text("cron-form-schedule-kind"), "调度类型");
+        assert_eq!(translator.text("cron-form-schedule-expr"), "调度表达式");
+        assert_eq!(
+            translator.text("cron-form-schedule-expr-hint"),
+            "调度表达式（如 5m 表示 every 间隔，或标准 cron 格式）。"
+        );
+        assert_eq!(translator.text("cron-form-timezone"), "时区");
+        assert_eq!(translator.text("cron-form-enabled"), "启用");
+        assert_eq!(
+            translator.text("cron-form-enabled-hint"),
+            "启用或禁用此定时任务。"
+        );
+        assert_eq!(translator.text("cron-form-payload"), "Payload JSON");
+        assert_eq!(
+            translator.text("cron-form-payload-hint"),
+            "符合 InboundMessage 格式的 JSON 载荷。"
+        );
+        assert_eq!(translator.text("cron-form-save"), "保存");
+        assert_eq!(translator.text("cron-form-cancel"), "取消");
+        assert_eq!(translator.text("cron-runs-refresh"), "刷新运行记录");
+        assert_eq!(translator.text("cron-runs-run-now"), "立即运行");
+        assert_eq!(translator.text("cron-runs-no-rows"), "未找到任务运行记录。");
+        assert_eq!(translator.text("cron-runs-col-id"), "运行 ID");
+        assert_eq!(translator.text("cron-runs-col-status"), "状态");
+        assert_eq!(translator.text("cron-runs-col-scheduled"), "计划时间");
+        assert_eq!(translator.text("cron-runs-col-started"), "开始时间");
+        assert_eq!(translator.text("cron-runs-col-finished"), "完成时间");
+        assert_eq!(translator.text("cron-runs-col-error"), "错误");
+        assert_eq!(translator.text("cron-status-pending"), "待执行");
+        assert_eq!(translator.text("cron-status-running"), "运行中");
+        assert_eq!(translator.text("cron-status-success"), "成功");
+        assert_eq!(translator.text("cron-status-failed"), "失败");
+        assert_eq!(translator.text("cron-kind-cron"), "cron");
+        assert_eq!(translator.text("cron-kind-every"), "every");
+        assert_eq!(translator.text("cron-enabled-yes"), "是");
+        assert_eq!(translator.text("cron-enabled-no"), "否");
+        assert_eq!(translator.text("cron-filter-name"), "名称");
+        assert_eq!(translator.text("cron-filter-kind"), "类型");
+        assert_eq!(translator.text("cron-filter-kind-all"), "全部");
+        assert_eq!(translator.text("cron-filter-kind-cron"), "cron");
+        assert_eq!(translator.text("cron-filter-kind-every"), "every");
+        assert_eq!(translator.text("cron-filter-created-from"), "创建起始");
+        assert_eq!(translator.text("cron-filter-created-to"), "创建截止");
+        assert_eq!(translator.text("cron-filter-page"), "页码");
+        assert_eq!(translator.text("cron-filter-size"), "每页数量");
+        assert_eq!(translator.text("cron-sort-updated-desc"), "更新时间 ↓");
+        assert_eq!(translator.text("cron-sort-created-desc"), "创建时间 ↓");
+        assert_eq!(translator.text("cron-sort-updated-asc"), "更新时间 ↑");
+        assert_eq!(translator.text("cron-sort-created-asc"), "创建时间 ↑");
+        assert_eq!(
+            translator.text("cron-notify-form-unavailable"),
+            "定时任务表单不可用"
+        );
+        assert_eq!(
+            translator.text("cron-notify-id-empty"),
+            "定时任务 ID 不能为空"
+        );
+        assert_eq!(
+            translator.text("cron-notify-name-empty"),
+            "定时任务名称不能为空"
+        );
+        assert_eq!(
+            translator.text("cron-notify-expr-empty"),
+            "调度表达式不能为空"
+        );
+        assert_eq!(
+            translator.text("cron-notify-payload-empty"),
+            "Payload JSON 不能为空"
+        );
+        assert_eq!(
+            translator.text("cron-notify-timezone-empty"),
+            "时区不能为空"
+        );
+        assert_eq!(translator.text("cron-notify-updated"), "定时任务已更新");
+        assert_eq!(translator.text("cron-notify-created"), "定时任务已创建");
+        assert_eq!(translator.text("cron-notify-enabled"), "定时任务已启用");
+        assert_eq!(translator.text("cron-notify-disabled"), "定时任务已禁用");
+        assert_eq!(translator.text("cron-notify-deleted"), "定时任务已删除");
+        assert_eq!(
+            translator.text("cron-notify-already-running"),
+            "定时任务运行已在进行中"
+        );
+    }
+
+    #[test]
+    fn gui_cron_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "cron-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args("cron-btn-add", HashMap::from([("icon", "+".to_string())])),
+            "+ Add Cron Job"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-label-total",
+                HashMap::from([("count", "3".to_string())])
+            ),
+            "Total: 3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-label-running",
+                HashMap::from([("id", "job-1".to_string())])
+            ),
+            "Running: job-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-delete-prompt",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "Delete cron job 'abc-123'?"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-runs-title",
+                HashMap::from([("id", "job-1".to_string())])
+            ),
+            "Task Runs: job-1"
+        );
+        assert_eq!(
+            translator.text_args("cron-ctx-runs", HashMap::from([("icon", "📋".to_string())])),
+            "📋 Runs"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-run-now",
+                HashMap::from([("icon", "▶".to_string())])
+            ),
+            "▶ Run Now"
+        );
+        assert_eq!(
+            translator.text_args("cron-ctx-edit", HashMap::from([("icon", "✏".to_string())])),
+            "✏ Edit"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-disable",
+                HashMap::from([("icon", "⚡".to_string())])
+            ),
+            "⚡ Disable"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-enable",
+                HashMap::from([("icon", "⚡".to_string())])
+            ),
+            "⚡ Enable"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-delete",
+                HashMap::from([("icon", "🗑".to_string())])
+            ),
+            "🗑 Delete"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 Copy ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-executed",
+                HashMap::from([("id", "msg-99".to_string())])
+            ),
+            "Cron executed: msg-99"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-run-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to run cron now: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-list-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to list cron jobs: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-runs-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to load task runs: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-payload-invalid",
+                HashMap::from([("error", "bad json".to_string())])
+            ),
+            "Payload JSON is invalid: bad json"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-payload-invalid-schema",
+                HashMap::from([("error", "missing field".to_string())])
+            ),
+            "Payload JSON must be a valid InboundMessage-like object: missing field"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-schedule-invalid",
+                HashMap::from([("error", "bad expr".to_string())])
+            ),
+            "Invalid schedule: bad expr"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-update-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to update cron job: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-create-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to create cron job: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-set-enabled-failed",
+                HashMap::from([("error", "reject".to_string())])
+            ),
+            "Failed to set enabled: reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-delete-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to delete cron job: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-running-bg",
+                HashMap::from([("id", "job-42".to_string())])
+            ),
+            "Running cron 'job-42' in background..."
+        );
+    }
+
+    #[test]
+    fn gui_cron_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "cron-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args("cron-btn-add", HashMap::from([("icon", "+".to_string())])),
+            "+ 添加定时任务"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-label-total",
+                HashMap::from([("count", "3".to_string())])
+            ),
+            "总计: 3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-label-running",
+                HashMap::from([("id", "job-1".to_string())])
+            ),
+            "运行中: job-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-delete-prompt",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "确定删除定时任务 'abc-123' 吗？"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-runs-title",
+                HashMap::from([("id", "job-1".to_string())])
+            ),
+            "任务运行记录: job-1"
+        );
+        assert_eq!(
+            translator.text_args("cron-ctx-runs", HashMap::from([("icon", "📋".to_string())])),
+            "📋 运行记录"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-run-now",
+                HashMap::from([("icon", "▶".to_string())])
+            ),
+            "▶ 立即运行"
+        );
+        assert_eq!(
+            translator.text_args("cron-ctx-edit", HashMap::from([("icon", "✏".to_string())])),
+            "✏ 编辑"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-disable",
+                HashMap::from([("icon", "⚡".to_string())])
+            ),
+            "⚡ 禁用"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-enable",
+                HashMap::from([("icon", "⚡".to_string())])
+            ),
+            "⚡ 启用"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-delete",
+                HashMap::from([("icon", "🗑".to_string())])
+            ),
+            "🗑 删除"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 复制 ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-executed",
+                HashMap::from([("id", "msg-99".to_string())])
+            ),
+            "定时任务已执行: msg-99"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-run-failed",
+                HashMap::from([("error", "超时".to_string())])
+            ),
+            "立即运行定时任务失败: 超时"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-list-failed",
+                HashMap::from([("error", "超时".to_string())])
+            ),
+            "加载定时任务列表失败: 超时"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-runs-failed",
+                HashMap::from([("error", "超时".to_string())])
+            ),
+            "加载任务运行记录失败: 超时"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-payload-invalid",
+                HashMap::from([("error", "无效".to_string())])
+            ),
+            "Payload JSON 格式无效: 无效"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-payload-invalid-schema",
+                HashMap::from([("error", "缺少字段".to_string())])
+            ),
+            "Payload JSON 必须是有效的 InboundMessage 对象: 缺少字段"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-schedule-invalid",
+                HashMap::from([("error", "无效".to_string())])
+            ),
+            "调度表达式无效: 无效"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-update-failed",
+                HashMap::from([("error", "拒绝".to_string())])
+            ),
+            "更新定时任务失败: 拒绝"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-create-failed",
+                HashMap::from([("error", "拒绝".to_string())])
+            ),
+            "创建定时任务失败: 拒绝"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-set-enabled-failed",
+                HashMap::from([("error", "拒绝".to_string())])
+            ),
+            "设置启用状态失败: 拒绝"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-delete-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "删除定时任务失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "cron-notify-running-bg",
+                HashMap::from([("id", "job-42".to_string())])
+            ),
+            "正在后台运行定时任务 'job-42'..."
+        );
+    }
+
+    #[test]
+    fn gui_approval_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("approval-filter-session-key"),
+            "Session Key"
+        );
+        assert_eq!(translator.text("approval-filter-session-key-all"), "All");
+        assert_eq!(translator.text("approval-filter-tool-name"), "Tool Name");
+        assert_eq!(translator.text("approval-filter-tool-name-all"), "All");
+        assert_eq!(translator.text("approval-filter-status"), "Status");
+        assert_eq!(translator.text("approval-filter-status-all"), "All");
+        assert_eq!(translator.text("approval-filter-preview"), "Preview");
+        assert_eq!(translator.text("approval-filter-page"), "Page");
+        assert_eq!(translator.text("approval-filter-size"), "Size");
+        assert_eq!(translator.text("approval-col-id"), "ID");
+        assert_eq!(translator.text("approval-col-session"), "Session");
+        assert_eq!(translator.text("approval-col-tool"), "Tool");
+        assert_eq!(translator.text("approval-col-risk"), "Risk");
+        assert_eq!(translator.text("approval-col-status"), "Status");
+        assert_eq!(translator.text("approval-col-requested-by"), "Requested By");
+        assert_eq!(translator.text("approval-col-approved-by"), "Approved By");
+        assert_eq!(translator.text("approval-col-expires-at"), "Expires At");
+        assert_eq!(translator.text("approval-col-preview"), "Preview");
+        assert_eq!(translator.text("approval-status-pending"), "pending");
+        assert_eq!(translator.text("approval-status-approved"), "approved");
+        assert_eq!(translator.text("approval-status-rejected"), "rejected");
+        assert_eq!(translator.text("approval-status-expired"), "expired");
+        assert_eq!(translator.text("approval-status-consumed"), "consumed");
+        assert_eq!(translator.text("approval-no-rows"), "No approvals found.");
+        assert_eq!(translator.text("approval-detail-id"), "ID:");
+        assert_eq!(translator.text("approval-detail-session"), "Session:");
+        assert_eq!(translator.text("approval-detail-tool"), "Tool:");
+        assert_eq!(translator.text("approval-detail-risk-level"), "Risk Level:");
+        assert_eq!(translator.text("approval-detail-status"), "Status:");
+        assert_eq!(
+            translator.text("approval-detail-requested-by"),
+            "Requested By:"
+        );
+        assert_eq!(
+            translator.text("approval-detail-approved-by"),
+            "Approved By:"
+        );
+        assert_eq!(
+            translator.text("approval-detail-justification"),
+            "Justification:"
+        );
+        assert_eq!(translator.text("approval-detail-expires-at"), "Expires At:");
+        assert_eq!(translator.text("approval-detail-created-at"), "Created At:");
+        assert_eq!(translator.text("approval-detail-updated-at"), "Updated At:");
+        assert_eq!(
+            translator.text("approval-detail-consumed-at"),
+            "Consumed At:"
+        );
+        assert_eq!(
+            translator.text("approval-detail-command-preview"),
+            "Command Preview:"
+        );
+        assert_eq!(
+            translator.text("approval-detail-command-text"),
+            "Command Text:"
+        );
+        assert_eq!(translator.text("approval-detail-na"), "-");
+    }
+
+    #[test]
+    fn gui_approval_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("approval-filter-session-key"), "会话密钥");
+        assert_eq!(translator.text("approval-filter-session-key-all"), "全部");
+        assert_eq!(translator.text("approval-filter-tool-name"), "工具名称");
+        assert_eq!(translator.text("approval-filter-tool-name-all"), "全部");
+        assert_eq!(translator.text("approval-filter-status"), "状态");
+        assert_eq!(translator.text("approval-filter-status-all"), "全部");
+        assert_eq!(translator.text("approval-filter-preview"), "预览");
+        assert_eq!(translator.text("approval-filter-page"), "页码");
+        assert_eq!(translator.text("approval-filter-size"), "每页数量");
+        assert_eq!(translator.text("approval-col-id"), "ID");
+        assert_eq!(translator.text("approval-col-session"), "会话");
+        assert_eq!(translator.text("approval-col-tool"), "工具");
+        assert_eq!(translator.text("approval-col-risk"), "风险");
+        assert_eq!(translator.text("approval-col-status"), "状态");
+        assert_eq!(translator.text("approval-col-requested-by"), "请求人");
+        assert_eq!(translator.text("approval-col-approved-by"), "审批人");
+        assert_eq!(translator.text("approval-col-expires-at"), "过期时间");
+        assert_eq!(translator.text("approval-col-preview"), "预览");
+        assert_eq!(translator.text("approval-status-pending"), "待审批");
+        assert_eq!(translator.text("approval-status-approved"), "已批准");
+        assert_eq!(translator.text("approval-status-rejected"), "已拒绝");
+        assert_eq!(translator.text("approval-status-expired"), "已过期");
+        assert_eq!(translator.text("approval-status-consumed"), "已消费");
+        assert_eq!(translator.text("approval-no-rows"), "未找到审批记录。");
+        assert_eq!(translator.text("approval-detail-id"), "ID:");
+        assert_eq!(translator.text("approval-detail-session"), "会话:");
+        assert_eq!(translator.text("approval-detail-tool"), "工具:");
+        assert_eq!(translator.text("approval-detail-risk-level"), "风险等级:");
+        assert_eq!(translator.text("approval-detail-status"), "状态:");
+        assert_eq!(translator.text("approval-detail-requested-by"), "请求人:");
+        assert_eq!(translator.text("approval-detail-approved-by"), "审批人:");
+        assert_eq!(translator.text("approval-detail-justification"), "理由:");
+        assert_eq!(translator.text("approval-detail-expires-at"), "过期时间:");
+        assert_eq!(translator.text("approval-detail-created-at"), "创建时间:");
+        assert_eq!(translator.text("approval-detail-updated-at"), "更新时间:");
+        assert_eq!(translator.text("approval-detail-consumed-at"), "消费时间:");
+        assert_eq!(
+            translator.text("approval-detail-command-preview"),
+            "命令预览:"
+        );
+        assert_eq!(translator.text("approval-detail-command-text"), "命令文本:");
+        assert_eq!(translator.text("approval-detail-na"), "-");
+    }
+
+    #[test]
+    fn gui_approval_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "approval-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-label-count",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "Approvals: 5"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-view",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 View"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-approve",
+                HashMap::from([("icon", "✅".to_string())])
+            ),
+            "✅ Approve"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-reject",
+                HashMap::from([("icon", "❌".to_string())])
+            ),
+            "❌ Reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-consume",
+                HashMap::from([("icon", "🗑".to_string())])
+            ),
+            "🗑 Consume"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 Copy ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-detail-title",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "Approval: abc-123"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-filters-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to load filters: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-list-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to load approvals: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-resolved",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "Approval abc-123 updated"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-resolve-failed",
+                HashMap::from([("error", "reject".to_string())])
+            ),
+            "Failed to update approval: reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-consumed",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "Approval abc-123 consumed"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-consume-failed",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "Approval abc-123 was not consumed"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-consume-op-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to consume approval: io"
+        );
+    }
+
+    #[test]
+    fn gui_approval_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "approval-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-label-count",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "审批: 5"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-view",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 查看"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-approve",
+                HashMap::from([("icon", "✅".to_string())])
+            ),
+            "✅ 批准"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-reject",
+                HashMap::from([("icon", "❌".to_string())])
+            ),
+            "❌ 拒绝"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-consume",
+                HashMap::from([("icon", "🗑".to_string())])
+            ),
+            "🗑 消费"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 复制 ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-detail-title",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "审批: abc-123"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-filters-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "加载筛选器失败: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-list-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "加载审批列表失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-resolved",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "审批 abc-123 已更新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-resolve-failed",
+                HashMap::from([("error", "reject".to_string())])
+            ),
+            "更新审批失败: reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-consumed",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "审批 abc-123 已消费"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-consume-failed",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "审批 abc-123 未被消费"
+        );
+        assert_eq!(
+            translator.text_args(
+                "approval-notify-consume-op-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "消费审批失败: io"
+        );
+    }
+
+    #[test]
+    fn gui_heartbeat_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("hb-filter-start-date"), "Start Date");
+        assert_eq!(translator.text("hb-filter-end-date"), "End Date");
+        assert_eq!(translator.text("hb-filter-page"), "Page");
+        assert_eq!(translator.text("hb-filter-size"), "Size");
+        assert_eq!(translator.text("hb-col-id"), "ID");
+        assert_eq!(translator.text("hb-col-session"), "Session");
+        assert_eq!(translator.text("hb-col-channel"), "Channel");
+        assert_eq!(translator.text("hb-col-enabled"), "Enabled");
+        assert_eq!(translator.text("hb-col-every"), "Every");
+        assert_eq!(translator.text("hb-col-recent-msgs"), "Recent Msgs");
+        assert_eq!(translator.text("hb-col-next-run"), "Next Run At");
+        assert_eq!(translator.text("hb-col-last-run"), "Last Run At");
+        assert_eq!(translator.text("hb-col-updated-at"), "Updated At");
+        assert_eq!(translator.text("hb-enabled-yes"), "yes");
+        assert_eq!(translator.text("hb-enabled-no"), "no");
+        assert_eq!(
+            translator.text("hb-no-rows"),
+            "No heartbeat jobs found in database."
+        );
+        assert_eq!(translator.text("hb-delete-title"), "Delete heartbeat job");
+        assert_eq!(translator.text("hb-delete-btn"), "Delete");
+        assert_eq!(translator.text("hb-delete-cancel"), "Cancel");
+        assert_eq!(translator.text("hb-form-title-edit"), "Edit Heartbeat Job");
+        assert_eq!(translator.text("hb-form-title-add"), "Add Heartbeat Job");
+        assert_eq!(translator.text("hb-form-id"), "ID");
+        assert_eq!(translator.text("hb-form-session-key"), "Session Key");
+        assert_eq!(
+            translator.text("hb-form-session-select"),
+            "Select a session"
+        );
+        assert_eq!(translator.text("hb-form-channel"), "Channel");
+        assert_eq!(translator.text("hb-form-chat-id"), "Chat ID");
+        assert_eq!(translator.text("hb-form-enabled"), "Enabled");
+        assert_eq!(
+            translator.text("hb-form-enabled-hint"),
+            "Enable or disable this heartbeat job."
+        );
+        assert_eq!(translator.text("hb-form-every"), "Every");
+        assert_eq!(
+            translator.text("hb-form-every-hint"),
+            "Interval for heartbeat execution (e.g. 30m, 1h, 2h)."
+        );
+        assert_eq!(translator.text("hb-form-timezone"), "Timezone");
+        assert_eq!(
+            translator.text("hb-form-silent-ack-token"),
+            "Silent Ack Token"
+        );
+        assert_eq!(
+            translator.text("hb-form-silent-ack-token-hint"),
+            "Token used to identify silent acknowledgments."
+        );
+        assert_eq!(
+            translator.text("hb-form-recent-messages"),
+            "Recent Messages"
+        );
+        assert_eq!(
+            translator.text("hb-form-recent-messages-hint"),
+            "Number of recent messages to include in heartbeat context."
+        );
+        assert_eq!(
+            translator.text("hb-form-no-sessions"),
+            "No indexed sessions found. Heartbeat must target an existing session."
+        );
+        assert_eq!(translator.text("hb-form-save"), "Save");
+        assert_eq!(translator.text("hb-form-cancel"), "Cancel");
+        assert_eq!(translator.text("hb-runs-refresh"), "Refresh Runs");
+        assert_eq!(translator.text("hb-runs-run-now"), "Run Now");
+        assert_eq!(
+            translator.text("hb-runs-no-rows"),
+            "No heartbeat runs found."
+        );
+        assert_eq!(translator.text("hb-runs-col-id"), "Run ID");
+        assert_eq!(translator.text("hb-runs-col-status"), "Status");
+        assert_eq!(translator.text("hb-runs-col-scheduled"), "Scheduled At");
+        assert_eq!(translator.text("hb-runs-col-started"), "Started At");
+        assert_eq!(translator.text("hb-runs-col-finished"), "Finished At");
+        assert_eq!(translator.text("hb-runs-col-error"), "Error");
+        assert_eq!(translator.text("hb-status-pending"), "pending");
+        assert_eq!(translator.text("hb-status-running"), "running");
+        assert_eq!(translator.text("hb-status-success"), "success");
+        assert_eq!(translator.text("hb-status-failed"), "failed");
+        assert_eq!(translator.text("hb-config-title"), "Heartbeat Config");
+        assert_eq!(translator.text("hb-config-form-defaults"), "Form Defaults");
+        assert_eq!(
+            translator.text("hb-config-enabled-default"),
+            "Enabled by default"
+        );
+        assert_eq!(
+            translator.text("hb-config-enabled-default-hint"),
+            "New heartbeat jobs will be enabled by default."
+        );
+        assert_eq!(
+            translator.text("hb-config-recent-messages"),
+            "Recent messages"
+        );
+        assert_eq!(
+            translator.text("hb-config-info"),
+            "Only the default enabled state and recent-message window are kept locally in the GUI.\\nOther heartbeat fields use built-in defaults."
+        );
+        assert_eq!(translator.text("hb-label-running"), "Running heartbeat...");
+        assert_eq!(
+            translator.text("hb-notify-form-unavailable"),
+            "Heartbeat form is not available"
+        );
+        assert_eq!(
+            translator.text("hb-notify-id-empty"),
+            "Heartbeat ID cannot be empty"
+        );
+        assert_eq!(
+            translator.text("hb-notify-session-empty"),
+            "Session key cannot be empty"
+        );
+        assert_eq!(
+            translator.text("hb-notify-channel-empty"),
+            "Channel cannot be empty"
+        );
+        assert_eq!(
+            translator.text("hb-notify-chat-id-empty"),
+            "Chat ID cannot be empty"
+        );
+        assert_eq!(
+            translator.text("hb-notify-every-empty"),
+            "Every cannot be empty"
+        );
+        assert_eq!(
+            translator.text("hb-notify-ack-token-empty"),
+            "Silent Ack Token cannot be empty"
+        );
+        assert_eq!(
+            translator.text("hb-notify-recent-msgs-zero"),
+            "Recent Messages must be greater than zero"
+        );
+        assert_eq!(
+            translator.text("hb-notify-timezone-empty"),
+            "Timezone cannot be empty"
+        );
+        assert_eq!(
+            translator.text("hb-notify-updated"),
+            "Heartbeat job updated"
+        );
+        assert_eq!(
+            translator.text("hb-notify-created"),
+            "Heartbeat job created"
+        );
+        assert_eq!(translator.text("hb-notify-enabled"), "Heartbeat enabled");
+        assert_eq!(translator.text("hb-notify-disabled"), "Heartbeat disabled");
+        assert_eq!(
+            translator.text("hb-notify-deleted"),
+            "Heartbeat job deleted"
+        );
+        assert_eq!(
+            translator.text("hb-notify-already-running"),
+            "A heartbeat run is already in progress"
+        );
+    }
+
+    #[test]
+    fn gui_heartbeat_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("hb-filter-start-date"), "开始日期");
+        assert_eq!(translator.text("hb-filter-end-date"), "结束日期");
+        assert_eq!(translator.text("hb-filter-page"), "页码");
+        assert_eq!(translator.text("hb-filter-size"), "每页数量");
+        assert_eq!(translator.text("hb-col-id"), "ID");
+        assert_eq!(translator.text("hb-col-session"), "会话");
+        assert_eq!(translator.text("hb-col-channel"), "通道");
+        assert_eq!(translator.text("hb-col-enabled"), "启用");
+        assert_eq!(translator.text("hb-col-every"), "间隔");
+        assert_eq!(translator.text("hb-col-recent-msgs"), "近期消息");
+        assert_eq!(translator.text("hb-col-next-run"), "下次运行时间");
+        assert_eq!(translator.text("hb-col-last-run"), "上次运行时间");
+        assert_eq!(translator.text("hb-col-updated-at"), "更新时间");
+        assert_eq!(translator.text("hb-enabled-yes"), "是");
+        assert_eq!(translator.text("hb-enabled-no"), "否");
+        assert_eq!(translator.text("hb-no-rows"), "数据库中未找到心跳任务。");
+        assert_eq!(translator.text("hb-delete-title"), "删除心跳任务");
+        assert_eq!(translator.text("hb-delete-btn"), "删除");
+        assert_eq!(translator.text("hb-delete-cancel"), "取消");
+        assert_eq!(translator.text("hb-form-title-edit"), "编辑心跳任务");
+        assert_eq!(translator.text("hb-form-title-add"), "添加心跳任务");
+        assert_eq!(translator.text("hb-form-id"), "ID");
+        assert_eq!(translator.text("hb-form-session-key"), "会话密钥");
+        assert_eq!(translator.text("hb-form-session-select"), "选择一个会话");
+        assert_eq!(translator.text("hb-form-channel"), "通道");
+        assert_eq!(translator.text("hb-form-chat-id"), "聊天 ID");
+        assert_eq!(translator.text("hb-form-enabled"), "启用");
+        assert_eq!(
+            translator.text("hb-form-enabled-hint"),
+            "启用或禁用此心跳任务。"
+        );
+        assert_eq!(translator.text("hb-form-every"), "间隔");
+        assert_eq!(
+            translator.text("hb-form-every-hint"),
+            "心跳执行的间隔时间（例如 30m、1h、2h）。"
+        );
+        assert_eq!(translator.text("hb-form-timezone"), "时区");
+        assert_eq!(translator.text("hb-form-silent-ack-token"), "静默确认令牌");
+        assert_eq!(
+            translator.text("hb-form-silent-ack-token-hint"),
+            "用于识别静默确认的令牌。"
+        );
+        assert_eq!(translator.text("hb-form-recent-messages"), "近期消息数");
+        assert_eq!(
+            translator.text("hb-form-recent-messages-hint"),
+            "心跳上下文中包含的近期消息数量。"
+        );
+        assert_eq!(
+            translator.text("hb-form-no-sessions"),
+            "未找到已索引的会话。心跳任务必须指向一个现有会话。"
+        );
+        assert_eq!(translator.text("hb-form-save"), "保存");
+        assert_eq!(translator.text("hb-form-cancel"), "取消");
+        assert_eq!(translator.text("hb-runs-refresh"), "刷新运行记录");
+        assert_eq!(translator.text("hb-runs-run-now"), "立即运行");
+        assert_eq!(translator.text("hb-runs-no-rows"), "未找到心跳运行记录。");
+        assert_eq!(translator.text("hb-runs-col-id"), "运行 ID");
+        assert_eq!(translator.text("hb-runs-col-status"), "状态");
+        assert_eq!(translator.text("hb-runs-col-scheduled"), "计划时间");
+        assert_eq!(translator.text("hb-runs-col-started"), "开始时间");
+        assert_eq!(translator.text("hb-runs-col-finished"), "完成时间");
+        assert_eq!(translator.text("hb-runs-col-error"), "错误");
+        assert_eq!(translator.text("hb-status-pending"), "待执行");
+        assert_eq!(translator.text("hb-status-running"), "运行中");
+        assert_eq!(translator.text("hb-status-success"), "成功");
+        assert_eq!(translator.text("hb-status-failed"), "失败");
+        assert_eq!(translator.text("hb-config-title"), "心跳配置");
+        assert_eq!(translator.text("hb-config-form-defaults"), "表单默认值");
+        assert_eq!(translator.text("hb-config-enabled-default"), "默认启用");
+        assert_eq!(
+            translator.text("hb-config-enabled-default-hint"),
+            "新建的心跳任务将默认启用。"
+        );
+        assert_eq!(translator.text("hb-config-recent-messages"), "近期消息数");
+        assert_eq!(
+            translator.text("hb-config-info"),
+            "仅默认启用状态和近期消息窗口保存在 GUI 本地。\\n其他心跳字段使用内置默认值。"
+        );
+        assert_eq!(translator.text("hb-label-running"), "正在运行心跳...");
+        assert_eq!(
+            translator.text("hb-notify-form-unavailable"),
+            "心跳表单不可用"
+        );
+        assert_eq!(translator.text("hb-notify-id-empty"), "心跳 ID 不能为空");
+        assert_eq!(
+            translator.text("hb-notify-session-empty"),
+            "会话密钥不能为空"
+        );
+        assert_eq!(translator.text("hb-notify-channel-empty"), "通道不能为空");
+        assert_eq!(
+            translator.text("hb-notify-chat-id-empty"),
+            "聊天 ID 不能为空"
+        );
+        assert_eq!(translator.text("hb-notify-every-empty"), "间隔不能为空");
+        assert_eq!(
+            translator.text("hb-notify-ack-token-empty"),
+            "静默确认令牌不能为空"
+        );
+        assert_eq!(
+            translator.text("hb-notify-recent-msgs-zero"),
+            "近期消息数必须大于零"
+        );
+        assert_eq!(translator.text("hb-notify-timezone-empty"), "时区不能为空");
+        assert_eq!(translator.text("hb-notify-updated"), "心跳任务已更新");
+        assert_eq!(translator.text("hb-notify-created"), "心跳任务已创建");
+        assert_eq!(translator.text("hb-notify-enabled"), "心跳已启用");
+        assert_eq!(translator.text("hb-notify-disabled"), "心跳已禁用");
+        assert_eq!(translator.text("hb-notify-deleted"), "心跳任务已删除");
+        assert_eq!(
+            translator.text("hb-notify-already-running"),
+            "心跳运行已在进行中"
+        );
+    }
+
+    #[test]
+    fn gui_heartbeat_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args("hb-btn-refresh", HashMap::from([("icon", "⟳".to_string())])),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args("hb-btn-add", HashMap::from([("icon", "+".to_string())])),
+            "+ Add Heartbeat Job"
+        );
+        assert_eq!(
+            translator.text_args("hb-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ Config"
+        );
+        assert_eq!(
+            translator.text_args("hb-label-jobs", HashMap::from([("count", "5".to_string())])),
+            "Jobs: 5"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-runs", HashMap::from([("icon", "📋".to_string())])),
+            "📋 Runs"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-run-now", HashMap::from([("icon", "▶".to_string())])),
+            "▶ Run Now"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-edit", HashMap::from([("icon", "✏".to_string())])),
+            "✏ Edit"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-ctx-disable",
+                HashMap::from([("icon", "⚡".to_string())])
+            ),
+            "⚡ Disable"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-enable", HashMap::from([("icon", "⚡".to_string())])),
+            "⚡ Enable"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-delete", HashMap::from([("icon", "🗑".to_string())])),
+            "🗑 Delete"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 Copy ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-delete-prompt",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "Delete heartbeat job 'abc-123'?"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-runs-title",
+                HashMap::from([("id", "job-1".to_string())])
+            ),
+            "Heartbeat Runs: job-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-sessions-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to list sessions: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-jobs-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to list heartbeat jobs: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-runs-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to load heartbeat runs: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-update-failed",
+                HashMap::from([("error", "reject".to_string())])
+            ),
+            "Failed to update heartbeat job: reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-create-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to create heartbeat job: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-set-enabled-failed",
+                HashMap::from([("error", "reject".to_string())])
+            ),
+            "Failed to set enabled: reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-delete-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to delete heartbeat job: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-running-bg",
+                HashMap::from([("id", "job-42".to_string())])
+            ),
+            "Running heartbeat 'job-42' in background..."
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-executed",
+                HashMap::from([("id", "msg-99".to_string())])
+            ),
+            "Heartbeat executed: msg-99"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-run-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to run heartbeat now: timeout"
+        );
+    }
+
+    #[test]
+    fn gui_heartbeat_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args("hb-btn-refresh", HashMap::from([("icon", "⟳".to_string())])),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args("hb-btn-add", HashMap::from([("icon", "+".to_string())])),
+            "+ 添加心跳任务"
+        );
+        assert_eq!(
+            translator.text_args("hb-btn-config", HashMap::from([("icon", "⚙".to_string())])),
+            "⚙ 配置"
+        );
+        assert_eq!(
+            translator.text_args("hb-label-jobs", HashMap::from([("count", "5".to_string())])),
+            "任务: 5"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-runs", HashMap::from([("icon", "📋".to_string())])),
+            "📋 运行记录"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-run-now", HashMap::from([("icon", "▶".to_string())])),
+            "▶ 立即运行"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-edit", HashMap::from([("icon", "✏".to_string())])),
+            "✏ 编辑"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-ctx-disable",
+                HashMap::from([("icon", "⚡".to_string())])
+            ),
+            "⚡ 禁用"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-enable", HashMap::from([("icon", "⚡".to_string())])),
+            "⚡ 启用"
+        );
+        assert_eq!(
+            translator.text_args("hb-ctx-delete", HashMap::from([("icon", "🗑".to_string())])),
+            "🗑 删除"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-ctx-copy-id",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 复制 ID"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-delete-prompt",
+                HashMap::from([("id", "abc-123".to_string())])
+            ),
+            "确定删除心跳任务 'abc-123' 吗？"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-runs-title",
+                HashMap::from([("id", "job-1".to_string())])
+            ),
+            "心跳运行记录: job-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-sessions-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "加载会话列表失败: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-jobs-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "加载心跳任务列表失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-runs-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "加载心跳运行记录失败: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-update-failed",
+                HashMap::from([("error", "reject".to_string())])
+            ),
+            "更新心跳任务失败: reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-create-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "创建心跳任务失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-set-enabled-failed",
+                HashMap::from([("error", "reject".to_string())])
+            ),
+            "设置启用状态失败: reject"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-delete-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "删除心跳任务失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-running-bg",
+                HashMap::from([("id", "job-42".to_string())])
+            ),
+            "正在后台运行心跳 'job-42'..."
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-executed",
+                HashMap::from([("id", "msg-99".to_string())])
+            ),
+            "心跳已执行: msg-99"
+        );
+        assert_eq!(
+            translator.text_args(
+                "hb-notify-run-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "立即运行心跳失败: timeout"
+        );
+    }
+
+    #[test]
+    fn gui_session_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(translator.text("sess-filter-start-date"), "Start Date");
+        assert_eq!(translator.text("sess-filter-end-date"), "End Date");
+        assert_eq!(translator.text("sess-filter-channel"), "Channel");
+        assert_eq!(translator.text("sess-filter-channel-all"), "All");
+        assert_eq!(translator.text("sess-filter-page"), "Page");
+        assert_eq!(translator.text("sess-filter-size"), "Size");
+        assert_eq!(translator.text("sess-col-session-key"), "Session Key");
+        assert_eq!(translator.text("sess-col-chat-id"), "Chat ID");
+        assert_eq!(translator.text("sess-col-channel"), "Channel");
+        assert_eq!(translator.text("sess-col-active-session"), "Active Session");
+        assert_eq!(translator.text("sess-col-provider"), "Provider");
+        assert_eq!(translator.text("sess-col-model"), "Model");
+        assert_eq!(translator.text("sess-col-turns"), "Turns");
+        assert_eq!(translator.text("sess-col-input"), "Input");
+        assert_eq!(translator.text("sess-col-output"), "Output");
+        assert_eq!(translator.text("sess-col-total"), "Total");
+        assert_eq!(translator.text("sess-col-jsonl-path"), "JSONL Path");
+        assert_eq!(translator.text("sess-sort-updated-asc"), "Updated At ↑");
+        assert_eq!(translator.text("sess-sort-updated-desc"), "Updated At ↓");
+        assert_eq!(translator.text("sess-sort-created-desc"), "Created At ↓");
+        assert_eq!(translator.text("sess-no-rows"), "No sessions found.");
+        assert_eq!(translator.text("sess-clean-title"), "Clean Sessions");
+        assert_eq!(
+            translator.text("sess-clean-desc"),
+            "Delete cron/webhook sessions updated before the selected date."
+        );
+        assert_eq!(
+            translator.text("sess-clean-updated-before"),
+            "Updated At before"
+        );
+        assert_eq!(translator.text("sess-clean-session-types"), "Session types");
+        assert_eq!(translator.text("sess-clean-type-cron"), "cron");
+        assert_eq!(translator.text("sess-clean-type-webhook"), "webhook");
+        assert_eq!(
+            translator.text("sess-clean-hint"),
+            "Select a date and at least one session type to continue."
+        );
+        assert_eq!(translator.text("sess-clean-btn"), "Clean");
+        assert_eq!(translator.text("sess-clean-cancel"), "Cancel");
+        assert_eq!(
+            translator.text("sess-clean-progress-title"),
+            "Cleaning Sessions"
+        );
+        assert_eq!(
+            translator.text("sess-clean-progress-label"),
+            "Cleaning expired cron/webhook sessions..."
+        );
+        assert_eq!(
+            translator.text("sess-clean-progress-footer"),
+            "This dialog will close automatically when cleanup finishes."
+        );
+        assert_eq!(
+            translator.text("sess-clean-already-running"),
+            "Session cleanup is already in progress."
+        );
+        assert_eq!(
+            translator.text("sess-clean-validation-error"),
+            "Select an Updated At date and at least one session type."
+        );
+        assert_eq!(
+            translator.text("sess-notify-clean-disconnected"),
+            "Failed to clean sessions: cleanup task stopped unexpectedly"
+        );
+    }
+
+    #[test]
+    fn gui_session_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("sess-filter-start-date"), "开始日期");
+        assert_eq!(translator.text("sess-filter-end-date"), "结束日期");
+        assert_eq!(translator.text("sess-filter-channel"), "通道");
+        assert_eq!(translator.text("sess-filter-channel-all"), "全部");
+        assert_eq!(translator.text("sess-filter-page"), "页码");
+        assert_eq!(translator.text("sess-filter-size"), "每页数量");
+        assert_eq!(translator.text("sess-col-session-key"), "会话密钥");
+        assert_eq!(translator.text("sess-col-chat-id"), "聊天 ID");
+        assert_eq!(translator.text("sess-col-channel"), "通道");
+        assert_eq!(translator.text("sess-col-active-session"), "活动会话");
+        assert_eq!(translator.text("sess-col-provider"), "提供商");
+        assert_eq!(translator.text("sess-col-model"), "模型");
+        assert_eq!(translator.text("sess-col-turns"), "对话轮次");
+        assert_eq!(translator.text("sess-col-input"), "输入");
+        assert_eq!(translator.text("sess-col-output"), "输出");
+        assert_eq!(translator.text("sess-col-total"), "总计");
+        assert_eq!(translator.text("sess-col-jsonl-path"), "JSONL 路径");
+        assert_eq!(translator.text("sess-sort-updated-asc"), "更新时间 ↑");
+        assert_eq!(translator.text("sess-sort-updated-desc"), "更新时间 ↓");
+        assert_eq!(translator.text("sess-sort-created-desc"), "创建时间 ↓");
+        assert_eq!(translator.text("sess-no-rows"), "未找到会话。");
+        assert_eq!(translator.text("sess-clean-title"), "清理会话");
+        assert_eq!(
+            translator.text("sess-clean-desc"),
+            "删除指定日期之前更新的 cron/webhook 会话。"
+        );
+        assert_eq!(translator.text("sess-clean-updated-before"), "更新时间早于");
+        assert_eq!(translator.text("sess-clean-session-types"), "会话类型");
+        assert_eq!(translator.text("sess-clean-type-cron"), "cron");
+        assert_eq!(translator.text("sess-clean-type-webhook"), "webhook");
+        assert_eq!(
+            translator.text("sess-clean-hint"),
+            "请选择日期和至少一种会话类型以继续。"
+        );
+        assert_eq!(translator.text("sess-clean-btn"), "清理");
+        assert_eq!(translator.text("sess-clean-cancel"), "取消");
+        assert_eq!(translator.text("sess-clean-progress-title"), "正在清理会话");
+        assert_eq!(
+            translator.text("sess-clean-progress-label"),
+            "正在清理过期的 cron/webhook 会话..."
+        );
+        assert_eq!(
+            translator.text("sess-clean-progress-footer"),
+            "清理完成后此对话框将自动关闭。"
+        );
+        assert_eq!(
+            translator.text("sess-clean-already-running"),
+            "会话清理已在进行中。"
+        );
+        assert_eq!(
+            translator.text("sess-clean-validation-error"),
+            "请选择更新时间日期和至少一种会话类型。"
+        );
+        assert_eq!(
+            translator.text("sess-notify-clean-disconnected"),
+            "清理会话失败：清理任务意外停止"
+        );
+    }
+
+    #[test]
+    fn gui_session_panel_translates_notifications_with_args_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "sess-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ Refresh"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-btn-clean",
+                HashMap::from([("icon", "🧹".to_string())])
+            ),
+            "🧹 Clean"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-label-count",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "Sessions: 5"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-ctx-view-chat",
+                HashMap::from([("icon", "💬".to_string())])
+            ),
+            "💬 View Chat"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-ctx-copy-key",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 Copy Session Key"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-chat-title",
+                HashMap::from([("key", "sess-1".to_string())])
+            ),
+            "Chat: sess-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-clean-progress-total",
+                HashMap::from([("count", "10".to_string())])
+            ),
+            "Total: 10"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-clean-progress-deleted",
+                HashMap::from([("count", "3".to_string())])
+            ),
+            "Deleted: 3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-clean-progress-bar",
+                HashMap::from([("deleted", "3".to_string()), ("total", "10".to_string())])
+            ),
+            "3 / 10"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-list-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Failed to load sessions: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-chat-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to load chat records: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-clean-success",
+                HashMap::from([
+                    ("sessions", "5".to_string()),
+                    ("files", "3".to_string()),
+                    ("missing", "2".to_string())
+                ])
+            ),
+            "Cleaned 5 sessions and deleted 3 JSONL files (2 already missing)."
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-clean-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "Failed to clean sessions: io"
+        );
+    }
+
+    #[test]
+    fn gui_session_panel_translates_notifications_with_args_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "sess-btn-refresh",
+                HashMap::from([("icon", "⟳".to_string())])
+            ),
+            "⟳ 刷新"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-btn-clean",
+                HashMap::from([("icon", "🧹".to_string())])
+            ),
+            "🧹 清理"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-label-count",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "会话: 5"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-ctx-view-chat",
+                HashMap::from([("icon", "💬".to_string())])
+            ),
+            "💬 查看聊天"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-ctx-copy-key",
+                HashMap::from([("icon", "📋".to_string())])
+            ),
+            "📋 复制会话密钥"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-chat-title",
+                HashMap::from([("key", "sess-1".to_string())])
+            ),
+            "聊天: sess-1"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-clean-progress-total",
+                HashMap::from([("count", "10".to_string())])
+            ),
+            "总计: 10"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-clean-progress-deleted",
+                HashMap::from([("count", "3".to_string())])
+            ),
+            "已删除: 3"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-clean-progress-bar",
+                HashMap::from([("deleted", "3".to_string()), ("total", "10".to_string())])
+            ),
+            "3 / 10"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-list-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "加载会话列表失败: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-chat-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "加载聊天记录失败: io"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-clean-success",
+                HashMap::from([
+                    ("sessions", "5".to_string()),
+                    ("files", "3".to_string()),
+                    ("missing", "2".to_string())
+                ])
+            ),
+            "已清理 5 个会话，删除 3 个 JSONL 文件（2 个已不存在）。"
+        );
+        assert_eq!(
+            translator.text_args(
+                "sess-notify-clean-failed",
+                HashMap::from([("error", "io".to_string())])
+            ),
+            "清理会话失败: io"
+        );
+    }
 }

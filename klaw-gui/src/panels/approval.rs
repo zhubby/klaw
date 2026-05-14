@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use egui::{Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -9,6 +10,8 @@ use klaw_approval::{
     SqliteApprovalManager,
 };
 use klaw_storage::ApprovalRecord;
+use klaw_ui_kit::{LocaleDomain, Translator};
+use std::collections::HashMap;
 use std::future::Future;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -34,6 +37,10 @@ pub struct ApprovalPanel {
 }
 
 impl ApprovalPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded {
             return;
@@ -46,6 +53,7 @@ impl ApprovalPanel {
     }
 
     fn load_filters(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         match run_approval_task(move |manager| async move {
             let session_keys = manager.list_session_keys().await?;
             let tool_names = manager.list_tool_names().await?;
@@ -55,11 +63,15 @@ impl ApprovalPanel {
                 self.session_keys = session_keys;
                 self.tool_names = tool_names;
             }
-            Err(err) => notifications.error(format!("Failed to load filters: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "approval-notify-filters-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
@@ -84,7 +96,10 @@ impl ApprovalPanel {
                 self.approvals = approvals;
                 self.loaded = true;
             }
-            Err(err) => notifications.error(format!("Failed to load approvals: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "approval-notify-list-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -94,6 +109,7 @@ impl ApprovalPanel {
         decision: ApprovalResolveDecision,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         let approval_id = approval_id.to_string();
         match run_approval_task(move |manager| async move {
             manager
@@ -102,29 +118,44 @@ impl ApprovalPanel {
         }) {
             Ok(outcome) => {
                 if outcome.updated {
-                    notifications.success(format!("Approval {} updated", outcome.approval.id));
+                    notifications.success(t.text_args(
+                        "approval-notify-resolved",
+                        HashMap::from([("id", outcome.approval.id.clone())]),
+                    ));
                 }
                 self.refresh(notifications);
             }
-            Err(err) => notifications.error(format!("Failed to update approval: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "approval-notify-resolve-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn consume(&mut self, approval_id: &str, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let approval_id = approval_id.to_string();
         match run_approval_task(move |manager| async move {
             manager.consume_approval(&approval_id, now_ms()).await
         }) {
             Ok(outcome) => {
                 if outcome.updated {
-                    notifications.success(format!("Approval {} consumed", outcome.approval.id));
+                    notifications.success(t.text_args(
+                        "approval-notify-consumed",
+                        HashMap::from([("id", outcome.approval.id.clone())]),
+                    ));
                 } else {
-                    notifications
-                        .error(format!("Approval {} was not consumed", outcome.approval.id));
+                    notifications.error(t.text_args(
+                        "approval-notify-consume-failed",
+                        HashMap::from([("id", outcome.approval.id.clone())]),
+                    ));
                 }
                 self.refresh(notifications);
             }
-            Err(err) => notifications.error(format!("Failed to consume approval: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "approval-notify-consume-op-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 }
@@ -138,12 +169,23 @@ impl PanelRenderer for ApprovalPanel {
     ) {
         self.ensure_loaded(notifications);
 
+        let t = Self::translator();
+
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(t.text_args(
+                    "approval-btn-refresh",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.refresh(notifications);
             }
-            ui.label(format!("Approvals: {}", self.approvals.len()));
+            ui.label(t.text_args(
+                "approval-label-count",
+                HashMap::from([("count", self.approvals.len().to_string())]),
+            ));
         });
 
         ui.separator();
@@ -153,15 +195,22 @@ impl PanelRenderer for ApprovalPanel {
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Session Key");
-                    let selected_text = self.session_key_filter.as_deref().unwrap_or("All");
+                    ui.label(t.text("approval-filter-session-key"));
+                    let selected_text = self
+                        .session_key_filter
+                        .as_deref()
+                        .unwrap_or_else(|| t.text("approval-filter-session-key-all").leak());
                     let combo_resp = egui::ComboBox::from_id_salt("session_key_filter")
                         .selected_text(selected_text)
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.session_key_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.session_key_filter,
+                                    None,
+                                    t.text("approval-filter-session-key-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -187,15 +236,22 @@ impl PanelRenderer for ApprovalPanel {
 
                     ui.separator();
 
-                    ui.label("Tool Name");
-                    let selected_text = self.tool_name_filter.as_deref().unwrap_or("All");
+                    ui.label(t.text("approval-filter-tool-name"));
+                    let selected_text = self
+                        .tool_name_filter
+                        .as_deref()
+                        .unwrap_or_else(|| t.text("approval-filter-tool-name-all").leak());
                     let combo_resp = egui::ComboBox::from_id_salt("tool_name_filter")
                         .selected_text(selected_text)
                         .width(FILTER_INPUT_WIDTH)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.tool_name_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.tool_name_filter,
+                                    None,
+                                    t.text("approval-filter-tool-name-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -221,13 +277,17 @@ impl PanelRenderer for ApprovalPanel {
 
                     ui.separator();
 
-                    ui.label("Status");
+                    ui.label(t.text("approval-filter-status"));
                     let combo_resp = egui::ComboBox::from_id_salt("status_filter")
-                        .selected_text(self.status_filter.map_or("All", |s| s.as_str()))
+                        .selected_text(approval_status_display_text(self.status_filter, &t))
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.status_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.status_filter,
+                                    None,
+                                    t.text("approval-filter-status-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -243,7 +303,7 @@ impl PanelRenderer for ApprovalPanel {
                                     .selectable_value(
                                         &mut self.status_filter,
                                         Some(status),
-                                        status.as_str(),
+                                        t.text(&format!("approval-status-{}", status.as_str())),
                                     )
                                     .changed()
                                 {
@@ -259,7 +319,7 @@ impl PanelRenderer for ApprovalPanel {
 
                     ui.separator();
 
-                    ui.label("Preview");
+                    ui.label(t.text("approval-filter-preview"));
                     if ui
                         .add_sized(
                             [FILTER_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -273,7 +333,7 @@ impl PanelRenderer for ApprovalPanel {
 
                     ui.separator();
 
-                    ui.label("Page");
+                    ui.label(t.text("approval-filter-page"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -283,7 +343,7 @@ impl PanelRenderer for ApprovalPanel {
                     {
                         need_refresh = true;
                     }
-                    ui.label("Size");
+                    ui.label(t.text("approval-filter-size"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -308,7 +368,7 @@ impl PanelRenderer for ApprovalPanel {
             .show(ui, |ui| {
                 ui.set_min_width(table_width);
                 if self.approvals.is_empty() {
-                    ui.label("No approvals found.");
+                    ui.label(t.text("approval-no-rows"));
                     return;
                 }
 
@@ -336,31 +396,31 @@ impl PanelRenderer for ApprovalPanel {
                     .sense(egui::Sense::click())
                     .header(20.0, |mut header| {
                         header.col(|ui| {
-                            ui.strong("ID");
+                            ui.strong(t.text("approval-col-id"));
                         });
                         header.col(|ui| {
-                            ui.strong("Session");
+                            ui.strong(t.text("approval-col-session"));
                         });
                         header.col(|ui| {
-                            ui.strong("Tool");
+                            ui.strong(t.text("approval-col-tool"));
                         });
                         header.col(|ui| {
-                            ui.strong("Risk");
+                            ui.strong(t.text("approval-col-risk"));
                         });
                         header.col(|ui| {
-                            ui.strong("Status");
+                            ui.strong(t.text("approval-col-status"));
                         });
                         header.col(|ui| {
-                            ui.strong("Requested By");
+                            ui.strong(t.text("approval-col-requested-by"));
                         });
                         header.col(|ui| {
-                            ui.strong("Approved By");
+                            ui.strong(t.text("approval-col-approved-by"));
                         });
                         header.col(|ui| {
-                            ui.strong("Expires At");
+                            ui.strong(t.text("approval-col-expires-at"));
                         });
                         header.col(|ui| {
-                            ui.strong("Preview");
+                            ui.strong(t.text("approval-col-preview"));
                         });
                     })
                     .body(|body| {
@@ -385,7 +445,8 @@ impl PanelRenderer for ApprovalPanel {
                                 ui.label(&approval.risk_level);
                             });
                             row.col(|ui| {
-                                let (icon, color, text) = approval_status_display(approval.status);
+                                let (icon, color, text) =
+                                    approval_status_display(approval.status, &t);
                                 ui.label(
                                     RichText::new(format!("{icon} {text}"))
                                         .color(color)
@@ -417,31 +478,58 @@ impl PanelRenderer for ApprovalPanel {
                             }
 
                             response.context_menu(|ui| {
-                                if ui.button(format!("{} View", regular::EYE)).clicked() {
+                                if ui
+                                    .button(t.text_args(
+                                        "approval-ctx-view",
+                                        HashMap::from([("icon", regular::EYE.to_string())]),
+                                    ))
+                                    .clicked()
+                                {
                                     view_id = Some(approval.id.clone());
                                     ui.close();
                                 }
                                 ui.separator();
                                 if ui
-                                    .button(format!("{} Approve", regular::CHECK_CIRCLE))
+                                    .button(t.text_args(
+                                        "approval-ctx-approve",
+                                        HashMap::from([(
+                                            "icon",
+                                            regular::CHECK_CIRCLE.to_string(),
+                                        )]),
+                                    ))
                                     .clicked()
                                 {
                                     approve_id = Some(approval.id.clone());
                                     ui.close();
                                 }
-                                if ui.button(format!("{} Reject", regular::X_CIRCLE)).clicked() {
+                                if ui
+                                    .button(t.text_args(
+                                        "approval-ctx-reject",
+                                        HashMap::from([("icon", regular::X_CIRCLE.to_string())]),
+                                    ))
+                                    .clicked()
+                                {
                                     reject_id = Some(approval.id.clone());
                                     ui.close();
                                 }
                                 if ui
-                                    .button(format!("{} Consume", regular::LIGHTNING))
+                                    .button(t.text_args(
+                                        "approval-ctx-consume",
+                                        HashMap::from([("icon", regular::LIGHTNING.to_string())]),
+                                    ))
                                     .clicked()
                                 {
                                     consume_id = Some(approval.id.clone());
                                     ui.close();
                                 }
                                 ui.separator();
-                                if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                if ui
+                                    .button(t.text_args(
+                                        "approval-ctx-copy-id",
+                                        HashMap::from([("icon", regular::COPY.to_string())]),
+                                    ))
+                                    .clicked()
+                                {
                                     ui.ctx().output_mut(|o| {
                                         o.commands.push(egui::OutputCommand::CopyText(
                                             approval.id.clone(),
@@ -469,93 +557,97 @@ impl PanelRenderer for ApprovalPanel {
 
         if let Some(ref approval) = self.view_approval {
             let mut open = true;
-            egui::Window::new(format!("Approval: {}", approval.id))
-                .open(&mut open)
-                .resizable(true)
-                .default_size([500.0, 400.0])
-                .show(ui.ctx(), |ui| {
-                    egui::Grid::new("approval-detail-grid")
-                        .num_columns(2)
-                        .spacing([10.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("ID:");
-                            ui.label(&approval.id);
-                            ui.end_row();
+            egui::Window::new(t.text_args(
+                "approval-detail-title",
+                HashMap::from([("id", approval.id.clone())]),
+            ))
+            .open(&mut open)
+            .resizable(true)
+            .default_size([500.0, 400.0])
+            .show(ui.ctx(), |ui| {
+                let na = t.text("approval-detail-na");
+                egui::Grid::new("approval-detail-grid")
+                    .num_columns(2)
+                    .spacing([10.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(t.text("approval-detail-id"));
+                        ui.label(&approval.id);
+                        ui.end_row();
 
-                            ui.label("Session:");
-                            ui.label(&approval.session_key);
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-session"));
+                        ui.label(&approval.session_key);
+                        ui.end_row();
 
-                            ui.label("Tool:");
-                            ui.label(&approval.tool_name);
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-tool"));
+                        ui.label(&approval.tool_name);
+                        ui.end_row();
 
-                            ui.label("Risk Level:");
-                            ui.label(&approval.risk_level);
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-risk-level"));
+                        ui.label(&approval.risk_level);
+                        ui.end_row();
 
-                            ui.label("Status:");
-                            let (icon, color, text) = approval_status_display(approval.status);
-                            ui.label(
-                                RichText::new(format!("{icon} {text}"))
-                                    .color(color)
-                                    .strong(),
-                            );
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-status"));
+                        let (icon, color, text) = approval_status_display(approval.status, &t);
+                        ui.label(
+                            RichText::new(format!("{icon} {text}"))
+                                .color(color)
+                                .strong(),
+                        );
+                        ui.end_row();
 
-                            ui.label("Requested By:");
-                            ui.label(&approval.requested_by);
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-requested-by"));
+                        ui.label(&approval.requested_by);
+                        ui.end_row();
 
-                            ui.label("Approved By:");
-                            ui.label(approval.approved_by.as_deref().unwrap_or("-"));
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-approved-by"));
+                        ui.label(approval.approved_by.as_deref().unwrap_or(&na));
+                        ui.end_row();
 
-                            ui.label("Justification:");
-                            ui.label(approval.justification.as_deref().unwrap_or("-"));
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-justification"));
+                        ui.label(approval.justification.as_deref().unwrap_or(&na));
+                        ui.end_row();
 
-                            ui.label("Expires At:");
-                            ui.label(format_timestamp_millis(approval.expires_at_ms));
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-expires-at"));
+                        ui.label(format_timestamp_millis(approval.expires_at_ms));
+                        ui.end_row();
 
-                            ui.label("Created At:");
-                            ui.label(format_timestamp_millis(approval.created_at_ms));
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-created-at"));
+                        ui.label(format_timestamp_millis(approval.created_at_ms));
+                        ui.end_row();
 
-                            ui.label("Updated At:");
-                            ui.label(format_timestamp_millis(approval.updated_at_ms));
-                            ui.end_row();
+                        ui.label(t.text("approval-detail-updated-at"));
+                        ui.label(format_timestamp_millis(approval.updated_at_ms));
+                        ui.end_row();
 
-                            ui.label("Consumed At:");
-                            ui.label(
-                                approval
-                                    .consumed_at_ms
-                                    .map(format_timestamp_millis)
-                                    .as_deref()
-                                    .unwrap_or("-"),
-                            );
-                            ui.end_row();
-                        });
+                        ui.label(t.text("approval-detail-consumed-at"));
+                        ui.label(
+                            approval
+                                .consumed_at_ms
+                                .map(format_timestamp_millis)
+                                .as_deref()
+                                .unwrap_or(&na),
+                        );
+                        ui.end_row();
+                    });
 
-                    ui.separator();
-                    ui.label("Command Preview:");
-                    egui::ScrollArea::vertical()
-                        .max_height(100.0)
-                        .id_salt("approval_command_preview")
-                        .show(ui, |ui| {
-                            ui.label(&approval.command_preview);
-                        });
+                ui.separator();
+                ui.label(t.text("approval-detail-command-preview"));
+                egui::ScrollArea::vertical()
+                    .max_height(100.0)
+                    .id_salt("approval_command_preview")
+                    .show(ui, |ui| {
+                        ui.label(&approval.command_preview);
+                    });
 
-                    ui.separator();
-                    ui.label("Command Text:");
-                    egui::ScrollArea::vertical()
-                        .max_height(150.0)
-                        .id_salt("approval_command_text")
-                        .show(ui, |ui| {
-                            ui.label(&approval.command_text);
-                        });
-                });
+                ui.separator();
+                ui.label(t.text("approval-detail-command-text"));
+                egui::ScrollArea::vertical()
+                    .max_height(150.0)
+                    .id_salt("approval_command_text")
+                    .show(ui, |ui| {
+                        ui.label(&approval.command_text);
+                    });
+            });
             if !open {
                 self.view_approval = None;
             }
@@ -618,28 +710,42 @@ fn truncate_preview(text: &str) -> String {
     }
 }
 
-fn approval_status_display(status: ApprovalStatus) -> (&'static str, Color32, &'static str) {
+fn approval_status_display(
+    status: ApprovalStatus,
+    t: &Translator,
+) -> (&'static str, Color32, String) {
     match status {
         ApprovalStatus::Pending => (
             regular::HOURGLASS_MEDIUM,
             Color32::from_rgb(200, 150, 50),
-            "pending",
+            t.text("approval-status-pending"),
         ),
         ApprovalStatus::Approved => (
             regular::CHECK_CIRCLE,
             Color32::from_rgb(50, 180, 80),
-            "approved",
+            t.text("approval-status-approved"),
         ),
         ApprovalStatus::Rejected => (
             regular::X_CIRCLE,
             Color32::from_rgb(220, 60, 60),
-            "rejected",
+            t.text("approval-status-rejected"),
         ),
-        ApprovalStatus::Expired => (regular::CLOCK, Color32::from_rgb(140, 140, 140), "expired"),
+        ApprovalStatus::Expired => (
+            regular::CLOCK,
+            Color32::from_rgb(140, 140, 140),
+            t.text("approval-status-expired"),
+        ),
         ApprovalStatus::Consumed => (
             regular::LIGHTNING,
             Color32::from_rgb(70, 130, 200),
-            "consumed",
+            t.text("approval-status-consumed"),
         ),
+    }
+}
+
+fn approval_status_display_text(status: Option<ApprovalStatus>, t: &Translator) -> String {
+    match status {
+        Some(s) => approval_status_display(s, t).2,
+        None => t.text("approval-filter-status-all"),
     }
 }

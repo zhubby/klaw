@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::{format_optional_timestamp_millis, format_timestamp_millis};
 use crate::{RuntimeRequestHandle, begin_run_cron_now_request};
 use chrono::{Datelike, Local, NaiveDate};
@@ -11,7 +12,9 @@ use klaw_cron::{
     SqliteCronManager, UpdateCronJobPatch,
 };
 use klaw_storage::CronTaskStatus;
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
 use klaw_util::system_timezone_name;
+use std::collections::HashMap;
 use std::future::Future;
 use std::thread;
 use std::time::Duration;
@@ -61,11 +64,12 @@ impl CronForm {
         }
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        let t = Translator::new(LocaleDomain::Gui, current_ui_language());
         if self.original_id.is_some() {
-            "Edit Cron Job"
+            t.text("cron-form-title-edit")
         } else {
-            "Add Cron Job"
+            t.text("cron-form-title-add")
         }
     }
 }
@@ -117,6 +121,10 @@ impl Default for CronPanel {
 }
 
 impl CronPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn toggle_sort_order(&mut self) {
         self.sort_order = match self.sort_order {
             CronSortOrder::UpdatedAtDesc => CronSortOrder::UpdatedAtAsc,
@@ -134,17 +142,24 @@ impl CronPanel {
             return;
         };
 
+        let t = Self::translator();
         let cron_id = self.pending_run_now_cron_id.take();
         self.run_now_request = None;
         match result {
             Ok(message_id) => {
-                notifications.success(format!("Cron executed: {message_id}"));
+                notifications.success(t.text_args(
+                    "cron-notify-executed",
+                    HashMap::from([("id", message_id.clone())]),
+                ));
                 self.refresh_jobs(notifications);
                 if let Some(cron_id) = cron_id {
                     self.load_runs(&cron_id, notifications);
                 }
             }
-            Err(err) => notifications.error(format!("Failed to run cron now: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "cron-notify-run-failed",
+                HashMap::from([("error", err.clone())]),
+            )),
         }
     }
 
@@ -156,6 +171,7 @@ impl CronPanel {
     }
 
     fn refresh_jobs(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
@@ -187,11 +203,15 @@ impl CronPanel {
                     self.load_runs(&id, notifications);
                 }
             }
-            Err(err) => notifications.error(format!("Failed to list cron jobs: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "cron-notify-list-failed",
+                HashMap::from([("error", err.clone())]),
+            )),
         }
     }
 
     fn load_runs(&mut self, cron_id: &str, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let cron_id = cron_id.to_string();
         let cron_id_for_query = cron_id.clone();
         match run_cron_task(move |manager| async move {
@@ -201,7 +221,10 @@ impl CronPanel {
                 self.runs_cron_id = Some(cron_id);
                 self.runs = runs;
             }
-            Err(err) => notifications.error(format!("Failed to load task runs: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "cron-notify-runs-failed",
+                HashMap::from([("error", err.clone())]),
+            )),
         }
     }
 
@@ -216,51 +239,56 @@ impl CronPanel {
     }
 
     fn save_form(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(form) = self.form.as_ref() else {
-            notifications.error("Cron form is not available");
+            notifications.error(t.text("cron-notify-form-unavailable"));
             return;
         };
 
         let id = form.id.trim().to_string();
         if id.is_empty() {
-            notifications.error("Cron ID cannot be empty");
+            notifications.error(t.text("cron-notify-id-empty"));
             return;
         }
 
         let name = form.name.trim().to_string();
         if name.is_empty() {
-            notifications.error("Cron name cannot be empty");
+            notifications.error(t.text("cron-notify-name-empty"));
             return;
         }
 
         let expr = form.schedule_expr.trim().to_string();
         if expr.is_empty() {
-            notifications.error("Schedule expression cannot be empty");
+            notifications.error(t.text("cron-notify-expr-empty"));
             return;
         }
 
         let payload_json = form.payload_json.trim().to_string();
         if payload_json.is_empty() {
-            notifications.error("Payload JSON cannot be empty");
+            notifications.error(t.text("cron-notify-payload-empty"));
             return;
         }
         let payload_value = match serde_json::from_str::<serde_json::Value>(&payload_json) {
             Ok(value) => value,
             Err(err) => {
-                notifications.error(format!("Payload JSON is invalid: {err}"));
+                notifications.error(t.text_args(
+                    "cron-notify-payload-invalid",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 return;
             }
         };
         if let Err(err) = validate_inbound_payload_value(&payload_value) {
-            notifications.error(format!(
-                "Payload JSON must be a valid InboundMessage-like object: {err}"
+            notifications.error(t.text_args(
+                "cron-notify-payload-invalid-schema",
+                HashMap::from([("error", err.to_string())]),
             ));
             return;
         }
 
         let timezone = form.timezone.trim().to_string();
         if timezone.is_empty() {
-            notifications.error("Timezone cannot be empty");
+            notifications.error(t.text("cron-notify-timezone-empty"));
             return;
         }
 
@@ -269,7 +297,10 @@ impl CronPanel {
         {
             Ok(next) => next,
             Err(err) => {
-                notifications.error(format!("Invalid schedule: {err}"));
+                notifications.error(t.text_args(
+                    "cron-notify-schedule-invalid",
+                    HashMap::from([("error", err.to_string())]),
+                ));
                 return;
             }
         };
@@ -296,11 +327,14 @@ impl CronPanel {
 
             match result {
                 Ok(()) => {
-                    notifications.success("Cron job updated");
+                    notifications.success(t.text("cron-notify-updated"));
                     self.form = None;
                     self.refresh_jobs(notifications);
                 }
-                Err(err) => notifications.error(format!("Failed to update cron job: {err}")),
+                Err(err) => notifications.error(t.text_args(
+                    "cron-notify-update-failed",
+                    HashMap::from([("error", err.to_string())]),
+                )),
             }
             return;
         }
@@ -318,11 +352,14 @@ impl CronPanel {
 
         match run_cron_task(move |manager| async move { manager.create_job(&input).await }) {
             Ok(_) => {
-                notifications.success("Cron job created");
+                notifications.success(t.text("cron-notify-created"));
                 self.form = None;
                 self.refresh_jobs(notifications);
             }
-            Err(err) => notifications.error(format!("Failed to create cron job: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "cron-notify-create-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
@@ -332,51 +369,65 @@ impl CronPanel {
         enabled: bool,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         let cron_id = cron_id.to_string();
         match run_cron_task(
             move |manager| async move { manager.set_enabled(&cron_id, enabled).await },
         ) {
             Ok(()) => {
-                notifications.success(if enabled {
-                    "Cron enabled"
+                let msg = if enabled {
+                    t.text("cron-notify-enabled")
                 } else {
-                    "Cron disabled"
-                });
+                    t.text("cron-notify-disabled")
+                };
+                notifications.success(msg);
                 self.refresh_jobs(notifications);
             }
-            Err(err) => notifications.error(format!("Failed to set enabled: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "cron-notify-set-enabled-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn delete_cron(&mut self, cron_id: &str, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let cron_id = cron_id.to_string();
         let cron_id_for_delete = cron_id.clone();
         match run_cron_task(
             move |manager| async move { manager.delete_job(&cron_id_for_delete).await },
         ) {
             Ok(()) => {
-                notifications.success("Cron job deleted");
+                notifications.success(t.text("cron-notify-deleted"));
                 if self.runs_cron_id.as_deref() == Some(cron_id.as_str()) {
                     self.runs_cron_id = None;
                     self.runs.clear();
                 }
                 self.refresh_jobs(notifications);
             }
-            Err(err) => notifications.error(format!("Failed to delete cron job: {err}")),
+            Err(err) => notifications.error(t.text_args(
+                "cron-notify-delete-failed",
+                HashMap::from([("error", err.to_string())]),
+            )),
         }
     }
 
     fn run_cron_now(&mut self, cron_id: &str, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.run_now_request.is_some() {
-            notifications.info("A cron run is already in progress");
+            notifications.info(t.text("cron-notify-already-running"));
             return;
         }
         self.pending_run_now_cron_id = Some(cron_id.to_string());
         self.run_now_request = Some(begin_run_cron_now_request(cron_id.to_string()));
-        notifications.info(format!("Running cron '{cron_id}' in background..."));
+        notifications.info(t.text_args(
+            "cron-notify-running-bg",
+            HashMap::from([("id", cron_id.to_string())]),
+        ));
     }
 
     fn render_form_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let mut save_clicked = false;
         let mut cancel_clicked = false;
         let Some(form) = self.form.as_mut() else {
@@ -393,7 +444,7 @@ impl CronPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("ID");
+                        ui.label(&t.text("cron-form-id"));
                         if form.original_id.is_some() {
                             ui.add_enabled(false, egui::TextEdit::singleline(&mut form.id));
                         } else {
@@ -401,45 +452,56 @@ impl CronPanel {
                         }
                         ui.end_row();
 
-                        ui.label("Name");
-                        ui.text_edit_singleline(&mut form.name);
+                        ui.label(&t.text("cron-form-name"));
                         ui.end_row();
 
-                        ui.label("Schedule Kind");
+                        ui.label(&t.text("cron-form-schedule-kind"));
                         egui::ComboBox::from_id_salt("cron-schedule-kind")
                             .selected_text(match form.schedule_kind {
-                                CronScheduleKind::Cron => "cron",
-                                CronScheduleKind::Every => "every",
+                                CronScheduleKind::Cron => t.text("cron-filter-kind-cron"),
+                                CronScheduleKind::Every => t.text("cron-filter-kind-every"),
                             })
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
                                     &mut form.schedule_kind,
                                     CronScheduleKind::Cron,
-                                    "cron",
+                                    t.text("cron-filter-kind-cron"),
                                 );
                                 ui.selectable_value(
                                     &mut form.schedule_kind,
                                     CronScheduleKind::Every,
-                                    "every",
+                                    t.text("cron-filter-kind-every"),
                                 );
                             });
                         ui.end_row();
 
-                        ui.label("Schedule Expr");
+                        label_with_hint(
+                            ui,
+                            &t.text("cron-form-schedule-expr"),
+                            &t.text("cron-form-schedule-expr-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.schedule_expr);
                         ui.end_row();
 
-                        ui.label("Timezone");
+                        ui.label(&t.text("cron-form-timezone"));
                         ui.text_edit_singleline(&mut form.timezone);
                         ui.end_row();
 
-                        ui.label("Enabled");
-                        ui.checkbox(&mut form.enabled, "");
+                        label_with_hint(
+                            ui,
+                            &t.text("cron-form-enabled"),
+                            &t.text("cron-form-enabled-hint"),
+                        );
+                        ui.add(toggle(&mut form.enabled));
                         ui.end_row();
                     });
 
                 ui.separator();
-                ui.label("Payload JSON");
+                label_with_hint(
+                    ui,
+                    &t.text("cron-form-payload"),
+                    &t.text("cron-form-payload-hint"),
+                );
                 ui.add(
                     egui::TextEdit::multiline(&mut form.payload_json)
                         .desired_rows(8)
@@ -448,10 +510,10 @@ impl CronPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(&t.text("cron-form-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(&t.text("cron-form-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -465,12 +527,13 @@ impl CronPanel {
         }
     }
     fn render_runs_window(&mut self, ui: &mut egui::Ui, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let Some(cron_id) = self.runs_cron_id.clone() else {
             return;
         };
 
         let mut keep_open = true;
-        egui::Window::new(format!("Task Runs: {cron_id}"))
+        egui::Window::new(t.text_args("cron-runs-title", HashMap::from([("id", cron_id.clone())])))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
@@ -481,11 +544,14 @@ impl CronPanel {
             .show(ui.ctx(), |ui| {
                 ui.set_width(CRON_RUNS_WINDOW_WIDTH);
                 ui.horizontal(|ui| {
-                    if ui.button("Refresh Runs").clicked() {
+                    if ui.button(&t.text("cron-runs-refresh")).clicked() {
                         self.load_runs(&cron_id, notifications);
                     }
                     if ui
-                        .add_enabled(self.run_now_request.is_none(), egui::Button::new("Run Now"))
+                        .add_enabled(
+                            self.run_now_request.is_none(),
+                            egui::Button::new(&t.text("cron-runs-run-now")),
+                        )
                         .clicked()
                     {
                         self.run_cron_now(&cron_id, notifications);
@@ -495,7 +561,7 @@ impl CronPanel {
                 ui.separator();
 
                 if self.runs.is_empty() {
-                    ui.label("No task runs found.");
+                    ui.label(&t.text("cron-runs-no-rows"));
                     return;
                 }
 
@@ -507,16 +573,16 @@ impl CronPanel {
                             .num_columns(6)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.strong("Run ID");
-                                ui.strong("Status");
-                                ui.strong("Scheduled At");
-                                ui.strong("Started At");
-                                ui.strong("Finished At");
-                                ui.strong("Error");
+                                ui.strong(&t.text("cron-runs-col-id"));
+                                ui.strong(&t.text("cron-runs-col-status"));
+                                ui.strong(&t.text("cron-runs-col-scheduled"));
+                                ui.strong(&t.text("cron-runs-col-started"));
+                                ui.strong(&t.text("cron-runs-col-finished"));
+                                ui.strong(&t.text("cron-runs-col-error"));
                                 ui.end_row();
 
                                 for run in &self.runs {
-                                    let (icon, color, text) = cron_status_display(run.status);
+                                    let (icon, color, text) = cron_status_display(run.status, &t);
                                     ui.label(&run.id);
                                     ui.label(
                                         egui::RichText::new(format!("{icon} {text}"))
@@ -553,20 +619,39 @@ impl PanelRenderer for CronPanel {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
 
+        let t = Self::translator();
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(&t.text_args(
+                    "cron-btn-refresh",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.refresh_jobs(notifications);
             }
-            if ui.button("Add Cron Job").clicked() {
+            if ui
+                .button(&t.text_args(
+                    "cron-btn-add",
+                    HashMap::from([("icon", regular::PLUS.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_add_form();
             }
-            ui.label(format!("Total: {}", self.total_jobs));
+            ui.label(t.text_args(
+                "cron-label-total",
+                HashMap::from([("count", self.total_jobs.to_string())]),
+            ));
             if let Some(cron_id) = self.pending_run_now_cron_id.as_deref() {
                 ui.label(
-                    RichText::new(format!("Running: {cron_id}"))
-                        .color(Color32::from_rgb(70, 130, 200))
-                        .strong(),
+                    RichText::new(t.text_args(
+                        "cron-label-running",
+                        HashMap::from([("id", cron_id.to_string())]),
+                    ))
+                    .color(Color32::from_rgb(70, 130, 200))
+                    .strong(),
                 );
             }
         });
@@ -578,7 +663,7 @@ impl PanelRenderer for CronPanel {
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Name");
+                    ui.label(&t.text("cron-filter-name"));
                     if ui
                         .add_enabled(
                             true,
@@ -590,14 +675,20 @@ impl PanelRenderer for CronPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Kind");
+                    ui.label(&t.text("cron-filter-kind"));
+                    let all_text = t.text("cron-filter-kind-all");
+                    let selected_text = self.kind_filter.map(|k| k.as_str()).unwrap_or(&all_text);
                     let combo_resp = egui::ComboBox::from_id_salt("cron-kind-filter")
-                        .selected_text(self.kind_filter.map(|k| k.as_str()).unwrap_or("All"))
+                        .selected_text(selected_text)
                         .width(80.0)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.kind_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.kind_filter,
+                                    None,
+                                    t.text("cron-filter-kind-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -606,7 +697,7 @@ impl PanelRenderer for CronPanel {
                                 .selectable_value(
                                     &mut self.kind_filter,
                                     Some(CronScheduleKind::Cron),
-                                    "cron",
+                                    t.text("cron-filter-kind-cron"),
                                 )
                                 .changed()
                             {
@@ -616,7 +707,7 @@ impl PanelRenderer for CronPanel {
                                 .selectable_value(
                                     &mut self.kind_filter,
                                     Some(CronScheduleKind::Every),
-                                    "every",
+                                    t.text("cron-filter-kind-every"),
                                 )
                                 .changed()
                             {
@@ -629,30 +720,30 @@ impl PanelRenderer for CronPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Created From");
+                    ui.label(&t.text("cron-filter-created-from"));
                     if render_date_picker(ui, &mut self.start_date, "cron-start-date") {
                         self.page = 1;
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Created To");
+                    ui.label(&t.text("cron-filter-created-to"));
                     if render_date_picker(ui, &mut self.end_date, "cron-end-date") {
                         self.page = 1;
                         need_refresh = true;
                     }
                     ui.separator();
                     let sort_label = match self.sort_order {
-                        CronSortOrder::UpdatedAtDesc => "Updated At ↓",
-                        CronSortOrder::CreatedAtDesc => "Created At ↓",
-                        CronSortOrder::UpdatedAtAsc => "Updated At ↑",
-                        CronSortOrder::CreatedAtAsc => "Created At ↑",
+                        CronSortOrder::UpdatedAtDesc => t.text("cron-sort-updated-desc"),
+                        CronSortOrder::CreatedAtDesc => t.text("cron-sort-created-desc"),
+                        CronSortOrder::UpdatedAtAsc => t.text("cron-sort-updated-asc"),
+                        CronSortOrder::CreatedAtAsc => t.text("cron-sort-created-asc"),
                     };
                     if ui.button(sort_label).clicked() {
                         self.toggle_sort_order();
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Page");
+                    ui.label(&t.text("cron-filter-page"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -662,7 +753,7 @@ impl PanelRenderer for CronPanel {
                     {
                         need_refresh = true;
                     }
-                    ui.label("Size");
+                    ui.label(&t.text("cron-filter-size"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -684,7 +775,7 @@ impl PanelRenderer for CronPanel {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if self.jobs.is_empty() {
-                    ui.label("No cron jobs found in database.");
+                    ui.label(&t.text("cron-no-rows"));
                 } else {
                     let available_height = ui.available_height();
                     let mut edit_cron_id: Option<String> = None;
@@ -709,28 +800,28 @@ impl PanelRenderer for CronPanel {
                         .sense(egui::Sense::click())
                         .header(20.0, |mut header| {
                             header.col(|ui| {
-                                ui.strong("ID");
+                                ui.strong(&t.text("cron-col-id"));
                             });
                             header.col(|ui| {
-                                ui.strong("Name");
+                                ui.strong(&t.text("cron-col-name"));
                             });
                             header.col(|ui| {
-                                ui.strong("Kind");
+                                ui.strong(&t.text("cron-col-kind"));
                             });
                             header.col(|ui| {
-                                ui.strong("Expr");
+                                ui.strong(&t.text("cron-col-expr"));
                             });
                             header.col(|ui| {
-                                ui.strong("Enabled");
+                                ui.strong(&t.text("cron-col-enabled"));
                             });
                             header.col(|ui| {
-                                ui.strong("Next Run At");
+                                ui.strong(&t.text("cron-col-next-run"));
                             });
                             header.col(|ui| {
-                                ui.strong("Last Run At");
+                                ui.strong(&t.text("cron-col-last-run"));
                             });
                             header.col(|ui| {
-                                ui.strong("Updated At");
+                                ui.strong(&t.text("cron-col-updated-at"));
                             });
                         })
                         .body(|body| {
@@ -748,7 +839,8 @@ impl PanelRenderer for CronPanel {
                                     ui.label(job.name.clone());
                                 });
                                 row.col(|ui| {
-                                    let (icon, color, label) = cron_kind_display(job.schedule_kind);
+                                    let (icon, color, label) =
+                                        cron_kind_display(job.schedule_kind, &t);
                                     ui.label(
                                         RichText::new(format!("{icon} {label}"))
                                             .color(color)
@@ -759,7 +851,7 @@ impl PanelRenderer for CronPanel {
                                     ui.label(job.schedule_expr.clone());
                                 });
                                 row.col(|ui| {
-                                    let (icon, color, label) = enabled_display(job.enabled);
+                                    let (icon, color, label) = enabled_display(job.enabled, &t);
                                     ui.label(
                                         RichText::new(format!("{icon} {label}"))
                                             .color(color)
@@ -791,14 +883,26 @@ impl PanelRenderer for CronPanel {
                                 }
 
                                 response.context_menu(|ui| {
-                                    if ui.button(format!("{} Runs", regular::LIST)).clicked() {
+                                    if ui
+                                        .button(t.text_args(
+                                            "cron-ctx-runs",
+                                            HashMap::from([("icon", regular::LIST.to_string())]),
+                                        ))
+                                        .clicked()
+                                    {
                                         runs_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
                                     if ui
                                         .add_enabled(
                                             self.run_now_request.is_none(),
-                                            egui::Button::new(format!("{} Run Now", regular::PLAY)),
+                                            egui::Button::new(t.text_args(
+                                                "cron-ctx-run-now",
+                                                HashMap::from([(
+                                                    "icon",
+                                                    regular::PLAY.to_string(),
+                                                )]),
+                                            )),
                                         )
                                         .clicked()
                                     {
@@ -806,16 +910,28 @@ impl PanelRenderer for CronPanel {
                                         ui.close();
                                     }
                                     if ui
-                                        .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                        .button(t.text_args(
+                                            "cron-ctx-edit",
+                                            HashMap::from([(
+                                                "icon",
+                                                regular::PENCIL_SIMPLE.to_string(),
+                                            )]),
+                                        ))
                                         .clicked()
                                     {
                                         edit_cron_id = Some(job.id.clone());
                                         ui.close();
                                     }
                                     let toggle_text = if job.enabled {
-                                        format!("{} Disable", regular::POWER)
+                                        t.text_args(
+                                            "cron-ctx-disable",
+                                            HashMap::from([("icon", regular::POWER.to_string())]),
+                                        )
                                     } else {
-                                        format!("{} Enable", regular::POWER)
+                                        t.text_args(
+                                            "cron-ctx-enable",
+                                            HashMap::from([("icon", regular::POWER.to_string())]),
+                                        )
                                     };
                                     if ui.button(toggle_text).clicked() {
                                         toggle_cron = Some((job.id.clone(), !job.enabled));
@@ -823,8 +939,14 @@ impl PanelRenderer for CronPanel {
                                     }
                                     if ui
                                         .button(
-                                            RichText::new(format!("{} Delete", regular::TRASH))
-                                                .color(ui.visuals().warn_fg_color),
+                                            RichText::new(t.text_args(
+                                                "cron-ctx-delete",
+                                                HashMap::from([(
+                                                    "icon",
+                                                    regular::TRASH.to_string(),
+                                                )]),
+                                            ))
+                                            .color(ui.visuals().warn_fg_color),
                                         )
                                         .clicked()
                                     {
@@ -832,7 +954,13 @@ impl PanelRenderer for CronPanel {
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                    if ui
+                                        .button(t.text_args(
+                                            "cron-ctx-copy-id",
+                                            HashMap::from([("icon", regular::COPY.to_string())]),
+                                        ))
+                                        .clicked()
+                                    {
                                         ui.ctx().output_mut(|o| {
                                             o.commands.push(egui::OutputCommand::CopyText(
                                                 job.id.clone(),
@@ -863,18 +991,21 @@ impl PanelRenderer for CronPanel {
             });
 
         if let Some(cron_id) = self.delete_confirm_id.clone() {
-            egui::Window::new("Delete cron job")
+            egui::Window::new(&t.text("cron-delete-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
-                    ui.label(format!("Delete cron job '{cron_id}'?"));
+                    ui.label(t.text_args(
+                        "cron-delete-prompt",
+                        HashMap::from([("id", cron_id.clone())]),
+                    ));
                     ui.horizontal(|ui| {
-                        if ui.button("Delete").clicked() {
+                        if ui.button(&t.text("cron-delete-btn")).clicked() {
                             self.delete_cron(&cron_id, notifications);
                             self.delete_confirm_id = None;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(&t.text("cron-delete-cancel")).clicked() {
                             self.delete_confirm_id = None;
                         }
                     });
@@ -886,32 +1017,46 @@ impl PanelRenderer for CronPanel {
     }
 }
 
-fn cron_status_display(status: CronTaskStatus) -> (&'static str, Color32, &'static str) {
-    match status {
-        CronTaskStatus::Pending => ("◷", Color32::from_rgb(140, 140, 140), "pending"),
-        CronTaskStatus::Running => ("◑", Color32::from_rgb(70, 130, 200), "running"),
-        CronTaskStatus::Success => ("✓", Color32::from_rgb(50, 180, 80), "success"),
-        CronTaskStatus::Failed => ("✗", Color32::from_rgb(220, 60, 60), "failed"),
-    }
+fn cron_status_display(status: CronTaskStatus, t: &Translator) -> (&'static str, Color32, String) {
+    let (icon, color) = match status {
+        CronTaskStatus::Pending => ("\u{25d7}", Color32::from_rgb(140, 140, 140)),
+        CronTaskStatus::Running => ("\u{25d1}", Color32::from_rgb(70, 130, 200)),
+        CronTaskStatus::Success => ("\u{2713}", Color32::from_rgb(50, 180, 80)),
+        CronTaskStatus::Failed => ("\u{2717}", Color32::from_rgb(220, 60, 60)),
+    };
+    let text = match status {
+        CronTaskStatus::Pending => t.text("cron-status-pending"),
+        CronTaskStatus::Running => t.text("cron-status-running"),
+        CronTaskStatus::Success => t.text("cron-status-success"),
+        CronTaskStatus::Failed => t.text("cron-status-failed"),
+    };
+    (icon, color, text)
 }
 
-fn cron_kind_display(kind: CronScheduleKind) -> (&'static str, Color32, &'static str) {
-    match kind {
-        CronScheduleKind::Cron => ("C", Color32::from_rgb(0xF5, 0x9E, 0x0B), "cron"),
-        CronScheduleKind::Every => ("E", Color32::from_rgb(0x38, 0xBD, 0xF8), "every"),
-    }
+fn cron_kind_display(kind: CronScheduleKind, t: &Translator) -> (&'static str, Color32, String) {
+    let (icon, color) = match kind {
+        CronScheduleKind::Cron => ("C", Color32::from_rgb(0xF5, 0x9E, 0x0B)),
+        CronScheduleKind::Every => ("E", Color32::from_rgb(0x38, 0xBD, 0xF8)),
+    };
+    let text = match kind {
+        CronScheduleKind::Cron => t.text("cron-kind-cron"),
+        CronScheduleKind::Every => t.text("cron-kind-every"),
+    };
+    (icon, color, text)
 }
 
-fn enabled_display(enabled: bool) -> (&'static str, Color32, &'static str) {
-    if enabled {
-        (
-            regular::CHECK_CIRCLE,
-            Color32::from_rgb(0x22, 0xC5, 0x5E),
-            "yes",
-        )
+fn enabled_display(enabled: bool, t: &Translator) -> (&'static str, Color32, String) {
+    let (icon, color) = if enabled {
+        (regular::CHECK_CIRCLE, Color32::from_rgb(0x22, 0xC5, 0x5E))
     } else {
-        (regular::X_CIRCLE, Color32::from_rgb(0xEF, 0x44, 0x44), "no")
-    }
+        (regular::X_CIRCLE, Color32::from_rgb(0xEF, 0x44, 0x44))
+    };
+    let text = if enabled {
+        t.text("cron-enabled-yes")
+    } else {
+        t.text("cron-enabled-no")
+    };
+    (icon, color, text)
 }
 
 fn render_date_picker(ui: &mut egui::Ui, value: &mut Option<NaiveDate>, id: &str) -> bool {

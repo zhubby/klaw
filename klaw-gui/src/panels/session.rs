@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_millis;
 use crate::widgets::{ChatBox, ChatMessage, ChatRole};
 use chrono::{Datelike, Local, NaiveDate};
@@ -10,6 +11,8 @@ use klaw_session::{
     SessionError, SessionIndex, SessionListQuery, SessionManager, SessionSortOrder,
     SqliteSessionManager,
 };
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
+use std::collections::HashMap;
 use std::{future::Future, sync::mpsc, thread, time::Duration};
 use time::{Month, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::runtime::Builder;
@@ -76,6 +79,10 @@ enum SessionCleanupTaskMessage {
 }
 
 impl SessionPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.loaded {
             return;
@@ -84,6 +91,7 @@ impl SessionPanel {
     }
 
     fn refresh(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let size = self.size.max(1);
         let page = self.page.max(1);
         let offset = (page - 1) * size;
@@ -116,11 +124,13 @@ impl SessionPanel {
                 self.sessions = sessions;
                 self.loaded = true;
             }
-            Err(err) => notifications.error(format!("Failed to load sessions: {err}")),
+            Err(err) => notifications
+                .error(t.text_args("sess-notify-list-failed", HashMap::from([("error", err)]))),
         }
     }
 
     fn load_chat_session(&mut self, session_key: &str, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         let session_key_owned = session_key.to_string();
         match run_session_task(move |manager| async move {
             manager.read_chat_records(&session_key_owned).await
@@ -134,24 +144,31 @@ impl SessionPanel {
                     })
                     .collect();
 
-                let mut chat_box =
-                    ChatBox::new(format!("Chat: {}", session_key)).with_messages(messages);
+                let mut chat_box = ChatBox::new(t.text_args(
+                    "sess-chat-title",
+                    HashMap::from([("key", session_key.to_string())]),
+                ))
+                .with_messages(messages);
                 chat_box.open();
                 self.chat_box = Some(chat_box);
             }
             Err(err) => {
-                notifications.error(format!("Failed to load chat records: {err}"));
+                notifications.error(t.text_args(
+                    "sess-notify-chat-failed",
+                    HashMap::from([("error", err.to_string())]),
+                ));
             }
         }
     }
 
     fn begin_clean_sessions(&mut self, notifications: &mut NotificationCenter) {
+        let t = Self::translator();
         if self.cleanup_request.is_some() {
-            notifications.info("Session cleanup is already in progress.");
+            notifications.info(t.text("sess-clean-already-running"));
             return;
         }
         let Some(query) = self.cleanup_query() else {
-            notifications.error("Select an Updated At date and at least one session type.");
+            notifications.error(t.text("sess-clean-validation-error"));
             return;
         };
 
@@ -176,6 +193,7 @@ impl SessionPanel {
         ctx: &egui::Context,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         let Some(rx) = self.cleanup_request.take() else {
             return;
         };
@@ -189,11 +207,13 @@ impl SessionPanel {
                 Ok(SessionCleanupTaskMessage::Completed(Ok(summary))) => {
                     self.cleanup_progress = None;
                     completed = true;
-                    notifications.success(format!(
-                        "Cleaned {} sessions and deleted {} JSONL files ({} already missing).",
-                        summary.session_records_deleted,
-                        summary.jsonl_files_deleted,
-                        summary.jsonl_files_missing
+                    notifications.success(t.text_args(
+                        "sess-notify-clean-success",
+                        HashMap::from([
+                            ("sessions", summary.session_records_deleted.to_string()),
+                            ("files", summary.jsonl_files_deleted.to_string()),
+                            ("missing", summary.jsonl_files_missing.to_string()),
+                        ]),
                     ));
                     self.refresh(notifications);
                     break;
@@ -201,15 +221,16 @@ impl SessionPanel {
                 Ok(SessionCleanupTaskMessage::Completed(Err(err))) => {
                     self.cleanup_progress = None;
                     completed = true;
-                    notifications.error(format!("Failed to clean sessions: {err}"));
+                    notifications.error(
+                        t.text_args("sess-notify-clean-failed", HashMap::from([("error", err)])),
+                    );
                     break;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.cleanup_progress = None;
                     completed = true;
-                    notifications
-                        .error("Failed to clean sessions: cleanup task stopped unexpectedly");
+                    notifications.error(t.text("sess-notify-clean-disconnected"));
                     break;
                 }
             }
@@ -230,11 +251,12 @@ impl SessionPanel {
         };
     }
 
-    fn updated_at_label(&self) -> &'static str {
+    fn updated_at_label(&self) -> String {
+        let t = Self::translator();
         match self.sort_order {
-            SessionSortOrder::UpdatedAtAsc => "Updated At ↑",
-            SessionSortOrder::UpdatedAtDesc => "Updated At ↓",
-            SessionSortOrder::CreatedAtDesc => "Created At ↓",
+            SessionSortOrder::UpdatedAtAsc => t.text("sess-sort-updated-asc"),
+            SessionSortOrder::UpdatedAtDesc => t.text("sess-sort-updated-desc"),
+            SessionSortOrder::CreatedAtDesc => t.text("sess-sort-created-desc"),
         }
     }
 
@@ -266,6 +288,7 @@ impl SessionPanel {
         ctx: &egui::Context,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         if !self.cleanup_open {
             return;
         }
@@ -273,15 +296,19 @@ impl SessionPanel {
         let mut open = self.cleanup_open;
         let mut should_clean = false;
         let mut should_close = false;
-        egui::Window::new("Clean Sessions")
+        egui::Window::new(t.text("sess-clean-title"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.label("Delete cron/webhook sessions updated before the selected date.");
+                ui.label(t.text("sess-clean-desc"));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.label("Updated At before");
+                    label_with_hint(
+                        ui,
+                        &t.text("sess-clean-updated-before"),
+                        &t.text("sess-clean-desc"),
+                    );
                     if let Some(date) = self.cleanup_updated_before.as_mut() {
                         ui.add(
                             DatePickerButton::new(date)
@@ -291,23 +318,36 @@ impl SessionPanel {
                     }
                 });
                 ui.add_space(8.0);
-                ui.label("Session types");
-                ui.checkbox(&mut self.cleanup_cron, "cron");
-                ui.checkbox(&mut self.cleanup_webhook, "webhook");
+                label_with_hint(
+                    ui,
+                    &t.text("sess-clean-session-types"),
+                    &t.text("sess-clean-hint"),
+                );
+                ui.horizontal(|ui| {
+                    ui.add(toggle(&mut self.cleanup_cron));
+                    ui.label(t.text("sess-clean-type-cron"));
+                });
+                ui.horizontal(|ui| {
+                    ui.add(toggle(&mut self.cleanup_webhook));
+                    ui.label(t.text("sess-clean-type-webhook"));
+                });
                 ui.add_space(8.0);
 
                 if self.cleanup_query().is_none() {
-                    ui.label("Select a date and at least one session type to continue.");
+                    ui.label(t.text("sess-clean-hint"));
                 }
 
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(self.cleanup_query().is_some(), egui::Button::new("Clean"))
+                        .add_enabled(
+                            self.cleanup_query().is_some(),
+                            egui::Button::new(t.text("sess-clean-btn")),
+                        )
                         .clicked()
                     {
                         should_clean = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("sess-clean-cancel")).clicked() {
                         should_close = true;
                     }
                 });
@@ -321,19 +361,20 @@ impl SessionPanel {
     }
 
     fn render_cleanup_progress_dialog(&self, ctx: &egui::Context) {
+        let t = Self::translator();
         if self.cleanup_request.is_none() {
             return;
         }
 
         ctx.request_repaint_after(Duration::from_millis(100));
-        egui::Window::new("Cleaning Sessions")
+        egui::Window::new(t.text("sess-clean-progress-title"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.add(egui::Spinner::new());
-                    ui.label("Cleaning expired cron/webhook sessions...");
+                    ui.label(t.text("sess-clean-progress-label"));
                 });
                 ui.add_space(8.0);
                 let progress = self.cleanup_progress.clone().unwrap_or_default();
@@ -346,14 +387,23 @@ impl SessionPanel {
                     egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
                         .desired_width(360.0)
                         .show_percentage()
-                        .text(format!(
-                            "{} / {}",
-                            progress.deleted_sessions, progress.total_sessions
+                        .text(t.text_args(
+                            "sess-clean-progress-bar",
+                            HashMap::from([
+                                ("deleted", progress.deleted_sessions.to_string()),
+                                ("total", progress.total_sessions.to_string()),
+                            ]),
                         )),
                 );
-                ui.label(format!("Total: {}", progress.total_sessions));
-                ui.label(format!("Deleted: {}", progress.deleted_sessions));
-                ui.small("This dialog will close automatically when cleanup finishes.");
+                ui.label(t.text_args(
+                    "sess-clean-progress-total",
+                    HashMap::from([("count", progress.total_sessions.to_string())]),
+                ));
+                ui.label(t.text_args(
+                    "sess-clean-progress-deleted",
+                    HashMap::from([("count", progress.deleted_sessions.to_string())]),
+                ));
+                ui.small(t.text("sess-clean-progress-footer"));
             });
     }
 }
@@ -365,21 +415,37 @@ impl PanelRenderer for SessionPanel {
         ctx: &RenderCtx<'_>,
         notifications: &mut NotificationCenter,
     ) {
+        let t = Self::translator();
         self.ensure_loaded(notifications);
         self.poll_cleanup_request(ui.ctx(), notifications);
 
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui
+                .button(t.text_args(
+                    "sess-btn-refresh",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
+                .clicked()
+            {
                 self.refresh(notifications);
             }
-            if ui.button("Clean").clicked() {
+            if ui
+                .button(t.text_args(
+                    "sess-btn-clean",
+                    HashMap::from([("icon", regular::TRASH.to_string())]),
+                ))
+                .clicked()
+            {
                 if self.cleanup_updated_before.is_none() {
                     self.cleanup_updated_before = Some(Local::now().date_naive());
                 }
                 self.cleanup_open = true;
             }
-            ui.label(format!("Sessions: {}", self.total_count));
+            ui.label(t.text_args(
+                "sess-label-count",
+                HashMap::from([("count", self.total_count.to_string())]),
+            ));
         });
 
         ui.separator();
@@ -389,24 +455,32 @@ impl PanelRenderer for SessionPanel {
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Start Date");
+                    ui.label(t.text("sess-filter-start-date"));
                     if render_date_picker(ui, &mut self.start_date, "session-start-date") {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("End Date");
+                    ui.label(t.text("sess-filter-end-date"));
                     if render_date_picker(ui, &mut self.end_date, "session-end-date") {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Channel");
+                    ui.label(t.text("sess-filter-channel"));
                     let combo_resp = egui::ComboBox::from_id_salt("session-channel-filter")
-                        .selected_text(self.channel_filter.as_deref().unwrap_or("All"))
+                        .selected_text(
+                            self.channel_filter
+                                .as_deref()
+                                .unwrap_or(&t.text("sess-filter-channel-all")),
+                        )
                         .width(140.0)
                         .show_ui(ui, |ui| {
                             let mut changed = false;
                             if ui
-                                .selectable_value(&mut self.channel_filter, None, "All")
+                                .selectable_value(
+                                    &mut self.channel_filter,
+                                    None,
+                                    t.text("sess-filter-channel-all"),
+                                )
                                 .changed()
                             {
                                 changed = true;
@@ -430,7 +504,7 @@ impl PanelRenderer for SessionPanel {
                         need_refresh = true;
                     }
                     ui.separator();
-                    ui.label("Page");
+                    ui.label(t.text("sess-filter-page"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -440,7 +514,7 @@ impl PanelRenderer for SessionPanel {
                     {
                         need_refresh = true;
                     }
-                    ui.label("Size");
+                    ui.label(t.text("sess-filter-size"));
                     if ui
                         .add_sized(
                             [PAGING_INPUT_WIDTH, ui.spacing().interact_size.y],
@@ -467,7 +541,7 @@ impl PanelRenderer for SessionPanel {
             .show(ui, |ui| {
                 ui.set_min_width(table_width);
                 if self.sessions.is_empty() {
-                    ui.label("No sessions found.");
+                    ui.label(t.text("sess-no-rows"));
                     return;
                 }
 
@@ -492,34 +566,34 @@ impl PanelRenderer for SessionPanel {
                     .sense(egui::Sense::click())
                     .header(20.0, |mut header| {
                         header.col(|ui| {
-                            ui.strong("Session Key");
+                            ui.strong(t.text("sess-col-session-key"));
                         });
                         header.col(|ui| {
-                            ui.strong("Chat ID");
+                            ui.strong(t.text("sess-col-chat-id"));
                         });
                         header.col(|ui| {
-                            ui.strong("Channel");
+                            ui.strong(t.text("sess-col-channel"));
                         });
                         header.col(|ui| {
-                            ui.strong("Active Session");
+                            ui.strong(t.text("sess-col-active-session"));
                         });
                         header.col(|ui| {
-                            ui.strong("Provider");
+                            ui.strong(t.text("sess-col-provider"));
                         });
                         header.col(|ui| {
-                            ui.strong("Model");
+                            ui.strong(t.text("sess-col-model"));
                         });
                         header.col(|ui| {
-                            ui.strong("Turns");
+                            ui.strong(t.text("sess-col-turns"));
                         });
                         header.col(|ui| {
-                            ui.strong("Input");
+                            ui.strong(t.text("sess-col-input"));
                         });
                         header.col(|ui| {
-                            ui.strong("Output");
+                            ui.strong(t.text("sess-col-output"));
                         });
                         header.col(|ui| {
-                            ui.strong("Total");
+                            ui.strong(t.text("sess-col-total"));
                         });
                         header.col(|ui| {
                             if ui.button(self.updated_at_label()).clicked() {
@@ -528,7 +602,7 @@ impl PanelRenderer for SessionPanel {
                             }
                         });
                         header.col(|ui| {
-                            ui.strong("JSONL Path");
+                            ui.strong(t.text("sess-col-jsonl-path"));
                         });
                     })
                     .body(|body| {
@@ -594,14 +668,23 @@ impl PanelRenderer for SessionPanel {
 
                             response.context_menu(|ui| {
                                 if ui
-                                    .button(format!("{} View Chat", regular::CHATS_CIRCLE))
+                                    .button(t.text_args(
+                                        "sess-ctx-view-chat",
+                                        HashMap::from([(
+                                            "icon",
+                                            regular::CHATS_CIRCLE.to_string(),
+                                        )]),
+                                    ))
                                     .clicked()
                                 {
                                     view_session_key = Some(session.session_key.clone());
                                     ui.close();
                                 }
                                 if ui
-                                    .button(format!("{} Copy Session Key", regular::KEY))
+                                    .button(t.text_args(
+                                        "sess-ctx-copy-key",
+                                        HashMap::from([("icon", regular::KEY.to_string())]),
+                                    ))
                                     .clicked()
                                 {
                                     ui.ctx().output_mut(|o| {
