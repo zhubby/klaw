@@ -1,13 +1,14 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::terminal_palette::palette_for_theme;
 use crate::panels::{PanelRenderer, RenderCtx};
+use egui_dock::tab_viewer::OnCloseResponse;
+use egui_dock::{DockArea, DockState, NodeIndex, Style, SurfaceIndex};
 use egui_term::{BackendSettings, PtyEvent, TerminalBackend, TerminalTheme, TerminalView};
 use klaw_util::default_workspace_dir;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 
-const TERMINAL_ID: u64 = 0;
 const MIN_TERMINAL_HEIGHT: f32 = 220.0;
 
 struct TerminalSession {
@@ -18,31 +19,13 @@ struct TerminalSession {
     working_directory: PathBuf,
 }
 
-#[derive(Default)]
-pub struct TerminalPanel {
-    session: Option<TerminalSession>,
-    start_error: Option<String>,
-    exit_notice: Option<String>,
-}
-
-impl TerminalPanel {
-    fn ensure_session(&mut self, ctx: &egui::Context, notifications: &mut NotificationCenter) {
-        if self.session.is_some() || self.start_error.is_some() {
-            return;
-        }
-
-        if let Err(err) = self.start_session(ctx) {
-            self.start_error = Some(err.clone());
-            notifications.error(format!("Failed to start terminal: {err}"));
-        }
-    }
-
-    fn start_session(&mut self, ctx: &egui::Context) -> Result<(), String> {
+impl TerminalSession {
+    fn start(id: u64, ctx: &egui::Context) -> Result<Self, String> {
         let working_directory = resolve_working_directory()?;
         let shell = default_shell();
         let (event_tx, event_rx) = mpsc::channel();
         let backend = TerminalBackend::new(
-            TERMINAL_ID,
+            id,
             ctx.clone(),
             event_tx,
             BackendSettings {
@@ -54,34 +37,45 @@ impl TerminalPanel {
         .map_err(|err| err.to_string())?;
         let pty_id = backend.pty_id();
 
-        self.exit_notice = None;
-        self.start_error = None;
-        self.session = Some(TerminalSession {
+        Ok(Self {
             backend,
             event_rx,
             pty_id,
             shell,
             working_directory,
-        });
-        Ok(())
+        })
     }
+}
 
-    fn restart_session(&mut self, ctx: &egui::Context, notifications: &mut NotificationCenter) {
-        self.stop_session();
-        match self.start_session(ctx) {
-            Ok(()) => notifications.success("Terminal restarted"),
-            Err(err) => {
-                self.start_error = Some(err.clone());
-                notifications.error(format!("Failed to restart terminal: {err}"));
-            }
+struct TerminalTab {
+    id: u64,
+    title: String,
+    session: Option<TerminalSession>,
+    start_error: Option<String>,
+    exit_notice: Option<String>,
+}
+
+impl TerminalTab {
+    fn start(id: u64, ctx: &egui::Context) -> Self {
+        match TerminalSession::start(id, ctx) {
+            Ok(session) => Self {
+                id,
+                title: format!("Terminal {id}"),
+                session: Some(session),
+                start_error: None,
+                exit_notice: None,
+            },
+            Err(err) => Self {
+                id,
+                title: format!("Terminal {id}"),
+                session: None,
+                start_error: Some(err),
+                exit_notice: None,
+            },
         }
     }
 
-    fn stop_session(&mut self) {
-        self.session = None;
-    }
-
-    fn poll_events(&mut self, notifications: &mut NotificationCenter) {
+    fn poll_events(&mut self) -> bool {
         let mut exited = false;
         while let Some(session) = self.session.as_mut() {
             match session.event_rx.try_recv() {
@@ -99,37 +93,57 @@ impl TerminalPanel {
         }
 
         if exited {
-            self.stop_session();
-            self.exit_notice =
-                Some("Shell exited. Start or restart the terminal to continue.".into());
-            notifications.info("Terminal shell exited");
+            self.session = None;
+            self.exit_notice = Some("Shell exited. Close this tab or open a new terminal.".into());
+            self.title = format!("Terminal {} (exited)", self.id);
+        }
+
+        exited
+    }
+}
+
+pub struct TerminalPanel {
+    dock_state: DockState<TerminalTab>,
+    next_session_id: u64,
+}
+
+impl Default for TerminalPanel {
+    fn default() -> Self {
+        Self {
+            dock_state: DockState::new(Vec::new()),
+            next_session_id: 1,
+        }
+    }
+}
+
+impl TerminalPanel {
+    fn ensure_initial_tab(&mut self, ctx: &egui::Context, notifications: &mut NotificationCenter) {
+        if self.dock_state.iter_all_tabs().next().is_none() {
+            self.add_session_tab(ctx, notifications);
         }
     }
 
-    fn render_toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        notifications: &mut NotificationCenter,
-        ctx: &egui::Context,
-    ) {
-        let running = self.session.is_some();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!running, egui::Button::new("Start"))
-                .clicked()
-            {
-                self.start_error = None;
-                self.ensure_session(ctx, notifications);
+    fn add_session_tab(&mut self, ctx: &egui::Context, notifications: &mut NotificationCenter) {
+        let id = self.next_session_id;
+        self.next_session_id += 1;
+        let tab = TerminalTab::start(id, ctx);
+        if let Some(err) = &tab.start_error {
+            notifications.error(format!("Failed to start terminal: {err}"));
+        }
+        self.dock_state.push_to_focused_leaf(tab);
+    }
+
+    fn poll_events(&mut self, notifications: &mut NotificationCenter) {
+        let mut exited_tabs = Vec::new();
+        for (_, tab) in self.dock_state.iter_all_tabs_mut() {
+            if tab.poll_events() {
+                exited_tabs.push(tab.id);
             }
-            if ui.button("Restart").clicked() {
-                self.restart_session(ctx, notifications);
-            }
-            if ui.add_enabled(running, egui::Button::new("Stop")).clicked() {
-                self.stop_session();
-                self.exit_notice = Some("Terminal stopped.".to_string());
-                notifications.info("Terminal stopped");
-            }
-        });
+        }
+
+        for id in exited_tabs {
+            notifications.info(format!("Terminal {id} shell exited"));
+        }
     }
 }
 
@@ -141,14 +155,60 @@ impl PanelRenderer for TerminalPanel {
         notifications: &mut NotificationCenter,
     ) {
         let egui_ctx = ui.ctx().clone();
-        self.ensure_session(&egui_ctx, notifications);
+        self.ensure_initial_tab(&egui_ctx, notifications);
         self.poll_events(notifications);
 
         ui.heading(ctx.tab_title);
-        self.render_toolbar(ui, notifications, &egui_ctx);
         ui.separator();
 
-        if let Some(session) = &self.session {
+        let mut add_requested = false;
+        DockArea::new(&mut self.dock_state)
+            .id(egui::Id::new("terminal_panel_dock"))
+            .style(Style::from_egui(ui.style().as_ref()))
+            .show_add_buttons(true)
+            .show_close_buttons(true)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .show_inside(
+                ui,
+                &mut TerminalTabViewer {
+                    is_dark_mode: ctx.is_dark_mode,
+                    light_theme: ctx.light_theme,
+                    dark_theme: ctx.dark_theme,
+                    add_requested: &mut add_requested,
+                },
+            );
+
+        if add_requested {
+            self.add_session_tab(&egui_ctx, notifications);
+        }
+    }
+
+    fn on_tab_closed(&mut self) {
+        self.dock_state = DockState::new(Vec::new());
+    }
+}
+
+struct TerminalTabViewer<'a> {
+    is_dark_mode: bool,
+    light_theme: crate::state::LightThemePreset,
+    dark_theme: crate::state::DarkThemePreset,
+    add_requested: &'a mut bool,
+}
+
+impl egui_dock::TabViewer for TerminalTabViewer<'_> {
+    type Tab = TerminalTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        tab.title.clone().into()
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("terminal-tab", tab.id))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        if let Some(session) = &tab.session {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Shell:");
                 ui.monospace(&session.shell);
@@ -160,17 +220,17 @@ impl PanelRenderer for TerminalPanel {
                 ui.monospace(session.working_directory.display().to_string());
             });
             ui.add_space(8.0);
-        } else if let Some(message) = &self.exit_notice {
+        } else if let Some(message) = &tab.exit_notice {
             ui.label(message);
             ui.add_space(8.0);
         }
 
-        if let Some(message) = &self.start_error {
+        if let Some(message) = &tab.start_error {
             ui.colored_label(ui.visuals().error_fg_color, message);
             return;
         }
 
-        let Some(session) = self.session.as_mut() else {
+        let Some(session) = tab.session.as_mut() else {
             ui.label("Terminal is not running.");
             return;
         };
@@ -179,7 +239,7 @@ impl PanelRenderer for TerminalPanel {
             ui.available_width(),
             ui.available_height().max(MIN_TERMINAL_HEIGHT),
         );
-        let palette = palette_for_theme(ctx.is_dark_mode, ctx.light_theme, ctx.dark_theme);
+        let palette = palette_for_theme(self.is_dark_mode, self.light_theme, self.dark_theme);
         let terminal = TerminalView::new(ui, &mut session.backend)
             .set_focus(true)
             .set_size(terminal_size)
@@ -187,10 +247,16 @@ impl PanelRenderer for TerminalPanel {
         ui.add(terminal);
     }
 
-    fn on_tab_closed(&mut self) {
-        self.stop_session();
-        self.exit_notice = Some("Terminal closed with the tab.".to_string());
-        self.start_error = None;
+    fn on_close(&mut self, _tab: &mut Self::Tab) -> OnCloseResponse {
+        OnCloseResponse::Close
+    }
+
+    fn on_add(&mut self, _surface: SurfaceIndex, _node: NodeIndex) {
+        *self.add_requested = true;
+    }
+
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false]
     }
 }
 

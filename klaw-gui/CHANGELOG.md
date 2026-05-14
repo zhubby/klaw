@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-05-14
+
+### Added
+
+- Terminal 面板现在通过 `egui_dock` tab 承载多个独立 `egui_term` 会话。
+
+### Changed
+
+- Terminal 面板移除 Start / Restart / Stop 顶部按钮，改用 tab 栏的新增、切换和关闭交互管理终端会话。
+
 ## 2026-05-13
 
 ### Fixed

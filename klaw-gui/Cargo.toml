@@ -8,6 +8,7 @@ license.workspace = true
 anyhow = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+egui_dock = { workspace = true }
 egui_term = { workspace = true }
 egui_commonmark = { workspace = true }
 egui_json_tree = { workspace = true }

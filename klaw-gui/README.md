@@ -31,7 +31,7 @@
 - Workbench panel renderers for:
   - profile (workspace markdown doc cards + editor window + runtime system prompt preview)
   - configuration
-  - terminal (embedded `egui_term` PTY view with start/restart/stop controls, default workspace working directory, and tab-close cleanup)
+  - terminal (embedded `egui_term` PTY views in `egui_dock` tabs, default workspace working directory, per-tab session cleanup, and tab-bar session creation)
   - model provider (config-bound list + add/edit window)
   - local models (Hugging Face repo snapshot install dialog, per-file progress dialog, cancellation, selectable asset table with upgrade/delete context actions, and per-model GGUF default file selection)
   - channel (config-bound list + add/edit window)
