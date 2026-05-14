@@ -2,8 +2,13 @@ use crate::{
     RuntimeBundle, submit_channel_request, submit_channel_request_streaming_with_callback,
 };
 use async_trait::async_trait;
-use klaw_channel::{ChannelResponse, websocket::WebsocketSubmitEnvelope};
-use klaw_config::{AppConfig, WebsocketConfig};
+use klaw_archive::{ArchiveIngestInput, ArchiveRecord, ArchiveSourceKind};
+use klaw_channel::{
+    ChannelResponse, LocalAttachmentPolicy, OutboundAttachment, OutboundAttachmentKind,
+    OutboundAttachmentSource, outbound::resolve_outbound_attachment,
+    websocket::WebsocketSubmitEnvelope,
+};
+use klaw_config::{AppConfig, LocalAttachmentConfig, WebsocketConfig};
 use klaw_core::{MediaReference, MediaSourceKind};
 use klaw_gateway::{
     GatewayProtocolMethod, GatewayProviderCatalog, GatewayProviderEntry, GatewayRpcMessage,
@@ -17,9 +22,13 @@ use klaw_gateway::{
 use klaw_heartbeat::{HeartbeatManager, should_exclude_chat_record_from_context};
 use klaw_session::{SessionHistoryPage, SessionListQuery, SessionManager};
 use klaw_storage::{ChatRecord, StorageError};
+use klaw_util::{default_data_dir, workspace_dir};
+use serde::Serialize;
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use uuid::Uuid;
+
+const META_ARCHIVE_RESOURCES_KEY: &str = "archive.resources";
 
 pub fn build_gateway_websocket_handler(
     runtime: Arc<RuntimeBundle>,
@@ -31,6 +40,7 @@ pub fn build_gateway_websocket_handler(
 struct RuntimeWebsocketHandler {
     runtime: Arc<RuntimeBundle>,
     configs: BTreeMap<String, WebsocketConfig>,
+    local_attachments: LocalAttachmentConfig,
 }
 
 impl RuntimeWebsocketHandler {
@@ -42,7 +52,11 @@ impl RuntimeWebsocketHandler {
             .cloned()
             .map(|entry| (entry.id.clone(), entry))
             .collect();
-        Self { runtime, configs }
+        Self {
+            runtime,
+            configs,
+            local_attachments: config.tools.channel_attachment.local_attachments.clone(),
+        }
     }
 
     fn resolve_config(
@@ -75,6 +89,127 @@ impl RuntimeWebsocketHandler {
                 .await
                 .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
         Ok(build_web_workspace_bootstrap(sessions))
+    }
+
+    fn local_attachment_policy(
+        &self,
+    ) -> Result<LocalAttachmentPolicy, GatewayWebsocketHandlerError> {
+        let root = default_data_dir()
+            .ok_or_else(|| GatewayWebsocketHandlerError::internal("failed to resolve home dir"))?;
+        let workspace = workspace_dir(&root);
+        std::fs::create_dir_all(&workspace)
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        let workspace_root = std::fs::canonicalize(&workspace)
+            .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        let allowlist = self
+            .local_attachments
+            .allowlist
+            .iter()
+            .map(|path| PathBuf::from(path.trim()))
+            .collect();
+        Ok(LocalAttachmentPolicy {
+            workspace_root,
+            allowlist,
+            max_bytes: self.local_attachments.max_bytes,
+        })
+    }
+
+    async fn enrich_web_archive_resources(
+        &self,
+        response: &mut ChannelResponse,
+        context: &GatewayV1StreamContext,
+    ) -> Result<(), GatewayWebsocketHandlerError> {
+        if response.attachments.is_empty() {
+            return Ok(());
+        }
+        let Some(archive_service) = self.runtime.archive_service.as_ref() else {
+            return Ok(());
+        };
+        let local_policy = self.local_attachment_policy()?;
+        let mut resources = Vec::new();
+        for attachment in &response.attachments {
+            let resource = match &attachment.source {
+                OutboundAttachmentSource::ArchiveId { archive_id } => {
+                    let record = archive_service.get(archive_id).await.map_err(|err| {
+                        GatewayWebsocketHandlerError::internal(format!(
+                            "failed to load archive attachment `{archive_id}`: {err}"
+                        ))
+                    })?;
+                    resource_from_archive_record(attachment, record)
+                }
+                OutboundAttachmentSource::LocalPath { .. } => {
+                    let resolved = resolve_outbound_attachment(
+                        archive_service.as_ref(),
+                        &local_policy,
+                        attachment,
+                    )
+                    .await
+                    .map_err(|err| {
+                        GatewayWebsocketHandlerError::internal(format!(
+                            "failed to resolve local websocket attachment: {err}"
+                        ))
+                    })?;
+                    let record = archive_service
+                        .ingest_bytes(
+                            ArchiveIngestInput {
+                                source_kind: ArchiveSourceKind::ModelGenerated,
+                                filename: Some(resolved.filename),
+                                declared_mime_type: resolved.mime_type,
+                                session_key: Some(context.session_id.clone()),
+                                channel: Some("websocket".to_string()),
+                                chat_id: Some(context.thread_id.clone()),
+                                message_id: None,
+                                metadata: json!({
+                                    "source": "channel_attachment",
+                                    "source_label": resolved.source_label,
+                                    "caption": resolved.caption,
+                                }),
+                            },
+                            &resolved.bytes,
+                        )
+                        .await
+                        .map_err(|err| {
+                            GatewayWebsocketHandlerError::internal(format!(
+                                "failed to archive websocket attachment: {err}"
+                            ))
+                        })?;
+                    resource_from_archive_record(attachment, record)
+                }
+            };
+            resources.push(resource);
+        }
+        response
+            .metadata
+            .insert(META_ARCHIVE_RESOURCES_KEY.to_string(), json!(resources));
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WebArchiveResource {
+    archive_id: String,
+    filename: Option<String>,
+    mime_type: Option<String>,
+    size_bytes: i64,
+    kind: String,
+    caption: Option<String>,
+}
+
+fn resource_from_archive_record(
+    attachment: &OutboundAttachment,
+    record: ArchiveRecord,
+) -> WebArchiveResource {
+    WebArchiveResource {
+        archive_id: record.id,
+        filename: attachment.filename.clone().or(record.original_filename),
+        mime_type: record.mime_type,
+        size_bytes: record.size_bytes,
+        kind: match attachment.kind {
+            OutboundAttachmentKind::Image => "image",
+            OutboundAttachmentKind::File => "file",
+        }
+        .to_string(),
+        caption: attachment.caption.clone(),
     }
 }
 
@@ -340,7 +475,7 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
 
         if stream_output {
             let mut stream_state = GatewayStreamState::new(v1_context.clone());
-            let response = submit_channel_request_streaming_with_callback(
+            let mut response = submit_channel_request_streaming_with_callback(
                 self.runtime.as_ref(),
                 channel_request,
                 |event| {
@@ -355,6 +490,10 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
             )
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+            if let Some(response) = response.as_mut() {
+                self.enrich_web_archive_resources(response, &v1_context)
+                    .await?;
+            }
             send_v1_item_completed(
                 &frame_tx,
                 &v1_context,
@@ -373,9 +512,13 @@ impl GatewayWebsocketHandler for RuntimeWebsocketHandler {
             return Ok(());
         }
 
-        let response = submit_channel_request(self.runtime.as_ref(), channel_request)
+        let mut response = submit_channel_request(self.runtime.as_ref(), channel_request)
             .await
             .map_err(|err| GatewayWebsocketHandlerError::internal(err.to_string()))?;
+        if let Some(response) = response.as_mut() {
+            self.enrich_web_archive_resources(response, &v1_context)
+                .await?;
+        }
         send_v1_item_completed(
             &frame_tx,
             &v1_context,

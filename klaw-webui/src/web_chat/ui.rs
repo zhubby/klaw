@@ -14,15 +14,18 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     ActiveSlashCommand, ConnectionState, ImCard, ImCardAction, ImCardActionKind, ImCardKind,
-    MessageRole, PageMode, SlashCommandCompletion, WebArchiveAttachment, apply_slash_completion,
-    attachment_action_in_progress, can_trigger_file_picker, delete_confirmation_body,
-    derive_page_mode, detect_active_slash_command, has_exact_slash_command_match,
-    normalize_gateway_token_input, resolve_assistant_bubble_palette, resolve_im_card_palette,
-    should_activate_session_window, should_show_thinking_placeholder, slash_command_matches,
+    MessageRole, PageMode, SlashCommandCompletion, WebArchiveAttachment, WebArchiveResource,
+    apply_slash_completion, attachment_action_in_progress, can_trigger_file_picker,
+    delete_confirmation_body, derive_page_mode, detect_active_slash_command,
+    has_exact_slash_command_match, normalize_gateway_token_input, resolve_assistant_bubble_palette,
+    resolve_im_card_palette, should_activate_session_window, should_show_thinking_placeholder,
+    slash_command_matches,
 };
 
 use super::{
-    app::ChatApp,
+    app::{
+        ArchivePreviewDialog, ArchivePreviewStatus, ChatApp, web_archive_resource_from_attachment,
+    },
     markdown::{MarkdownCache, render_markdown, render_plain_message},
     session::{
         BUBBLE_MAX_WIDTH, CardInteractionState, ChatMessage, INPUT_PANEL_HEIGHT,
@@ -437,6 +440,66 @@ impl ChatApp {
         self.show_about_dialog = open && !close_requested;
     }
 
+    fn render_archive_preview_dialog(&mut self, ctx: &Context) {
+        let Some(dialog) = self.archive_preview.borrow().clone() else {
+            return;
+        };
+        let mut open = true;
+        let mut close_requested = false;
+        egui::Window::new("Resource Preview")
+            .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .default_size(vec2(720.0, 560.0))
+            .min_width(420.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                render_archive_preview_header(ui, &dialog);
+                ui.separator();
+                match &dialog.status {
+                    ArchivePreviewStatus::Loading => {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(24.0);
+                            ui.spinner();
+                            ui.add_space(8.0);
+                            ui.label("Loading preview...");
+                        });
+                    }
+                    ArchivePreviewStatus::Ready {
+                        object_url,
+                        content_type,
+                    } => {
+                        if preview_status_is_image(&dialog, content_type.as_deref()) {
+                            ScrollArea::both().show(ui, |ui| {
+                                ui.add(
+                                    Image::from_uri(object_url.clone())
+                                        .max_width(ui.available_width())
+                                        .maintain_aspect_ratio(true),
+                                );
+                            });
+                        } else {
+                            render_file_preview_body(ui, &dialog, object_url);
+                        }
+                    }
+                    ArchivePreviewStatus::Failed(message) => {
+                        ui.label(
+                            RichText::new(format!("Preview failed: {message}"))
+                                .color(ui.visuals().error_fg_color),
+                        );
+                    }
+                }
+                ui.separator();
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        if close_requested || !open {
+            *self.archive_preview.borrow_mut() = None;
+        }
+    }
+
     fn active_session(&self) -> Option<&SessionWindow> {
         let active_session_key = self.active_session_key.as_deref()?;
         self.sessions
@@ -747,7 +810,7 @@ impl ChatApp {
         let mut trigger_card_action: Option<CardActionRequest> = None;
         let mut trigger_history_load: Option<PendingHistoryScrollRestore> = None;
         let mut trigger_open_file_dialog = false;
-        let mut trigger_preview_attachment: Option<String> = None;
+        let mut trigger_preview_attachment: Option<WebArchiveResource> = None;
         let mut remove_attachment_at: Option<usize> = None;
         let mut set_active = false;
         {
@@ -811,6 +874,7 @@ impl ChatApp {
                                     &messages,
                                     message_index,
                                     &session.card_state_overrides,
+                                    &mut trigger_preview_attachment,
                                 ) {
                                     card_action = Some(action);
                                 }
@@ -1175,8 +1239,8 @@ impl ChatApp {
         if trigger_file_picker {
             self.trigger_file_picker(session_key);
         }
-        if let Some(archive_id) = trigger_preview_attachment {
-            self.preview_archive_attachment(&archive_id);
+        if let Some(resource) = trigger_preview_attachment {
+            self.preview_archive_attachment(resource);
         }
         if trigger_send {
             self.send_session_draft(session_key);
@@ -1308,6 +1372,7 @@ impl eframe::App for ChatApp {
         self.render_about_dialog(ctx);
         self.render_rename_dialog(ctx);
         self.render_delete_dialog(ctx);
+        self.render_archive_preview_dialog(ctx);
         self.toasts.borrow_mut().show(ctx);
     }
 }
@@ -1329,7 +1394,7 @@ fn user_bubble_inner_max_width(
 
     let body_w = {
         let t = message.text.as_str();
-        let attachments = message_attachments(message);
+        let attachments = message_resources(message);
         let text_width = if t.trim().is_empty() {
             0.0
         } else {
@@ -1455,6 +1520,7 @@ fn render_message(
     messages: &[ChatMessage],
     message_index: usize,
     card_state_overrides: &HashMap<String, CardInteractionState>,
+    trigger_preview_attachment: &mut Option<WebArchiveResource>,
 ) -> Option<CardActionRequest> {
     let now_ms = current_timestamp_ms();
     let time_label = format_message_timestamp(message.timestamp_ms, now_ms);
@@ -1564,6 +1630,7 @@ fn render_message(
                                     message,
                                     body_color,
                                     link_color,
+                                    trigger_preview_attachment,
                                 );
                             }
                         });
@@ -1965,8 +2032,9 @@ fn render_message_body(
     message: &ChatMessage,
     body_color: Color32,
     link_color: Color32,
+    trigger_preview_attachment: &mut Option<WebArchiveResource>,
 ) {
-    let attachments = message_attachments(message);
+    let attachments = message_resources(message);
     let has_text = !message.text.trim().is_empty();
     let has_attachments = !attachments.is_empty();
 
@@ -2002,25 +2070,216 @@ fn render_message_body(
     if has_attachments {
         ui.vertical(|ui| {
             for attachment in attachments {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(regular::FILE).color(body_color));
-                    ui.label(
-                        RichText::new(attachment.filename.unwrap_or_else(|| "unknown".to_string()))
-                            .color(body_color),
-                    );
-                });
+                render_resource_card(ui, &attachment, body_color, trigger_preview_attachment);
             }
         });
     }
 }
 
-fn message_attachments(message: &ChatMessage) -> Vec<WebArchiveAttachment> {
-    message
+fn message_resources(message: &ChatMessage) -> Vec<WebArchiveResource> {
+    if let Some(resources) = message
+        .metadata
+        .get("archive.resources")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<WebArchiveResource>>(value).ok())
+        .filter(|resources| !resources.is_empty())
+    {
+        return resources;
+    }
+
+    if let Some(attachments) = message
         .metadata
         .get("attachments")
         .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
+        .and_then(|value| serde_json::from_value::<Vec<WebArchiveAttachment>>(value).ok())
+        .filter(|attachments| !attachments.is_empty())
+    {
+        return attachments
+            .into_iter()
+            .map(web_archive_resource_from_attachment)
+            .collect();
+    }
+
+    message
+        .metadata
+        .get("channel.attachments")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<serde_json::Value>>(value).ok())
         .unwrap_or_default()
+        .into_iter()
+        .filter_map(resource_from_channel_attachment)
+        .collect()
+}
+
+fn resource_from_channel_attachment(value: serde_json::Value) -> Option<WebArchiveResource> {
+    let archive_id = value
+        .get("archive_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    Some(WebArchiveResource {
+        archive_id,
+        filename: value
+            .get("filename")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        mime_type: value
+            .get("mime_type")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        size_bytes: value
+            .get("size_bytes")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or_default(),
+        kind: value
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        caption: value
+            .get("caption")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+    })
+}
+
+fn render_resource_card(
+    ui: &mut egui::Ui,
+    resource: &WebArchiveResource,
+    body_color: Color32,
+    trigger_preview_attachment: &mut Option<WebArchiveResource>,
+) {
+    let icon = if resource_is_image(resource) {
+        regular::IMAGE
+    } else {
+        regular::FILE
+    };
+    Frame::group(ui.style())
+        .fill(ui.visuals().extreme_bg_color)
+        .stroke(Stroke::new(
+            1.0,
+            ui.visuals().widgets.noninteractive.bg_stroke.color,
+        ))
+        .corner_radius(6.0)
+        .inner_margin(8.0)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(icon).color(body_color));
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(resource.filename.as_deref().unwrap_or("attachment"))
+                            .strong()
+                            .color(body_color),
+                    );
+                    ui.label(RichText::new(resource_meta_label(resource)).small().weak());
+                    if let Some(caption) = resource.caption.as_deref() {
+                        ui.label(RichText::new(caption).small().color(body_color));
+                    }
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .button(format!("{} Preview", regular::EYE))
+                        .on_hover_text("Preview archive resource")
+                        .clicked()
+                    {
+                        *trigger_preview_attachment = Some(resource.clone());
+                    }
+                });
+            });
+        });
+}
+
+fn resource_meta_label(resource: &WebArchiveResource) -> String {
+    let mut parts = Vec::new();
+    if let Some(mime_type) = resource.mime_type.as_deref() {
+        parts.push(mime_type.to_string());
+    } else if let Some(kind) = resource.kind.as_deref() {
+        parts.push(kind.to_string());
+    }
+    if resource.size_bytes > 0 {
+        parts.push(format_file_size(resource.size_bytes));
+    }
+    parts.push(resource.archive_id.clone());
+    parts.join(" · ")
+}
+
+fn resource_is_image(resource: &WebArchiveResource) -> bool {
+    resource
+        .mime_type
+        .as_deref()
+        .is_some_and(|mime_type| mime_type.starts_with("image/"))
+        || resource
+            .kind
+            .as_deref()
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("image"))
+}
+
+fn preview_status_is_image(dialog: &ArchivePreviewDialog, content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|content_type| content_type.starts_with("image/"))
+        || resource_is_image(&dialog.resource)
+}
+
+fn render_archive_preview_header(ui: &mut egui::Ui, dialog: &ArchivePreviewDialog) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(if resource_is_image(&dialog.resource) {
+            regular::IMAGE
+        } else {
+            regular::FILE
+        }));
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new(
+                    dialog
+                        .resource
+                        .filename
+                        .as_deref()
+                        .unwrap_or("archive resource"),
+                )
+                .strong(),
+            );
+            ui.label(
+                RichText::new(resource_meta_label(&dialog.resource))
+                    .small()
+                    .weak(),
+            );
+        });
+    });
+}
+
+fn render_file_preview_body(ui: &mut egui::Ui, dialog: &ArchivePreviewDialog, object_url: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(24.0);
+        ui.label(RichText::new(regular::FILE).size(42.0));
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(
+                dialog
+                    .resource
+                    .filename
+                    .as_deref()
+                    .unwrap_or("archive resource"),
+            )
+            .strong(),
+        );
+        ui.label(
+            RichText::new(resource_meta_label(&dialog.resource))
+                .small()
+                .weak(),
+        );
+        ui.add_space(12.0);
+        if ui
+            .button(format!("{} Open", regular::ARROW_SQUARE_OUT))
+            .clicked()
+            && let Some(window) = web_sys::window()
+        {
+            let _ = window.open_with_url_and_target(object_url, "_blank");
+        }
+    });
 }
 
 fn compact_sidebar_title(title: &str) -> String {
@@ -2221,7 +2480,7 @@ fn render_session_file_dialog(
     ctx: &Context,
     open: &mut bool,
     attachments: &[WebArchiveAttachment],
-    trigger_preview_attachment: &mut Option<String>,
+    trigger_preview_attachment: &mut Option<WebArchiveResource>,
     remove_attachment_at: &mut Option<usize>,
 ) {
     let mut keep_open = *open;
@@ -2309,12 +2568,13 @@ fn render_attachment_context_menu(
     response: &egui::Response,
     attachment: &WebArchiveAttachment,
     index: usize,
-    trigger_preview_attachment: &mut Option<String>,
+    trigger_preview_attachment: &mut Option<WebArchiveResource>,
     remove_attachment_at: &mut Option<usize>,
 ) {
     response.context_menu(|ui| {
         if ui.button(format!("{} Preview", regular::EYE)).clicked() {
-            *trigger_preview_attachment = Some(attachment.archive_id.clone());
+            *trigger_preview_attachment =
+                Some(web_archive_resource_from_attachment(attachment.clone()));
             ui.close();
         }
         if ui

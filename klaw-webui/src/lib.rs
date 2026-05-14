@@ -717,6 +717,22 @@ pub(crate) struct WebArchiveAttachment {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WebArchiveResource {
+    pub(crate) archive_id: String,
+    #[serde(default)]
+    pub(crate) filename: Option<String>,
+    #[serde(default)]
+    pub(crate) mime_type: Option<String>,
+    #[serde(default)]
+    pub(crate) size_bytes: i64,
+    #[serde(default)]
+    pub(crate) kind: Option<String>,
+    #[serde(default)]
+    pub(crate) caption: Option<String>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PageMode {
     ConnectionGuide,
@@ -959,7 +975,7 @@ mod tests {
     use super::{
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, ImCardKind, MessageRole, PageMode,
         ProviderCatalog, ProviderCatalogEntry, ResolvedSessionRoute, SessionListEntry,
-        StreamMessageAction, WebArchiveAttachment, apply_slash_completion,
+        StreamMessageAction, WebArchiveAttachment, WebArchiveResource, apply_slash_completion,
         attachment_action_in_progress, build_websocket_turn_start_params, can_trigger_file_picker,
         classify_message_role, classify_stream_message_action, connection_action_label,
         delete_confirmation_body, derive_page_mode, detect_active_slash_command,
@@ -976,6 +992,26 @@ mod tests {
     #[test]
     fn connected_state_uses_friendly_status_copy() {
         assert_eq!(ConnectionState::Connected.status_text(), "Ready");
+    }
+
+    #[test]
+    fn archive_resource_payload_deserializes_optional_preview_fields() {
+        let resource: WebArchiveResource = serde_json::from_value(json!({
+            "archive_id": "arch-1",
+            "filename": "chart.png",
+            "mime_type": "image/png",
+            "size_bytes": 42,
+            "kind": "image",
+            "caption": "latest chart"
+        }))
+        .expect("archive resource should deserialize");
+
+        assert_eq!(resource.archive_id, "arch-1");
+        assert_eq!(resource.filename.as_deref(), Some("chart.png"));
+        assert_eq!(resource.mime_type.as_deref(), Some("image/png"));
+        assert_eq!(resource.size_bytes, 42);
+        assert_eq!(resource.kind.as_deref(), Some("image"));
+        assert_eq!(resource.caption.as_deref(), Some("latest chart"));
     }
 
     #[test]

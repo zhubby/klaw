@@ -10,8 +10,8 @@ use web_sys::WebSocket;
 
 use crate::{
     ArchiveRecord, ConnectionState, ProviderCatalog, SessionListEntry, WebArchiveAttachment,
-    WorkspaceSessionEntry, attachment_action_in_progress, normalize_gateway_token_input,
-    resolve_gateway_token, should_cancel_file_picker_selection,
+    WebArchiveResource, WorkspaceSessionEntry, attachment_action_in_progress,
+    normalize_gateway_token_input, resolve_gateway_token, should_cancel_file_picker_selection,
     should_prompt_for_gateway_token_before_connect, sort_session_entries_by_created_at_desc,
 };
 
@@ -46,6 +46,23 @@ pub(super) struct ChatApp {
     pub(in crate::web_chat) light_theme: LightThemePreset,
     pub(in crate::web_chat) dark_theme: DarkThemePreset,
     pub(in crate::web_chat) ui_language: UiLanguage,
+    pub(in crate::web_chat) archive_preview: Rc<RefCell<Option<ArchivePreviewDialog>>>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ArchivePreviewDialog {
+    pub(super) resource: WebArchiveResource,
+    pub(super) status: ArchivePreviewStatus,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum ArchivePreviewStatus {
+    Loading,
+    Ready {
+        object_url: String,
+        content_type: Option<String>,
+    },
+    Failed(String),
 }
 
 impl ChatApp {
@@ -88,6 +105,7 @@ impl ChatApp {
             light_theme,
             dark_theme,
             ui_language,
+            archive_preview: Rc::new(RefCell::new(None)),
         };
         app.restore_window_state(persisted_sessions);
         app.apply_theme();
@@ -602,7 +620,7 @@ impl ChatApp {
         });
     }
 
-    pub(in crate::web_chat) fn preview_archive_attachment(&mut self, archive_id: &str) {
+    pub(in crate::web_chat) fn preview_archive_attachment(&mut self, resource: WebArchiveResource) {
         let Some(gateway_origin) = self.gateway_origin.clone() else {
             self.toasts
                 .borrow_mut()
@@ -611,19 +629,40 @@ impl ChatApp {
         };
 
         let gateway_token = self.gateway_token.clone();
-        let archive_id = archive_id.to_string();
+        let archive_id = resource.archive_id.clone();
         let toasts = self.toasts.clone();
+        let preview = self.archive_preview.clone();
+        let ctx = self.ctx.clone();
+
+        *preview.borrow_mut() = Some(ArchivePreviewDialog {
+            resource,
+            status: ArchivePreviewStatus::Loading,
+        });
+        self.ctx.request_repaint();
 
         wasm_bindgen_futures::spawn_local(async move {
-            if let Err(err) = super::upload::preview_archive_file(
+            let status = match super::upload::load_archive_preview(
                 &gateway_origin,
                 gateway_token.as_deref(),
                 &archive_id,
             )
             .await
             {
-                toasts.borrow_mut().error(format!("Preview failed: {err}"));
+                Ok(blob) => ArchivePreviewStatus::Ready {
+                    object_url: blob.object_url,
+                    content_type: blob.content_type,
+                },
+                Err(err) => {
+                    toasts.borrow_mut().error(format!("Preview failed: {err}"));
+                    ArchivePreviewStatus::Failed(err)
+                }
+            };
+            if let Some(dialog) = preview.borrow_mut().as_mut() {
+                if dialog.resource.archive_id == archive_id {
+                    dialog.status = status;
+                }
             }
+            ctx.request_repaint();
         });
     }
 }
@@ -634,6 +673,19 @@ fn web_archive_attachment_from_record(record: ArchiveRecord) -> WebArchiveAttach
         filename: record.original_filename,
         mime_type: record.mime_type,
         size_bytes: record.size_bytes,
+    }
+}
+
+pub(super) fn web_archive_resource_from_attachment(
+    attachment: WebArchiveAttachment,
+) -> WebArchiveResource {
+    WebArchiveResource {
+        archive_id: attachment.archive_id,
+        filename: attachment.filename,
+        mime_type: attachment.mime_type,
+        size_bytes: attachment.size_bytes,
+        kind: None,
+        caption: None,
     }
 }
 

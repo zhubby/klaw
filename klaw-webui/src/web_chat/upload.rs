@@ -67,11 +67,16 @@ pub(super) async fn upload_file_to_archive(
     }
 }
 
-pub(super) async fn preview_archive_file(
+pub(super) struct ArchivePreviewBlob {
+    pub(super) object_url: String,
+    pub(super) content_type: Option<String>,
+}
+
+pub(super) async fn load_archive_preview(
     gateway_origin: &str,
     gateway_token: Option<&str>,
     archive_id: &str,
-) -> Result<(), String> {
+) -> Result<ArchivePreviewBlob, String> {
     let url = format!(
         "{}/archive/download/{}",
         gateway_origin,
@@ -103,6 +108,11 @@ pub(super) async fn preview_archive_file(
         return Err(format!("HTTP {}: {}", resp.status(), resp.status_text()));
     }
 
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .map_err(|_| "Failed to read content type")?;
+
     let blob = JsFuture::from(resp.blob().map_err(|_| "Failed to read blob")?)
         .await
         .map_err(|_| "Failed to resolve blob")?;
@@ -112,9 +122,8 @@ pub(super) async fn preview_archive_file(
 
     let object_url =
         Url::create_object_url_with_blob(&blob).map_err(|_| "Failed to create preview URL")?;
-    window
-        .open_with_url_and_target(&object_url, "_blank")
-        .map_err(|_| "Failed to open preview window")?
-        .ok_or_else(|| "Browser blocked preview window".to_string())?;
-    Ok(())
+    Ok(ArchivePreviewBlob {
+        object_url,
+        content_type,
+    })
 }
