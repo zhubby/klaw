@@ -1061,3 +1061,100 @@ skills-mgr-notify-uninstall-failed = 卸载 `{ $skill_name }` 失败: { $error }
 skills-mgr-notify-uninstall-scope-registry = 注册源 `{ $registry_name }` 中的 `{ $skill_name }`
 skills-mgr-notify-uninstall-scope-local = 本地 `{ $skill_name }`
 skills-mgr-notify-uninstall-result = 已卸载 { $scope }: { $managed } 个管理文件, { $local } 个本地文件已移除
+
+## 通道面板
+channel-subtitle = 管理与外部消息服务（钉钉、Telegram、WebSocket）的通道连接。
+channel-restarting = 正在重启通道...
+channel-synchronizing = 正在同步通道...
+channel-btn-disabled = { $icon } 设置禁用通道
+channel-btn-add-dingtalk = { $icon } 添加钉钉
+channel-btn-add-telegram = { $icon } 添加 Telegram
+channel-btn-add-websocket = { $icon } 添加 WebSocket
+channel-btn-reload = { $icon } 重载
+channel-btn-refresh-status = { $icon } 刷新状态
+channel-no-channels = 未配置通道。
+
+channel-col-type = 类型
+channel-col-id = ID
+channel-col-enabled = 启用
+channel-col-status = 状态
+channel-col-last-activity = 最后活动
+channel-col-reconnect = 重连
+channel-col-title = 标题
+channel-col-reasoning = 推理
+channel-col-stream = 流式
+channel-col-proxy = 代理
+
+channel-status-running = 运行中
+channel-status-degraded = 降级
+channel-status-reconnecting = 重连中
+channel-status-starting = 启动中
+channel-status-stopped = 已停止
+channel-status-failed = 失败
+channel-status-unknown = 未知
+channel-yes = 是
+channel-no = 否
+channel-dash = -
+
+channel-hover-last-event = 最后事件: { $event }
+channel-hover-last-error = 最后错误: { $error }
+
+channel-ctx-edit = { $icon } 编辑
+channel-ctx-restart = { $icon } 重启
+channel-ctx-disable = { $icon } 禁用
+channel-ctx-enable = { $icon } 启用
+channel-ctx-delete = { $icon } 删除
+channel-ctx-copy-id = { $icon } 复制 ID
+
+channel-form-title-add-dingtalk = 添加钉钉通道
+channel-form-title-edit-dingtalk = 编辑钉钉通道
+channel-form-title-add-telegram = 添加 Telegram 通道
+channel-form-title-edit-telegram = 编辑 Telegram 通道
+channel-form-title-add-websocket = 添加 WebSocket 通道
+channel-form-title-edit-websocket = 编辑 WebSocket 通道
+
+channel-form-id = ID
+channel-form-id-hint-dingtalk = 钉钉通道实例的唯一标识符（如 "ops"、"devops"）。
+channel-form-id-hint-telegram = Telegram 通道实例的唯一标识符（如 "ops-bot"）
+channel-form-id-hint-websocket = WebSocket 通道实例的唯一标识符（如 "browser"）
+channel-form-enabled = 启用
+channel-form-enabled-hint-dingtalk = 启用或禁用此钉钉通道实例。
+channel-form-enabled-hint-telegram = 启用或禁用此 Telegram 通道实例。
+channel-form-enabled-hint-websocket = 启用或禁用此 WebSocket 通道实例。
+channel-form-client-id = 客户端 ID
+channel-form-client-id-hint = 钉钉开发者控制台中的应用客户端 ID。
+channel-form-client-secret = 客户端密钥
+channel-form-client-secret-hint = 钉钉开发者控制台中的应用客户端密钥。
+channel-form-bot-title = 机器人名称
+channel-form-bot-title-hint = 钉钉对话中显示的机器人名称。
+channel-form-show-reasoning = 显示推理
+channel-form-show-reasoning-hint-dingtalk = 在钉钉响应中包含推理/思考过程。
+channel-form-show-reasoning-hint-telegram = 在 Telegram 响应中包含推理/思考过程。
+channel-form-show-reasoning-hint-websocket = 在 WebSocket 响应中包含推理/思考过程。
+channel-form-stream-output = 流式输出
+channel-form-stream-output-hint = 逐步流式输出代理响应，而非等待完成后再输出。
+channel-form-stream-template-id = 流式模板 ID
+channel-form-stream-template-id-hint = 用于格式化流式输出块的钉钉消息模板 ID。
+channel-form-stream-content-key = 流式内容键
+channel-form-stream-content-key-hint = 流式模板中存放内容文本的 JSON 键名。
+channel-form-proxy-enabled = 启用代理
+channel-form-proxy-enabled-hint-dingtalk = 通过 HTTP 代理路由钉钉 API 请求。
+channel-form-proxy-enabled-hint-telegram = 通过 HTTP 代理路由 Telegram API 请求。
+channel-form-proxy-url = 代理 URL
+channel-form-proxy-url-hint-dingtalk = 钉钉 API 连接的 HTTP 代理 URL（如 "http://proxy:8080"）
+channel-form-proxy-url-hint-telegram = Telegram API 连接的 HTTP 代理 URL（如 "http://proxy:8080"）
+channel-form-bot-token = 机器人令牌
+channel-form-bot-token-hint = 从 BotFather 获取的 Telegram 机器人令牌（如 "123456:ABC-DEF"）
+channel-form-allowlist = 白名单
+channel-form-save = 保存
+channel-form-cancel = 取消
+
+channel-disabled-title = 设置禁用通道
+channel-disabled-save = 保存
+channel-disabled-cancel = 取消
+
+channel-delete-title = 删除 { $kind } 通道
+channel-delete-message = 确定要删除通道 '{ $id }' 吗？
+channel-delete-info = 此操作无法撤销。
+channel-delete-btn = { $icon } 删除
+channel-delete-cancel = 取消

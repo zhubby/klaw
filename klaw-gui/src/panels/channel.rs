@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_seconds;
 use crate::widgets::ArrayEditor;
 use crate::{
@@ -14,8 +15,8 @@ use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, DingtalkConfig, DingtalkProxyConfig,
     TelegramConfig, TelegramProxyConfig, WebsocketConfig,
 };
-use klaw_ui_kit::label_with_hint;
-use std::collections::BTreeMap;
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint};
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 const CHANNEL_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -38,7 +39,7 @@ struct DingtalkForm {
 }
 
 impl DingtalkForm {
-    fn new() -> Self {
+    fn new(t: &Translator) -> Self {
         let default = DingtalkConfig::default();
         Self {
             original_id: None,
@@ -51,13 +52,13 @@ impl DingtalkForm {
             stream_output: default.stream_output,
             stream_template_id: default.stream_template_id,
             stream_content_key: default.stream_content_key,
-            allowlist_input: ArrayEditor::new("Allowlist"),
+            allowlist_input: ArrayEditor::new(t.text("channel-form-allowlist")),
             proxy_enabled: default.proxy.enabled,
             proxy_url: default.proxy.url,
         }
     }
 
-    fn edit(account: &DingtalkConfig) -> Self {
+    fn edit(account: &DingtalkConfig, t: &Translator) -> Self {
         Self {
             original_id: Some(account.id.clone()),
             id: account.id.clone(),
@@ -69,17 +70,21 @@ impl DingtalkForm {
             stream_output: account.stream_output,
             stream_template_id: account.stream_template_id.clone(),
             stream_content_key: account.stream_content_key.clone(),
-            allowlist_input: ArrayEditor::from_vec("Allowlist", &account.allowlist),
+            allowlist_input: ArrayEditor::from_vec(
+                t.text("channel-form-allowlist"),
+                &account.allowlist,
+            ),
             proxy_enabled: account.proxy.enabled,
             proxy_url: account.proxy.url.clone(),
         }
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        let t = Translator::new(LocaleDomain::Gui, current_ui_language());
         if self.original_id.is_some() {
-            "Edit Dingtalk Channel"
+            t.text("channel-form-title-edit-dingtalk")
         } else {
-            "Add Dingtalk Channel"
+            t.text("channel-form-title-add-dingtalk")
         }
     }
 
@@ -121,7 +126,7 @@ struct TelegramForm {
 }
 
 impl TelegramForm {
-    fn new() -> Self {
+    fn new(t: &Translator) -> Self {
         let default = TelegramConfig::default();
         Self {
             original_id: None,
@@ -130,13 +135,13 @@ impl TelegramForm {
             bot_token: default.bot_token,
             show_reasoning: default.show_reasoning,
             stream_output: default.stream_output,
-            allowlist_input: ArrayEditor::new("Allowlist"),
+            allowlist_input: ArrayEditor::new(t.text("channel-form-allowlist")),
             proxy_enabled: default.proxy.enabled,
             proxy_url: default.proxy.url,
         }
     }
 
-    fn edit(account: &TelegramConfig) -> Self {
+    fn edit(account: &TelegramConfig, t: &Translator) -> Self {
         Self {
             original_id: Some(account.id.clone()),
             id: account.id.clone(),
@@ -144,17 +149,21 @@ impl TelegramForm {
             bot_token: account.bot_token.clone(),
             show_reasoning: account.show_reasoning,
             stream_output: account.stream_output,
-            allowlist_input: ArrayEditor::from_vec("Allowlist", &account.allowlist),
+            allowlist_input: ArrayEditor::from_vec(
+                t.text("channel-form-allowlist"),
+                &account.allowlist,
+            ),
             proxy_enabled: account.proxy.enabled,
             proxy_url: account.proxy.url.clone(),
         }
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        let t = Translator::new(LocaleDomain::Gui, current_ui_language());
         if self.original_id.is_some() {
-            "Edit Telegram Channel"
+            t.text("channel-form-title-edit-telegram")
         } else {
-            "Add Telegram Channel"
+            t.text("channel-form-title-add-telegram")
         }
     }
 
@@ -209,11 +218,12 @@ impl WebsocketForm {
         }
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        let t = Translator::new(LocaleDomain::Gui, current_ui_language());
         if self.original_id.is_some() {
-            "Edit WebSocket Channel"
+            t.text("channel-form-title-edit-websocket")
         } else {
-            "Add WebSocket Channel"
+            t.text("channel-form-title-add-websocket")
         }
     }
 
@@ -239,7 +249,7 @@ enum ChannelForm {
 }
 
 impl ChannelForm {
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
         match self {
             Self::Dingtalk(form) => form.title(),
             Self::Telegram(form) => form.title(),
@@ -316,41 +326,42 @@ impl ChannelRow {
 
 fn channel_status_style(
     status: Option<&ChannelInstanceStatus>,
-) -> (&'static str, &'static str, egui::Color32) {
+    t: &Translator,
+) -> (&'static str, String, egui::Color32) {
     match status.map(|item| item.state) {
         Some(klaw_channel::ChannelLifecycleState::Running) => (
             regular::CHECK_CIRCLE,
-            "running",
+            t.text("channel-status-running"),
             egui::Color32::from_rgb(0x22, 0xC5, 0x5E),
         ),
         Some(klaw_channel::ChannelLifecycleState::Degraded) => (
             regular::WARNING,
-            "degraded",
+            t.text("channel-status-degraded"),
             egui::Color32::from_rgb(0xF5, 0x9E, 0x0B),
         ),
         Some(klaw_channel::ChannelLifecycleState::Reconnecting) => (
             regular::ARROW_CLOCKWISE,
-            "reconnecting",
+            t.text("channel-status-reconnecting"),
             egui::Color32::from_rgb(0x38, 0xB, 0xDF),
         ),
         Some(klaw_channel::ChannelLifecycleState::Starting) => (
             regular::ARROW_CLOCKWISE,
-            "starting",
+            t.text("channel-status-starting"),
             egui::Color32::from_rgb(0xF5, 0x9E, 0x0B),
         ),
         Some(klaw_channel::ChannelLifecycleState::Stopped) => (
             regular::STOP_CIRCLE,
-            "stopped",
+            t.text("channel-status-stopped"),
             egui::Color32::from_rgb(0x94, 0xA3, 0xB8),
         ),
         Some(klaw_channel::ChannelLifecycleState::Failed) => (
             regular::WARNING_CIRCLE,
-            "failed",
+            t.text("channel-status-failed"),
             egui::Color32::from_rgb(0xEF, 0x44, 0x44),
         ),
         None => (
             regular::QUESTION,
-            "unknown",
+            t.text("channel-status-unknown"),
             egui::Color32::from_rgb(0x94, 0xA3, 0xB8),
         ),
     }
@@ -375,6 +386,10 @@ pub struct ChannelPanel {
 }
 
 impl ChannelPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn refresh_runtime_status(&mut self) {
         if let Some(request) = self.runtime_status_request.as_mut()
             && let Some(result) = request.try_take_result()
@@ -462,8 +477,9 @@ impl ChannelPanel {
     }
 
     fn apply_snapshot(&mut self, snapshot: ConfigSnapshot) {
+        let t = Self::translator();
         self.disable_session_commands_input = ArrayEditor::from_vec(
-            "Disable Session Commands For",
+            t.text("channel-btn-disabled"),
             &snapshot.config.channels.disable_session_commands_for,
         );
         self.config = snapshot.config;
@@ -587,11 +603,13 @@ impl ChannelPanel {
     }
 
     fn open_add_dingtalk_channel(&mut self) {
-        self.form = Some(ChannelForm::Dingtalk(DingtalkForm::new()));
+        let t = Self::translator();
+        self.form = Some(ChannelForm::Dingtalk(DingtalkForm::new(&t)));
     }
 
     fn open_add_telegram_channel(&mut self) {
-        self.form = Some(ChannelForm::Telegram(TelegramForm::new()));
+        let t = Self::translator();
+        self.form = Some(ChannelForm::Telegram(TelegramForm::new(&t)));
     }
 
     fn open_add_websocket_channel(&mut self) {
@@ -599,6 +617,7 @@ impl ChannelPanel {
     }
 
     fn open_edit_channel(&mut self, kind: ChannelKind, id: &str) {
+        let t = Self::translator();
         match kind {
             ChannelKind::Dingtalk => {
                 if let Some(account) = self
@@ -608,7 +627,7 @@ impl ChannelPanel {
                     .iter()
                     .find(|item| item.id == id)
                 {
-                    self.form = Some(ChannelForm::Dingtalk(DingtalkForm::edit(account)));
+                    self.form = Some(ChannelForm::Dingtalk(DingtalkForm::edit(account, &t)));
                 }
             }
             ChannelKind::Telegram => {
@@ -619,7 +638,7 @@ impl ChannelPanel {
                     .iter()
                     .find(|item| item.id == id)
                 {
-                    self.form = Some(ChannelForm::Telegram(TelegramForm::edit(account)));
+                    self.form = Some(ChannelForm::Telegram(TelegramForm::edit(account, &t)));
                 }
             }
             ChannelKind::Websocket => {
@@ -894,6 +913,8 @@ impl ChannelPanel {
             return;
         };
 
+        let t = Self::translator();
+
         egui::Window::new(form.title())
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
@@ -906,49 +927,93 @@ impl ChannelPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                label_with_hint(ui, "ID", "Unique identifier for this Dingtalk channel instance (e.g. \"ops\", \"devops\").");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-id"),
+                                    &t.text("channel-form-id-hint-dingtalk"),
+                                );
                                 ui.text_edit_singleline(&mut form.id);
                                 ui.end_row();
 
-                                label_with_hint(ui, "Enabled", "Enable or disable this Dingtalk channel instance.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-enabled"),
+                                    &t.text("channel-form-enabled-hint-dingtalk"),
+                                );
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Client ID", "Dingtalk application client ID from the Dingtalk developer console.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-client-id"),
+                                    &t.text("channel-form-client-id-hint"),
+                                );
                                 ui.text_edit_singleline(&mut form.client_id);
                                 ui.end_row();
 
-                                label_with_hint(ui, "Client Secret", "Dingtalk application client secret from the Dingtalk developer console.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-client-secret"),
+                                    &t.text("channel-form-client-secret-hint"),
+                                );
                                 ui.text_edit_singleline(&mut form.client_secret);
                                 ui.end_row();
 
-                                label_with_hint(ui, "Bot Title", "Display name shown for the bot in Dingtalk conversations.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-bot-title"),
+                                    &t.text("channel-form-bot-title-hint"),
+                                );
                                 ui.text_edit_singleline(&mut form.bot_title);
                                 ui.end_row();
 
-                                label_with_hint(ui, "Show Reasoning", "Include agent reasoning/thinking steps in Dingtalk responses.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-show-reasoning"),
+                                    &t.text("channel-form-show-reasoning-hint-dingtalk"),
+                                );
                                 ui.checkbox(&mut form.show_reasoning, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Stream Output", "Stream agent responses progressively instead of waiting for full completion.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-stream-output"),
+                                    &t.text("channel-form-stream-output-hint"),
+                                );
                                 ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
 
                                 if form.stream_output {
-                                    label_with_hint(ui, "Stream Template ID", "Dingtalk message template ID for formatting streamed output chunks.");
+                                    label_with_hint(
+                                        ui,
+                                        &t.text("channel-form-stream-template-id"),
+                                        &t.text("channel-form-stream-template-id-hint"),
+                                    );
                                     ui.text_edit_singleline(&mut form.stream_template_id);
                                     ui.end_row();
 
-                                    label_with_hint(ui, "Stream Content Key", "JSON key in the stream template that holds the content text.");
+                                    label_with_hint(
+                                        ui,
+                                        &t.text("channel-form-stream-content-key"),
+                                        &t.text("channel-form-stream-content-key-hint"),
+                                    );
                                     ui.text_edit_singleline(&mut form.stream_content_key);
                                     ui.end_row();
                                 }
 
-                                label_with_hint(ui, "Proxy Enabled", "Route Dingtalk API requests through an HTTP proxy.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-proxy-enabled"),
+                                    &t.text("channel-form-proxy-enabled-hint-dingtalk"),
+                                );
                                 ui.checkbox(&mut form.proxy_enabled, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Proxy URL", "HTTP proxy URL for Dingtalk API connections (e.g. \"http://proxy:8080\")");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-proxy-url"),
+                                    &t.text("channel-form-proxy-url-hint-dingtalk"),
+                                );
                                 ui.text_edit_singleline(&mut form.proxy_url);
                                 ui.end_row();
                             });
@@ -961,31 +1026,59 @@ impl ChannelPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                label_with_hint(ui, "ID", "Unique identifier for this Telegram channel instance (e.g. \"ops-bot\")");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-id"),
+                                    &t.text("channel-form-id-hint-telegram"),
+                                );
                                 ui.text_edit_singleline(&mut form.id);
                                 ui.end_row();
 
-                                label_with_hint(ui, "Enabled", "Enable or disable this Telegram channel instance.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-enabled"),
+                                    &t.text("channel-form-enabled-hint-telegram"),
+                                );
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Bot Token", "Telegram bot token obtained from BotFather (e.g. \"123456:ABC-DEF\")");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-bot-token"),
+                                    &t.text("channel-form-bot-token-hint"),
+                                );
                                 ui.text_edit_singleline(&mut form.bot_token);
                                 ui.end_row();
 
-                                label_with_hint(ui, "Show Reasoning", "Include agent reasoning/thinking steps in Telegram responses.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-show-reasoning"),
+                                    &t.text("channel-form-show-reasoning-hint-telegram"),
+                                );
                                 ui.checkbox(&mut form.show_reasoning, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Stream Output", "Stream agent responses progressively instead of waiting for full completion.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-stream-output"),
+                                    &t.text("channel-form-stream-output-hint"),
+                                );
                                 ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Proxy Enabled", "Route Telegram API requests through an HTTP proxy.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-proxy-enabled"),
+                                    &t.text("channel-form-proxy-enabled-hint-telegram"),
+                                );
                                 ui.checkbox(&mut form.proxy_enabled, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Proxy URL", "HTTP proxy URL for Telegram API connections (e.g. \"http://proxy:8080\")");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-proxy-url"),
+                                    &t.text("channel-form-proxy-url-hint-telegram"),
+                                );
                                 ui.text_edit_singleline(&mut form.proxy_url);
                                 ui.end_row();
                             });
@@ -998,19 +1091,35 @@ impl ChannelPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                label_with_hint(ui, "ID", "Unique identifier for this WebSocket channel instance (e.g. \"browser\")");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-id"),
+                                    &t.text("channel-form-id-hint-websocket"),
+                                );
                                 ui.text_edit_singleline(&mut form.id);
                                 ui.end_row();
 
-                                label_with_hint(ui, "Enabled", "Enable or disable this WebSocket channel instance.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-enabled"),
+                                    &t.text("channel-form-enabled-hint-websocket"),
+                                );
                                 ui.checkbox(&mut form.enabled, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Show Reasoning", "Include agent reasoning/thinking steps in WebSocket responses.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-show-reasoning"),
+                                    &t.text("channel-form-show-reasoning-hint-websocket"),
+                                );
                                 ui.checkbox(&mut form.show_reasoning, "");
                                 ui.end_row();
 
-                                label_with_hint(ui, "Stream Output", "Stream agent responses progressively instead of waiting for full completion.");
+                                label_with_hint(
+                                    ui,
+                                    &t.text("channel-form-stream-output"),
+                                    &t.text("channel-form-stream-output-hint"),
+                                );
                                 ui.checkbox(&mut form.stream_output, "");
                                 ui.end_row();
                             });
@@ -1019,10 +1128,10 @@ impl ChannelPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("channel-form-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("channel-form-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -1044,7 +1153,9 @@ impl ChannelPanel {
         let mut save_clicked = false;
         let mut cancel_clicked = false;
 
-        egui::Window::new("Set Disabled Channels")
+        let t = Self::translator();
+
+        egui::Window::new(t.text("channel-disabled-title"))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(true)
@@ -1054,10 +1165,10 @@ impl ChannelPanel {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(t.text("channel-disabled-save")).clicked() {
                         save_clicked = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(t.text("channel-disabled-cancel")).clicked() {
                         cancel_clicked = true;
                     }
                 });
@@ -1081,36 +1192,46 @@ impl ChannelPanel {
             return;
         };
 
+        let t = Self::translator();
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new(format!("Delete {} Channel", kind.as_str()))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.label(
-                    RichText::new(format!("Are you sure you want to delete channel '{}'?", id))
-                        .strong(),
-                );
-                ui.add_space(8.0);
-                ui.label("This action cannot be undone.");
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(egui::Button::new(
-                            RichText::new(format!("{} Delete", regular::TRASH))
-                                .color(ui.visuals().warn_fg_color),
+        egui::Window::new(t.text_args(
+            "channel-delete-title",
+            HashMap::from([("kind", kind.as_str().to_string())]),
+        ))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new(t.text_args(
+                    "channel-delete-message",
+                    HashMap::from([("id", id.clone())]),
+                ))
+                .strong(),
+            );
+            ui.add_space(8.0);
+            ui.label(t.text("channel-delete-info"));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Button::new(
+                        RichText::new(t.text_args(
+                            "channel-delete-btn",
+                            HashMap::from([("icon", regular::TRASH.to_string())]),
                         ))
-                        .clicked()
-                    {
-                        confirmed = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancelled = true;
-                    }
-                });
+                        .color(ui.visuals().warn_fg_color),
+                    ))
+                    .clicked()
+                {
+                    confirmed = true;
+                }
+                if ui.button(t.text("channel-delete-cancel")).clicked() {
+                    cancelled = true;
+                }
             });
+        });
 
         if confirmed {
             self.delete_channel(kind, &id, notifications);
@@ -1143,49 +1264,72 @@ impl PanelRenderer for ChannelPanel {
 
         let rows = self.all_rows();
 
+        let t = Self::translator();
+
         ui.heading(ctx.tab_title);
         ui.horizontal(|ui| {
-            ui.label("Manage channel connections to external messaging services (Dingtalk, Telegram, WebSocket).");
+            ui.label(t.text("channel-subtitle"));
             ui.add_space(4.0);
             if self.restart_request.is_some() {
-                ui.label(RichText::new("Restarting channel...").small());
+                ui.label(RichText::new(t.text("channel-restarting")).small());
             }
             if self.sync_request.is_some() {
-                ui.label(RichText::new("Synchronizing channels...").small());
+                ui.label(RichText::new(t.text("channel-synchronizing")).small());
             }
         });
         ui.separator();
 
         ui.horizontal(|ui| {
             if ui
-                .button(format!("{} Set Disabled Channels", regular::WRENCH))
+                .button(t.text_args(
+                    "channel-btn-disabled",
+                    HashMap::from([("icon", regular::WRENCH.to_string())]),
+                ))
                 .clicked()
             {
                 self.show_disabled_dialog = true;
             }
             if ui
-                .button(format!("{} Add Dingtalk", regular::CHAT_CIRCLE_DOTS))
+                .button(t.text_args(
+                    "channel-btn-add-dingtalk",
+                    HashMap::from([("icon", regular::CHAT_CIRCLE_DOTS.to_string())]),
+                ))
                 .clicked()
             {
                 self.open_add_dingtalk_channel();
             }
             if ui
-                .button(format!("{} Add Telegram", regular::PAPER_PLANE))
+                .button(t.text_args(
+                    "channel-btn-add-telegram",
+                    HashMap::from([("icon", regular::PAPER_PLANE.to_string())]),
+                ))
                 .clicked()
             {
                 self.open_add_telegram_channel();
             }
-            if ui.button("Add WebSocket").clicked() {
+            if ui
+                .button(t.text_args(
+                    "channel-btn-add-websocket",
+                    HashMap::from([("icon", regular::BROADCAST.to_string())]),
+                ))
+                .clicked()
+            {
                 self.open_add_websocket_channel();
             }
             if ui
-                .button(format!("{} Reload", regular::ARROW_CLOCKWISE))
+                .button(t.text_args(
+                    "channel-btn-reload",
+                    HashMap::from([("icon", regular::ARROW_CLOCKWISE.to_string())]),
+                ))
                 .clicked()
             {
                 self.reload(notifications);
             }
             if ui
-                .button(format!("{} Refresh Status", regular::ARROWS_CLOCKWISE))
+                .button(t.text_args(
+                    "channel-btn-refresh-status",
+                    HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                ))
                 .clicked()
             {
                 self.last_runtime_status_at = None;
@@ -1196,7 +1340,7 @@ impl PanelRenderer for ChannelPanel {
         ui.add_space(8.0);
 
         if rows.is_empty() {
-            ui.label("No channels configured.");
+            ui.label(t.text("channel-no-channels"));
         } else {
             let table_width = ui.available_width();
             let mut edit_channel: Option<(ChannelKind, String)> = None;
@@ -1227,34 +1371,34 @@ impl PanelRenderer for ChannelPanel {
                         .sense(egui::Sense::click())
                         .header(20.0, |mut header| {
                             header.col(|ui| {
-                                ui.strong("Type");
+                                ui.strong(t.text("channel-col-type"));
                             });
                             header.col(|ui| {
-                                ui.strong("ID");
+                                ui.strong(t.text("channel-col-id"));
                             });
                             header.col(|ui| {
-                                ui.strong("Enabled");
+                                ui.strong(t.text("channel-col-enabled"));
                             });
                             header.col(|ui| {
-                                ui.strong("Status");
+                                ui.strong(t.text("channel-col-status"));
                             });
                             header.col(|ui| {
-                                ui.strong("Last Activity");
+                                ui.strong(t.text("channel-col-last-activity"));
                             });
                             header.col(|ui| {
-                                ui.strong("Reconnect");
+                                ui.strong(t.text("channel-col-reconnect"));
                             });
                             header.col(|ui| {
-                                ui.strong("Title");
+                                ui.strong(t.text("channel-col-title"));
                             });
                             header.col(|ui| {
-                                ui.strong("Reasoning");
+                                ui.strong(t.text("channel-col-reasoning"));
                             });
                             header.col(|ui| {
-                                ui.strong("Stream");
+                                ui.strong(t.text("channel-col-stream"));
                             });
                             header.col(|ui| {
-                                ui.strong("Proxy");
+                                ui.strong(t.text("channel-col-proxy"));
                             });
                         })
                         .body(|body| {
@@ -1283,20 +1427,30 @@ impl PanelRenderer for ChannelPanel {
                                     } else {
                                         regular::CIRCLE
                                     };
-                                    let text = if enabled { "yes" } else { "no" };
+                                    let text = if enabled {
+                                        t.text("channel-yes")
+                                    } else {
+                                        t.text("channel-no")
+                                    };
                                     ui.label(format!("{} {}", icon, text));
                                 });
                                 row.col(|ui| {
-                                    let (icon, label, color) = channel_status_style(status);
+                                    let (icon, label, color) = channel_status_style(status, &t);
                                     let status_response =
                                         ui.colored_label(color, format!("{} {}", icon, label));
                                     if let Some(s) = status {
                                         let mut hover_lines = Vec::new();
                                         if let Some(event) = s.last_event.as_deref() {
-                                            hover_lines.push(format!("last event: {event}"));
+                                            hover_lines.push(t.text_args(
+                                                "channel-hover-last-event",
+                                                HashMap::from([("event", event.to_string())]),
+                                            ));
                                         }
                                         if let Some(error) = s.last_error.as_deref() {
-                                            hover_lines.push(format!("last error: {error}"));
+                                            hover_lines.push(t.text_args(
+                                                "channel-hover-last-error",
+                                                HashMap::from([("error", error.to_string())]),
+                                            ));
                                         }
                                         if !hover_lines.is_empty() {
                                             status_response.on_hover_text(hover_lines.join("\n"));
@@ -1321,11 +1475,19 @@ impl PanelRenderer for ChannelPanel {
                                 });
                                 row.col(|ui| {
                                     let show = channel_row.show_reasoning();
-                                    ui.label(if show { "yes" } else { "no" });
+                                    ui.label(if show {
+                                        t.text("channel-yes")
+                                    } else {
+                                        t.text("channel-no")
+                                    });
                                 });
                                 row.col(|ui| {
                                     let stream = channel_row.stream_output();
-                                    ui.label(if stream { "yes" } else { "no" });
+                                    ui.label(if stream {
+                                        t.text("channel-yes")
+                                    } else {
+                                        t.text("channel-no")
+                                    });
                                 });
                                 row.col(|ui| {
                                     ui.label(channel_row.proxy_label());
@@ -1344,24 +1506,39 @@ impl PanelRenderer for ChannelPanel {
                                 response.context_menu(|ui| {
                                     let enabled = channel_row.enabled();
                                     if ui
-                                        .button(format!("{} Edit", regular::PENCIL_SIMPLE))
+                                        .button(t.text_args(
+                                            "channel-ctx-edit",
+                                            HashMap::from([(
+                                                "icon",
+                                                regular::PENCIL_SIMPLE.to_string(),
+                                            )]),
+                                        ))
                                         .clicked()
                                     {
                                         edit_channel = Some((kind, id.clone()));
                                         ui.close();
                                     }
                                     if ui
-                                        .button(format!("{} Restart", regular::ARROW_CLOCKWISE))
+                                        .button(t.text_args(
+                                            "channel-ctx-restart",
+                                            HashMap::from([(
+                                                "icon",
+                                                regular::ARROW_CLOCKWISE.to_string(),
+                                            )]),
+                                        ))
                                         .clicked()
                                     {
                                         restart_channel = Some((kind, id.clone()));
                                         ui.close();
                                     }
                                     if ui
-                                        .button(format!(
-                                            "{} {}",
-                                            regular::POWER,
-                                            if enabled { "Disable" } else { "Enable" }
+                                        .button(t.text_args(
+                                            if enabled {
+                                                "channel-ctx-disable"
+                                            } else {
+                                                "channel-ctx-enable"
+                                            },
+                                            HashMap::from([("icon", regular::POWER.to_string())]),
                                         ))
                                         .clicked()
                                     {
@@ -1371,8 +1548,14 @@ impl PanelRenderer for ChannelPanel {
                                     ui.separator();
                                     if ui
                                         .add(egui::Button::new(
-                                            RichText::new(format!("{} Delete", regular::TRASH))
-                                                .color(ui.visuals().warn_fg_color),
+                                            RichText::new(t.text_args(
+                                                "channel-ctx-delete",
+                                                HashMap::from([(
+                                                    "icon",
+                                                    regular::TRASH.to_string(),
+                                                )]),
+                                            ))
+                                            .color(ui.visuals().warn_fg_color),
                                         ))
                                         .clicked()
                                     {
@@ -1380,7 +1563,13 @@ impl PanelRenderer for ChannelPanel {
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                                    if ui
+                                        .button(t.text_args(
+                                            "channel-ctx-copy-id",
+                                            HashMap::from([("icon", regular::COPY.to_string())]),
+                                        ))
+                                        .clicked()
+                                    {
                                         ui.ctx().output_mut(|o| {
                                             o.commands
                                                 .push(egui::OutputCommand::CopyText(id.clone()));
@@ -1414,11 +1603,17 @@ impl PanelRenderer for ChannelPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klaw_ui_kit::UiLanguage;
+
+    fn test_translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, UiLanguage::English)
+    }
 
     #[test]
     fn apply_dingtalk_form_adds_new_channel() {
+        let t = test_translator();
         let config = AppConfig::default();
-        let mut form = DingtalkForm::new();
+        let mut form = DingtalkForm::new(&t);
         form.id = "ops".to_string();
         form.client_id = "client".to_string();
         form.client_secret = "secret".to_string();
@@ -1443,7 +1638,8 @@ mod tests {
             ..DingtalkConfig::default()
         });
 
-        let mut form = DingtalkForm::new();
+        let t = test_translator();
+        let mut form = DingtalkForm::new(&t);
         form.id = "ops".to_string();
 
         let err =
@@ -1468,7 +1664,8 @@ mod tests {
             .find(|item| item.id == "ops")
             .expect("channel should exist")
             .clone();
-        let mut form = DingtalkForm::edit(&source);
+        let t = test_translator();
+        let mut form = DingtalkForm::edit(&source, &t);
         form.bot_title = "New".to_string();
 
         let updated = ChannelPanel::apply_dingtalk_form(config, &form).expect("should apply");
@@ -1485,7 +1682,8 @@ mod tests {
     #[test]
     fn apply_dingtalk_form_preserves_stream_flag() {
         let config = AppConfig::default();
-        let mut form = DingtalkForm::new();
+        let t = test_translator();
+        let mut form = DingtalkForm::new(&t);
         form.id = "ops".to_string();
         form.client_id = "cid".to_string();
         form.client_secret = "secret".to_string();
@@ -1505,8 +1703,9 @@ mod tests {
 
     #[test]
     fn apply_telegram_form_adds_new_channel() {
+        let t = test_translator();
         let config = AppConfig::default();
-        let mut form = TelegramForm::new();
+        let mut form = TelegramForm::new(&t);
         form.id = "ops-bot".to_string();
         form.bot_token = "123:secret".to_string();
 
@@ -1529,7 +1728,8 @@ mod tests {
             ..TelegramConfig::default()
         });
 
-        let mut form = TelegramForm::new();
+        let t = test_translator();
+        let mut form = TelegramForm::new(&t);
         form.id = "ops-bot".to_string();
 
         let err =
@@ -1541,7 +1741,8 @@ mod tests {
     #[test]
     fn apply_telegram_form_preserves_stream_flag() {
         let config = AppConfig::default();
-        let mut form = TelegramForm::new();
+        let t = test_translator();
+        let mut form = TelegramForm::new(&t);
         form.id = "ops-bot".to_string();
         form.bot_token = "123:secret".to_string();
         form.stream_output = true;

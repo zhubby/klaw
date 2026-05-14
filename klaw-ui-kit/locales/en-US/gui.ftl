@@ -1062,4 +1062,101 @@ skills-mgr-notify-uninstall-scope-registry = from registry `{ $registry_name }` 
 skills-mgr-notify-uninstall-scope-local = locally for `{ $skill_name }`
 skills-mgr-notify-uninstall-result = Uninstalled { $scope }: { $managed } managed files, { $local } local files removed
 
+## Channel panel
+channel-subtitle = Manage channel connections to external messaging services (Dingtalk, Telegram, WebSocket).
+channel-restarting = Restarting channel...
+channel-synchronizing = Synchronizing channels...
+channel-btn-disabled = { $icon } Set Disabled Channels
+channel-btn-add-dingtalk = { $icon } Add Dingtalk
+channel-btn-add-telegram = { $icon } Add Telegram
+channel-btn-add-websocket = { $icon } Add WebSocket
+channel-btn-reload = { $icon } Reload
+channel-btn-refresh-status = { $icon } Refresh Status
+channel-no-channels = No channels configured.
+
+channel-col-type = Type
+channel-col-id = ID
+channel-col-enabled = Enabled
+channel-col-status = Status
+channel-col-last-activity = Last Activity
+channel-col-reconnect = Reconnect
+channel-col-title = Title
+channel-col-reasoning = Reasoning
+channel-col-stream = Stream
+channel-col-proxy = Proxy
+
+channel-status-running = running
+channel-status-degraded = degraded
+channel-status-reconnecting = reconnecting
+channel-status-starting = starting
+channel-status-stopped = stopped
+channel-status-failed = failed
+channel-status-unknown = unknown
+channel-yes = yes
+channel-no = no
+channel-dash = -
+
+channel-hover-last-event = last event: { $event }
+channel-hover-last-error = last error: { $error }
+
+channel-ctx-edit = { $icon } Edit
+channel-ctx-restart = { $icon } Restart
+channel-ctx-disable = { $icon } Disable
+channel-ctx-enable = { $icon } Enable
+channel-ctx-delete = { $icon } Delete
+channel-ctx-copy-id = { $icon } Copy ID
+
+channel-form-title-add-dingtalk = Add Dingtalk Channel
+channel-form-title-edit-dingtalk = Edit Dingtalk Channel
+channel-form-title-add-telegram = Add Telegram Channel
+channel-form-title-edit-telegram = Edit Telegram Channel
+channel-form-title-add-websocket = Add WebSocket Channel
+channel-form-title-edit-websocket = Edit WebSocket Channel
+
+channel-form-id = ID
+channel-form-id-hint-dingtalk = Unique identifier for this Dingtalk channel instance (e.g. "ops", "devops").
+channel-form-id-hint-telegram = Unique identifier for this Telegram channel instance (e.g. "ops-bot")
+channel-form-id-hint-websocket = Unique identifier for this WebSocket channel instance (e.g. "browser")
+channel-form-enabled = Enabled
+channel-form-enabled-hint-dingtalk = Enable or disable this Dingtalk channel instance.
+channel-form-enabled-hint-telegram = Enable or disable this Telegram channel instance.
+channel-form-enabled-hint-websocket = Enable or disable this WebSocket channel instance.
+channel-form-client-id = Client ID
+channel-form-client-id-hint = Dingtalk application client ID from the Dingtalk developer console.
+channel-form-client-secret = Client Secret
+channel-form-client-secret-hint = Dingtalk application client secret from the Dingtalk developer console.
+channel-form-bot-title = Bot Title
+channel-form-bot-title-hint = Display name shown for the bot in Dingtalk conversations.
+channel-form-show-reasoning = Show Reasoning
+channel-form-show-reasoning-hint-dingtalk = Include agent reasoning/thinking steps in Dingtalk responses.
+channel-form-show-reasoning-hint-telegram = Include agent reasoning/thinking steps in Telegram responses.
+channel-form-show-reasoning-hint-websocket = Include agent reasoning/thinking steps in WebSocket responses.
+channel-form-stream-output = Stream Output
+channel-form-stream-output-hint = Stream agent responses progressively instead of waiting for full completion.
+channel-form-stream-template-id = Stream Template ID
+channel-form-stream-template-id-hint = Dingtalk message template ID for formatting streamed output chunks.
+channel-form-stream-content-key = Stream Content Key
+channel-form-stream-content-key-hint = JSON key in the stream template that holds the content text.
+channel-form-proxy-enabled = Proxy Enabled
+channel-form-proxy-enabled-hint-dingtalk = Route Dingtalk API requests through an HTTP proxy.
+channel-form-proxy-enabled-hint-telegram = Route Telegram API requests through an HTTP proxy.
+channel-form-proxy-url = Proxy URL
+channel-form-proxy-url-hint-dingtalk = HTTP proxy URL for Dingtalk API connections (e.g. "http://proxy:8080")
+channel-form-proxy-url-hint-telegram = HTTP proxy URL for Telegram API connections (e.g. "http://proxy:8080")
+channel-form-bot-token = Bot Token
+channel-form-bot-token-hint = Telegram bot token obtained from BotFather (e.g. "123456:ABC-DEF")
+channel-form-allowlist = Allowlist
+channel-form-save = Save
+channel-form-cancel = Cancel
+
+channel-disabled-title = Set Disabled Channels
+channel-disabled-save = Save
+channel-disabled-cancel = Cancel
+
+channel-delete-title = Delete { $kind } Channel
+channel-delete-message = Are you sure you want to delete channel '{ $id }'?
+channel-delete-info = This action cannot be undone.
+channel-delete-btn = { $icon } Delete
+channel-delete-cancel = Cancel
+
 test-english-only = English only

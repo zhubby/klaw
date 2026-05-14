@@ -1650,4 +1650,153 @@ mod tests {
             "从注册源或本地来源安装、查看和管理技能。"
         );
     }
+
+    #[test]
+    fn gui_channel_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("channel-subtitle"),
+            "Manage channel connections to external messaging services (Dingtalk, Telegram, WebSocket)."
+        );
+        assert_eq!(
+            translator.text("channel-restarting"),
+            "Restarting channel..."
+        );
+        assert_eq!(
+            translator.text("channel-synchronizing"),
+            "Synchronizing channels..."
+        );
+        assert_eq!(
+            translator.text("channel-no-channels"),
+            "No channels configured."
+        );
+        assert_eq!(translator.text("channel-col-type"), "Type");
+        assert_eq!(translator.text("channel-col-id"), "ID");
+        assert_eq!(translator.text("channel-col-enabled"), "Enabled");
+        assert_eq!(translator.text("channel-col-status"), "Status");
+        assert_eq!(translator.text("channel-col-title"), "Title");
+        assert_eq!(translator.text("channel-status-running"), "running");
+        assert_eq!(translator.text("channel-status-stopped"), "stopped");
+        assert_eq!(translator.text("channel-yes"), "yes");
+        assert_eq!(translator.text("channel-no"), "no");
+        assert_eq!(translator.text("channel-form-id"), "ID");
+        assert_eq!(translator.text("channel-form-save"), "Save");
+        assert_eq!(translator.text("channel-form-cancel"), "Cancel");
+        assert_eq!(
+            translator.text("channel-form-title-add-dingtalk"),
+            "Add Dingtalk Channel"
+        );
+        assert_eq!(
+            translator.text("channel-form-title-edit-dingtalk"),
+            "Edit Dingtalk Channel"
+        );
+        assert_eq!(
+            translator.text("channel-delete-info"),
+            "This action cannot be undone."
+        );
+    }
+
+    #[test]
+    fn gui_channel_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("channel-subtitle"),
+            "管理与外部消息服务（钉钉、Telegram、WebSocket）的通道连接。"
+        );
+        assert_eq!(translator.text("channel-restarting"), "正在重启通道...");
+        assert_eq!(translator.text("channel-no-channels"), "未配置通道。");
+        assert_eq!(translator.text("channel-col-type"), "类型");
+        assert_eq!(translator.text("channel-col-enabled"), "启用");
+        assert_eq!(translator.text("channel-status-running"), "运行中");
+        assert_eq!(translator.text("channel-status-stopped"), "已停止");
+        assert_eq!(translator.text("channel-yes"), "是");
+        assert_eq!(translator.text("channel-no"), "否");
+        assert_eq!(translator.text("channel-form-save"), "保存");
+        assert_eq!(translator.text("channel-form-cancel"), "取消");
+        assert_eq!(
+            translator.text("channel-form-title-add-dingtalk"),
+            "添加钉钉通道"
+        );
+        assert_eq!(translator.text("channel-delete-info"), "此操作无法撤销。");
+    }
+
+    #[test]
+    fn gui_channel_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "channel-btn-disabled",
+                HashMap::from([("icon", "\u{1F527}".to_string())])
+            ),
+            "\u{1F527} Set Disabled Channels"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-btn-add-websocket",
+                HashMap::from([("icon", "\u{1F4E1}".to_string())])
+            ),
+            "\u{1F4E1} Add WebSocket"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-hover-last-event",
+                HashMap::from([("event", "ping".to_string())])
+            ),
+            "last event: ping"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-delete-title",
+                HashMap::from([("kind", "Dingtalk".to_string())])
+            ),
+            "Delete Dingtalk Channel"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-delete-message",
+                HashMap::from([("id", "ops".to_string())])
+            ),
+            "Are you sure you want to delete channel 'ops'?"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-delete-btn",
+                HashMap::from([("icon", "\u{1F5D1}".to_string())])
+            ),
+            "\u{1F5D1} Delete"
+        );
+    }
+
+    #[test]
+    fn gui_channel_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "channel-btn-disabled",
+                HashMap::from([("icon", "\u{1F527}".to_string())])
+            ),
+            "\u{1F527} 设置禁用通道"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-btn-add-websocket",
+                HashMap::from([("icon", "\u{1F4E1}".to_string())])
+            ),
+            "\u{1F4E1} 添加 WebSocket"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-delete-title",
+                HashMap::from([("kind", "钉钉".to_string())])
+            ),
+            "删除 钉钉 通道"
+        );
+        assert_eq!(
+            translator.text_args(
+                "channel-delete-message",
+                HashMap::from([("id", "ops".to_string())])
+            ),
+            "确定要删除通道 'ops' 吗？"
+        );
+    }
 }
