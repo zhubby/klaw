@@ -119,6 +119,9 @@ impl RuntimeWebsocketHandler {
         response: &mut ChannelResponse,
         context: &GatewayV1StreamContext,
     ) -> Result<(), GatewayWebsocketHandlerError> {
+        if response.metadata.contains_key(META_ARCHIVE_RESOURCES_KEY) {
+            return Ok(());
+        }
         if response.attachments.is_empty() {
             return Ok(());
         }

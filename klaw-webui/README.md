@@ -11,6 +11,7 @@
 - 用户消息发送后，在最终回复、reasoning 或工具调用信息到达前，会临时显示 `Thinking...` 占位气泡，避免对话窗口看起来无响应
 - 多个浏览器连接订阅同一会话时，WebUI 会消费 gateway 广播的 v1 `userMessage`、assistant item 和 turn 生命周期通知，并对发送端本地回显做去重
 - WebSocket 路径连接后发送 `initialize`，工作区/会话/provider/历史使用 v1 `session/*`、`provider/list`、`thread/history` 方法，用户输入使用 `turn/start` 结构化 content blocks；浏览器端不再发送旧版 `type: "method"` 帧，也不把旧版服务端帧作为正常输入
+- WebUI 历史消息会从 `thread/history` 的 metadata 恢复 approval/question 交互卡片与 `channel_attachment` 资源预览，刷新页面后仍可继续处理未完成交互。
 
 ## 模块布局
 

@@ -22,6 +22,10 @@
 - `delete_confirmation_body` now accepts `UiLanguage` and uses parameterized `Translator` key.
 - 159 locale tests covering all new WebUI translation keys in both English and Simplified Chinese.
 
+### Fixed
+
+- Refreshed WebUI sessions can now restore persisted approval/question cards and channel attachment resource previews from `thread/history` metadata.
+
 ## 2026-05-14
 
 ### Added

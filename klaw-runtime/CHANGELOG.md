@@ -5,6 +5,7 @@
 ### Added
 
 - Gateway WebSocket responses now enrich returned `channel_attachment` outputs with archive-backed `archive.resources` metadata, auto-archiving local path attachments when permitted so web clients can preview generated files through Gateway archive APIs.
+- Assistant JSONL history now persists WebUI interaction metadata before gateway responses are returned, including `im.card` approval/question cards and archive-backed `channel_attachment` resources, so refreshed WebUI sessions can restore interactive cards.
 
 ## 2026-05-08
 

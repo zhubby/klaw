@@ -15,12 +15,18 @@ use klaw_agent::{
 use klaw_approval::{
     ApprovalManager, ApprovalResolveDecision, ApprovalStatus, SqliteApprovalManager,
 };
-use klaw_archive::{ArchiveService, open_default_archive_service};
+use klaw_archive::{
+    ArchiveIngestInput, ArchiveRecord, ArchiveService, ArchiveSourceKind,
+    open_default_archive_service,
+};
 use klaw_channel::{
     ChannelRequest, ChannelResponse, ChannelResult, ChannelRuntime, ChannelStreamEvent,
-    ChannelStreamWriter, DefaultChannelDriverFactory, OutboundAttachment, OutboundAttachmentSource,
+    ChannelStreamWriter, DefaultChannelDriverFactory, LocalAttachmentPolicy, OutboundAttachment,
+    OutboundAttachmentKind, OutboundAttachmentSource, outbound::resolve_outbound_attachment,
 };
-use klaw_config::{AppConfig, ConfigStore, McpConfig, TailscaleMode, ToolEnabled};
+use klaw_config::{
+    AppConfig, ConfigStore, LocalAttachmentConfig, McpConfig, TailscaleMode, ToolEnabled,
+};
 use klaw_core::{
     AgentLoop, AgentRuntimeError, AgentTelemetry, CircuitBreakerPolicy, DeadLetterMessage,
     DeadLetterPolicy, Envelope, EnvelopeHeader, ExponentialBackoffRetryPolicy,
@@ -65,7 +71,7 @@ use klaw_tool::{
     SubAgentAuditSink, SubAgentTool, TerminalMultiplexerTool, ToolContext, ToolRegistry, VoiceTool,
     WebFetchTool, WebSearchTool,
 };
-use klaw_util::EnvironmentCheckReport;
+use klaw_util::{EnvironmentCheckReport, default_data_dir, workspace_dir};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -86,6 +92,7 @@ const LLM_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const TOOL_AUDIT_QUEUE_CAPACITY: usize = 1024;
 const NEW_SESSION_BOOTSTRAP_USER_MESSAGE: &str = "You just woke up. Time to figure out who you are.\nThis is a brand new conversation. If `BOOTSTRAP.md` exists, use the available workspace tools to read it and follow it before anything else. If it does not exist, start with a short, natural greeting and do not recreate or restore `BOOTSTRAP.md`.\nGuide the user through initializing the agent's identity, vibe, and context. When you learn durable bootstrap details, use tools to update `IDENTITY.md` and `USER.md`, and delete `BOOTSTRAP.md` once bootstrap is truly complete. If `BOOTSTRAP.md` is already absent, leave it absent. Do not claim files were updated unless you actually changed them with tools. Do not mention that this message was auto-generated.";
 const META_OUTBOUND_ATTACHMENTS_KEY: &str = "channel.attachments";
+const META_ARCHIVE_RESOURCES_KEY: &str = "archive.resources";
 
 #[derive(Debug, Clone, Default)]
 pub struct GatewayStatusSnapshot {
@@ -110,6 +117,7 @@ pub struct RuntimeBundle {
     pub runtime: AgentLoop,
     pub base_system_prompt: Arc<RwLock<Option<String>>>,
     pub archive_service: Option<Arc<dyn ArchiveService>>,
+    pub local_attachments: LocalAttachmentConfig,
     pub memory_db: Option<Arc<dyn DatabaseExecutor>>,
     pub runtime_provider_override: Arc<RwLock<Option<String>>>,
     pub disable_session_commands_for: BTreeSet<String>,
@@ -566,6 +574,152 @@ fn channel_response(
         metadata,
         attachments,
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct PersistedWebArchiveResource {
+    archive_id: String,
+    filename: Option<String>,
+    mime_type: Option<String>,
+    size_bytes: i64,
+    kind: String,
+    caption: Option<String>,
+}
+
+fn persisted_resource_from_archive_record(
+    attachment: &OutboundAttachment,
+    record: ArchiveRecord,
+) -> PersistedWebArchiveResource {
+    PersistedWebArchiveResource {
+        archive_id: record.id,
+        filename: attachment.filename.clone().or(record.original_filename),
+        mime_type: record.mime_type,
+        size_bytes: record.size_bytes,
+        kind: match attachment.kind {
+            OutboundAttachmentKind::Image => "image",
+            OutboundAttachmentKind::File => "file",
+        }
+        .to_string(),
+        caption: attachment.caption.clone(),
+    }
+}
+
+fn runtime_local_attachment_policy(
+    runtime: &RuntimeBundle,
+) -> Result<LocalAttachmentPolicy, String> {
+    let root = default_data_dir().ok_or_else(|| "failed to resolve home dir".to_string())?;
+    let workspace = workspace_dir(&root);
+    std::fs::create_dir_all(&workspace).map_err(|err| err.to_string())?;
+    let workspace_root = std::fs::canonicalize(&workspace).map_err(|err| err.to_string())?;
+    let allowlist = runtime
+        .local_attachments
+        .allowlist
+        .iter()
+        .map(|path| PathBuf::from(path.trim()))
+        .collect();
+    Ok(LocalAttachmentPolicy {
+        workspace_root,
+        allowlist,
+        max_bytes: runtime.local_attachments.max_bytes,
+    })
+}
+
+async fn enrich_persistable_response_metadata(
+    runtime: &RuntimeBundle,
+    session_key: &str,
+    channel: &str,
+    chat_id: &str,
+    metadata: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    if metadata.contains_key(META_ARCHIVE_RESOURCES_KEY) {
+        return metadata.clone();
+    }
+    let attachments = parse_outbound_attachments(metadata);
+    if attachments.is_empty() {
+        return metadata.clone();
+    }
+    let Some(archive_service) = runtime.archive_service.as_ref() else {
+        return metadata.clone();
+    };
+
+    let mut local_policy = None;
+    let mut resources = Vec::new();
+    for attachment in &attachments {
+        let resource = match &attachment.source {
+            OutboundAttachmentSource::ArchiveId { archive_id } => {
+                match archive_service.get(archive_id).await {
+                    Ok(record) => Some(persisted_resource_from_archive_record(attachment, record)),
+                    Err(err) => {
+                        warn!(error = %err, archive_id, "failed to load archive attachment for persisted metadata");
+                        None
+                    }
+                }
+            }
+            OutboundAttachmentSource::LocalPath { .. } => {
+                if local_policy.is_none() {
+                    match runtime_local_attachment_policy(runtime) {
+                        Ok(policy) => local_policy = Some(policy),
+                        Err(err) => {
+                            warn!(error = %err, "failed to build local attachment policy for persisted metadata");
+                            continue;
+                        }
+                    }
+                }
+                let Some(policy) = local_policy.as_ref() else {
+                    continue;
+                };
+                let resolved = match resolve_outbound_attachment(
+                    archive_service.as_ref(),
+                    policy,
+                    attachment,
+                )
+                .await
+                {
+                    Ok(resolved) => resolved,
+                    Err(err) => {
+                        warn!(error = %err, "failed to resolve local attachment for persisted metadata");
+                        continue;
+                    }
+                };
+                match archive_service
+                    .ingest_bytes(
+                        ArchiveIngestInput {
+                            source_kind: ArchiveSourceKind::ModelGenerated,
+                            filename: Some(resolved.filename),
+                            declared_mime_type: resolved.mime_type,
+                            session_key: Some(session_key.to_string()),
+                            channel: Some(channel.to_string()),
+                            chat_id: Some(chat_id.to_string()),
+                            message_id: None,
+                            metadata: json!({
+                                "source": "channel_attachment",
+                                "source_label": resolved.source_label,
+                                "caption": resolved.caption,
+                            }),
+                        },
+                        &resolved.bytes,
+                    )
+                    .await
+                {
+                    Ok(record) => Some(persisted_resource_from_archive_record(attachment, record)),
+                    Err(err) => {
+                        warn!(error = %err, "failed to archive local attachment for persisted metadata");
+                        None
+                    }
+                }
+            }
+        };
+        if let Some(resource) = resource {
+            resources.push(resource);
+        }
+    }
+
+    if resources.is_empty() {
+        return metadata.clone();
+    }
+    let mut enriched = metadata.clone();
+    enriched.insert(META_ARCHIVE_RESOURCES_KEY.to_string(), json!(resources));
+    enriched
 }
 
 pub fn build_channel_driver_factory(
@@ -1980,6 +2134,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
         runtime,
         base_system_prompt: Arc::new(RwLock::new(base_system_prompt)),
         archive_service,
+        local_attachments: config.tools.channel_attachment.local_attachments.clone(),
         memory_db,
         runtime_provider_override: Arc::new(RwLock::new(None)),
         disable_session_commands_for: config
@@ -2690,12 +2845,20 @@ pub(crate) async fn submit_and_get_turn_outcome(
     enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
+            let response_metadata = enrich_persistable_response_metadata(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.channel,
+                &msg.payload.chat_id,
+                &msg.payload.metadata,
+            )
+            .await;
             let agent_record = ChatRecord::new(
                 "assistant",
                 msg.payload.content.clone(),
                 Some(msg.header.message_id.to_string()),
             )
-            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+            .with_metadata_json(chat_record_metadata_json(&response_metadata));
             persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
@@ -2703,7 +2866,7 @@ pub(crate) async fn submit_and_get_turn_outcome(
                 &msg.payload.channel,
                 session_state.turn_count,
                 &msg.header.message_id,
-                &msg.payload.metadata,
+                &response_metadata,
                 &agent_record,
             )
             .await;
@@ -2717,7 +2880,7 @@ pub(crate) async fn submit_and_get_turn_outcome(
             Ok(Some(AssistantOutput {
                 content: msg.payload.content.clone(),
                 reasoning,
-                metadata: msg.payload.metadata.clone(),
+                metadata: response_metadata,
             }))
         }
         Some(_) | None => {
@@ -2800,12 +2963,20 @@ pub(crate) async fn submit_history_only_turn_outcome(
     enqueue_llm_audit_records_from_outcome(runtime, session_state.turn_count, &outcome);
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
+            let response_metadata = enrich_persistable_response_metadata(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.channel,
+                &msg.payload.chat_id,
+                &msg.payload.metadata,
+            )
+            .await;
             let agent_record = ChatRecord::new(
                 "assistant",
                 msg.payload.content.clone(),
                 Some(msg.header.message_id.to_string()),
             )
-            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+            .with_metadata_json(chat_record_metadata_json(&response_metadata));
             persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
@@ -2813,7 +2984,7 @@ pub(crate) async fn submit_history_only_turn_outcome(
                 &msg.payload.channel,
                 session_state.turn_count,
                 &msg.header.message_id,
-                &msg.payload.metadata,
+                &response_metadata,
                 &agent_record,
             )
             .await;
@@ -2827,7 +2998,7 @@ pub(crate) async fn submit_history_only_turn_outcome(
             Ok(Some(AssistantOutput {
                 content: msg.payload.content.clone(),
                 reasoning,
-                metadata: msg.payload.metadata.clone(),
+                metadata: response_metadata,
             }))
         }
         Some(_) | None => {
@@ -2944,12 +3115,20 @@ async fn submit_isolated_turn(
         return Ok(None);
     }
 
+    let response_metadata = enrich_persistable_response_metadata(
+        runtime,
+        &msg.header.session_key,
+        &execution.channel,
+        &execution.chat_id,
+        &msg.payload.metadata,
+    )
+    .await;
     let agent_record = ChatRecord::new(
         "assistant",
         msg.payload.content.clone(),
         Some(msg.header.message_id.to_string()),
     )
-    .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+    .with_metadata_json(chat_record_metadata_json(&response_metadata));
     persist_assistant_response_state(
         runtime,
         &msg.header.session_key,
@@ -2957,7 +3136,7 @@ async fn submit_isolated_turn(
         &execution.channel,
         session_state.turn_count,
         &msg.header.message_id,
-        &msg.payload.metadata,
+        &response_metadata,
         &agent_record,
     )
     .await;
@@ -2971,7 +3150,7 @@ async fn submit_isolated_turn(
     Ok(Some(AssistantOutput {
         content: msg.payload.content,
         reasoning,
-        metadata: msg.payload.metadata,
+        metadata: response_metadata,
     }))
 }
 
@@ -3082,12 +3261,20 @@ async fn submit_webhook_isolated_turn(
             .await?;
     }
 
+    let response_metadata = enrich_persistable_response_metadata(
+        runtime,
+        &msg.header.session_key,
+        &channel,
+        &execution.chat_id,
+        &msg.payload.metadata,
+    )
+    .await;
     let agent_record = ChatRecord::new(
         "assistant",
         msg.payload.content.clone(),
         Some(msg.header.message_id.to_string()),
     )
-    .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+    .with_metadata_json(chat_record_metadata_json(&response_metadata));
     persist_assistant_response_state(
         runtime,
         &msg.header.session_key,
@@ -3095,7 +3282,7 @@ async fn submit_webhook_isolated_turn(
         &channel,
         session_state.turn_count,
         &msg.header.message_id,
-        &msg.payload.metadata,
+        &response_metadata,
         &agent_record,
     )
     .await;
@@ -3109,7 +3296,7 @@ async fn submit_webhook_isolated_turn(
     Ok(Some(AssistantOutput {
         content: msg.payload.content,
         reasoning,
-        metadata: msg.payload.metadata,
+        metadata: response_metadata,
     }))
 }
 
@@ -3387,12 +3574,20 @@ pub async fn submit_and_stream_output(
 
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
+            let response_metadata = enrich_persistable_response_metadata(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.channel,
+                &msg.payload.chat_id,
+                &msg.payload.metadata,
+            )
+            .await;
             let agent_record = ChatRecord::new(
                 "assistant",
                 msg.payload.content.clone(),
                 Some(msg.header.message_id.to_string()),
             )
-            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+            .with_metadata_json(chat_record_metadata_json(&response_metadata));
             persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
@@ -3400,7 +3595,7 @@ pub async fn submit_and_stream_output(
                 &msg.payload.channel,
                 session_state.turn_count,
                 &msg.header.message_id,
-                &msg.payload.metadata,
+                &response_metadata,
                 &agent_record,
             )
             .await;
@@ -3414,7 +3609,7 @@ pub async fn submit_and_stream_output(
             let output = AssistantOutput {
                 content: msg.payload.content.clone(),
                 reasoning,
-                metadata: msg.payload.metadata.clone(),
+                metadata: response_metadata,
             };
             writer
                 .write(ChannelStreamEvent::Snapshot(channel_response(
@@ -3562,12 +3757,20 @@ where
 
     match outcome.final_response {
         Some(msg) if should_emit_outbound(&msg) => {
+            let response_metadata = enrich_persistable_response_metadata(
+                runtime,
+                &msg.header.session_key,
+                &msg.payload.channel,
+                &msg.payload.chat_id,
+                &msg.payload.metadata,
+            )
+            .await;
             let agent_record = ChatRecord::new(
                 "assistant",
                 msg.payload.content.clone(),
                 Some(msg.header.message_id.to_string()),
             )
-            .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
+            .with_metadata_json(chat_record_metadata_json(&response_metadata));
             persist_assistant_response_state(
                 runtime,
                 &msg.header.session_key,
@@ -3575,7 +3778,7 @@ where
                 &msg.payload.channel,
                 session_state.turn_count,
                 &msg.header.message_id,
-                &msg.payload.metadata,
+                &response_metadata,
                 &agent_record,
             )
             .await;
@@ -3589,7 +3792,7 @@ where
             let output = AssistantOutput {
                 content: msg.payload.content.clone(),
                 reasoning,
-                metadata: msg.payload.metadata.clone(),
+                metadata: response_metadata,
             };
             on_event(ChannelStreamEvent::Snapshot(channel_response(
                 output.content.clone(),
@@ -3626,12 +3829,6 @@ pub async fn drain_runtime_queue(
             enqueue_llm_audit_records_from_outcome(runtime, turn_index, &outcome);
             break;
         };
-        let agent_record = ChatRecord::new(
-            "assistant",
-            msg.payload.content.clone(),
-            Some(msg.header.message_id.to_string()),
-        )
-        .with_metadata_json(chat_record_metadata_json(&msg.payload.metadata));
         let sessions = session_manager(runtime);
         let turn_index = sessions
             .get_session(&msg.header.session_key)
@@ -3643,6 +3840,20 @@ pub async fn drain_runtime_queue(
             drained += 1;
             continue;
         }
+        let response_metadata = enrich_persistable_response_metadata(
+            runtime,
+            &msg.header.session_key,
+            &msg.payload.channel,
+            &msg.payload.chat_id,
+            &msg.payload.metadata,
+        )
+        .await;
+        let agent_record = ChatRecord::new(
+            "assistant",
+            msg.payload.content.clone(),
+            Some(msg.header.message_id.to_string()),
+        )
+        .with_metadata_json(chat_record_metadata_json(&response_metadata));
         persist_assistant_response_state(
             runtime,
             &msg.header.session_key,
@@ -3650,7 +3861,7 @@ pub async fn drain_runtime_queue(
             &msg.payload.channel,
             turn_index,
             &msg.header.message_id,
-            &msg.payload.metadata,
+            &response_metadata,
             &agent_record,
         )
         .await;
@@ -4248,6 +4459,48 @@ mod tests {
         assert_eq!(attachments[0].filename.as_deref(), Some("chart.png"));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn enrich_persistable_response_metadata_adds_archive_resources() {
+        let provider = Arc::new(BootstrapCaptureProvider::default());
+        let mut runtime = build_test_runtime(provider).await;
+        runtime.archive_service = Some(Arc::new(FakeArchiveService));
+        let metadata = BTreeMap::from([(
+            "channel.attachments".to_string(),
+            json!([{
+                "archive_id": "arch-1",
+                "kind": "image",
+                "filename": "chart.png",
+                "caption": "latest chart"
+            }]),
+        )]);
+
+        let enriched = super::enrich_persistable_response_metadata(
+            &runtime,
+            "websocket:session",
+            "websocket",
+            "websocket:session",
+            &metadata,
+        )
+        .await;
+
+        let resources = enriched
+            .get("archive.resources")
+            .and_then(Value::as_array)
+            .expect("archive resources should be persisted");
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0]["archive_id"], "arch-1");
+        assert_eq!(resources[0]["filename"], "chart.png");
+        assert_eq!(resources[0]["kind"], "image");
+        assert_eq!(resources[0]["caption"], "latest chart");
+
+        let persisted = chat_record_metadata_json(&enriched).expect("metadata should persist");
+        let persisted_value: Value = serde_json::from_str(&persisted).expect("metadata JSON");
+        assert_eq!(
+            persisted_value["archive.resources"][0]["archive_id"],
+            "arch-1"
+        );
+    }
+
     #[test]
     fn chat_record_metadata_json_drops_runtime_audit_payloads() {
         let metadata = BTreeMap::from([
@@ -4478,6 +4731,10 @@ mod tests {
             runtime,
             base_system_prompt: Arc::new(RwLock::new(None)),
             archive_service: None,
+            local_attachments: AppConfig::default()
+                .tools
+                .channel_attachment
+                .local_attachments,
             memory_db: None,
             runtime_provider_override: Arc::new(RwLock::new(None)),
             disable_session_commands_for: BTreeSet::new(),
