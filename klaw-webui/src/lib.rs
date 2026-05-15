@@ -3,9 +3,11 @@
 //! Refresh embedded assets from the workspace root: `make webui-wasm`
 
 #[cfg(any(test, target_arch = "wasm32"))]
-use std::collections::BTreeMap;
+use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage};
 #[cfg(test)]
 use std::collections::VecDeque;
+#[cfg(any(test, target_arch = "wasm32"))]
+use std::collections::{BTreeMap, HashMap};
 #[cfg(any(test, target_arch = "wasm32"))]
 use std::ops::Range;
 
@@ -303,12 +305,13 @@ pub(crate) enum ConnectionState {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 impl ConnectionState {
-    pub(crate) fn composer_hint_text(&self) -> &'static str {
+    pub(crate) fn composer_hint_text(&self, language: UiLanguage) -> String {
+        let translator = Translator::new(LocaleDomain::WebUi, language);
         match self {
-            Self::Connected => "Message Klaw…",
-            Self::Connecting => "Connecting to Klaw…",
-            Self::Disconnected => "Reconnect to message Klaw…",
-            Self::Error(_) => "Fix the connection to keep chatting…",
+            Self::Connected => translator.text("composer-connected-hint"),
+            Self::Connecting => translator.text("composer-connecting-hint"),
+            Self::Disconnected => translator.text("composer-disconnected-hint"),
+            Self::Error(_) => translator.text("composer-error-hint"),
         }
     }
 
@@ -316,23 +319,27 @@ impl ConnectionState {
         matches!(self, Self::Connected)
     }
 
-    pub(crate) fn empty_state_copy(&self) -> EmptyStateCopy {
+    pub(crate) fn empty_state_copy(&self, language: UiLanguage) -> EmptyStateCopy {
+        let translator = Translator::new(LocaleDomain::WebUi, language);
         match self {
             Self::Connected => EmptyStateCopy {
-                title: "Start a conversation with Klaw".to_string(),
-                body: "Send a message below to begin this chat.".to_string(),
+                title: translator.text("empty-connected-title"),
+                body: translator.text("empty-connected-body"),
             },
             Self::Connecting => EmptyStateCopy {
-                title: "Connecting to Klaw".to_string(),
-                body: "Waiting for the chat room to come online.".to_string(),
+                title: translator.text("empty-connecting-title"),
+                body: translator.text("empty-connecting-body"),
             },
             Self::Disconnected => EmptyStateCopy {
-                title: "Reconnect to Klaw".to_string(),
-                body: "Reconnect from the toolbar, then send your next message.".to_string(),
+                title: translator.text("empty-disconnected-title"),
+                body: translator.text("empty-disconnected-body"),
             },
             Self::Error(error) => EmptyStateCopy {
-                title: "Connection error".to_string(),
-                body: format!("Klaw could not keep the chat connection alive: {error}"),
+                title: translator.text("empty-error-title"),
+                body: translator.text_args(
+                    "empty-error-body",
+                    HashMap::from([("error", error.clone())]),
+                ),
             },
         }
     }
@@ -833,8 +840,12 @@ pub(crate) fn session_card_activity_label(_is_active: bool) -> Option<&'static s
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-pub(crate) fn delete_confirmation_body(agent_name: &str) -> String {
-    format!("Delete agent '{agent_name}' permanently? This cannot be undone.")
+pub(crate) fn delete_confirmation_body(agent_name: &str, language: UiLanguage) -> String {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
+    translator.text_args(
+        "delete-confirmation",
+        HashMap::from([("agent_name", agent_name.to_string())]),
+    )
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -1036,7 +1047,7 @@ mod tests {
 
     use serde_json::json;
 
-    use klaw_ui_kit::ThemeMode;
+    use klaw_ui_kit::{ThemeMode, UiLanguage};
 
     use super::{
         ArchiveRecord, ArchiveUploadResponse, ConnectionState, ImCardKind, MessageRole, PageMode,
@@ -1134,14 +1145,15 @@ mod tests {
 
     #[test]
     fn disconnected_empty_state_invites_reconnect() {
-        let copy = ConnectionState::Disconnected.empty_state_copy();
+        let copy = ConnectionState::Disconnected.empty_state_copy(UiLanguage::English);
         assert_eq!(copy.title, "Reconnect to Klaw");
         assert!(copy.body.contains("Reconnect"));
     }
 
     #[test]
     fn error_empty_state_surfaces_context() {
-        let copy = ConnectionState::Error("send failed".to_string()).empty_state_copy();
+        let copy =
+            ConnectionState::Error("send failed".to_string()).empty_state_copy(UiLanguage::English);
         assert_eq!(copy.title, "Connection error");
         assert!(copy.body.contains("send failed"));
     }
@@ -1150,7 +1162,7 @@ mod tests {
     fn disconnected_state_disables_sending_and_updates_hint() {
         assert!(!ConnectionState::Disconnected.can_send());
         assert_eq!(
-            ConnectionState::Disconnected.composer_hint_text(),
+            ConnectionState::Disconnected.composer_hint_text(UiLanguage::English),
             "Reconnect to message Klaw…"
         );
     }
@@ -1531,7 +1543,7 @@ mod tests {
 
     #[test]
     fn delete_confirmation_mentions_agent_name() {
-        let body = delete_confirmation_body("My Agent");
+        let body = delete_confirmation_body("My Agent", UiLanguage::English);
         assert!(body.contains("My Agent"));
         assert!(body.contains("permanently"));
     }

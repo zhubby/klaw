@@ -198,7 +198,7 @@ impl ChatApp {
         let open_sessions = self.sessions.iter().filter(|session| session.open).count();
         TopBottomPanel::bottom("klaw-webui-status").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Theme Mode:");
+                ui.label(format!("{}:", translator.text("statusbar-theme-mode")));
                 let current_theme = self.ctx.options(|opt| opt.theme_preference);
                 let mut next_theme = current_theme;
                 if ui.add(ThemeSwitch::new(&mut next_theme)).changed() {
@@ -212,13 +212,19 @@ impl ChatApp {
                     self.set_ui_language(language);
                 }
                 ui.separator();
-                ui.label(format!("Agents: {}/{}", self.sessions.len(), open_sessions))
-                    .on_hover_text("Total agent windows / currently open windows.");
+                ui.label(translator.text_args(
+                    "statusbar-agents",
+                    HashMap::from([
+                        ("total", self.sessions.len().to_string()),
+                        ("open", open_sessions.to_string()),
+                    ]),
+                ))
+                .on_hover_text(translator.text("statusbar-agents-hover"));
                 ui.separator();
-                ui.label("Stream");
-                let response = ui.add(toggle(&mut self.stream_enabled)).on_hover_text(
-                    "On: stream replies live. Off: wait for a full reply and play fade-in.",
-                );
+                ui.label(translator.text("statusbar-stream"));
+                let response = ui
+                    .add(toggle(&mut self.stream_enabled))
+                    .on_hover_text(translator.text("statusbar-stream-on-hover"));
                 if response.changed() {
                     stream_changed = true;
                 }
@@ -231,25 +237,28 @@ impl ChatApp {
                         egui::Label::new(RichText::new(format!("{fps:.0} FPS")).small().weak())
                             .sense(egui::Sense::hover()),
                     )
-                    .on_hover_text("Approximate live frame rate from the latest egui frame delta.");
+                    .on_hover_text(translator.text("statusbar-fps-hover"));
                     if let Some(session) = self.active_session() {
                         ui.separator();
-                        if let Some(activity) = session_activity_label(session) {
+                        if let Some(activity) = session_activity_label(session, self.ui_language) {
                             ui.label(RichText::new(activity).small().weak())
-                                .on_hover_text("Current activity for the active agent.");
+                                .on_hover_text(translator.text("statusbar-activity-hover"));
                             ui.separator();
                         }
 
                         let message_count = session.buffers.messages.borrow().len();
                         ui.label(
-                            RichText::new(format!("{message_count} msgs"))
-                                .small()
-                                .weak(),
+                            RichText::new(translator.text_args(
+                                "statusbar-messages",
+                                HashMap::from([("count", message_count.to_string())]),
+                            ))
+                            .small()
+                            .weak(),
                         )
-                        .on_hover_text("Messages currently loaded in the active agent window.");
+                        .on_hover_text(translator.text("statusbar-messages-hover"));
                         ui.separator();
 
-                        let route = session_route_label(session);
+                        let route = session_route_label(session, self.ui_language);
                         ui.label(
                             RichText::new(compact_status_text(&route, 28))
                                 .small()
@@ -262,7 +271,7 @@ impl ChatApp {
                             .on_hover_text(&session.title);
                     } else {
                         ui.separator();
-                        ui.label("No active agent");
+                        ui.label(translator.text("statusbar-no-active-agent"));
                     }
                 });
             });
@@ -287,16 +296,19 @@ impl ChatApp {
         let mut requested_light_theme = None;
         let mut requested_dark_theme = None;
 
-        egui::Window::new("Settings")
+        egui::Window::new(translator.text("settings-title"))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(420.0);
-                ui.strong("General Settings");
+                ui.strong(translator.text("settings-general"));
                 ui.add_space(8.0);
-                ui.label(format!("Current theme mode: {}", self.theme_mode.label()));
+                ui.label(translator.text_args(
+                    "settings-current-theme-mode",
+                    HashMap::from([("mode", self.theme_mode.label().to_string())]),
+                ));
                 ui.add_space(8.0);
 
                 egui::Grid::new("webui-general-theme-grid")
@@ -314,7 +326,7 @@ impl ChatApp {
                         }
                         ui.end_row();
 
-                        ui.label("Theme Mode:");
+                        ui.label(format!("{}:", translator.text("settings-theme-mode")));
                         ComboBox::from_id_salt("webui-settings-theme-mode")
                             .width(160.0)
                             .selected_text(self.theme_mode.label())
@@ -336,7 +348,7 @@ impl ChatApp {
                             });
                         ui.end_row();
 
-                        ui.label("Light Theme:");
+                        ui.label(format!("{}:", translator.text("settings-light-theme")));
                         ComboBox::from_id_salt("webui-settings-light-theme")
                             .width(160.0)
                             .selected_text(self.light_theme.label())
@@ -360,7 +372,7 @@ impl ChatApp {
                             });
                         ui.end_row();
 
-                        ui.label("Dark Theme:");
+                        ui.label(format!("{}:", translator.text("settings-dark-theme")));
                         ComboBox::from_id_salt("webui-settings-dark-theme")
                             .width(160.0)
                             .selected_text(self.dark_theme.label())
@@ -385,7 +397,7 @@ impl ChatApp {
                     });
 
                 ui.add_space(8.0);
-                ui.small("Default keeps the existing egui light/dark visuals.");
+                ui.small(translator.text("settings-theme-default-hint"));
             });
 
         self.show_settings_dialog = open;
@@ -406,9 +418,10 @@ impl ChatApp {
             return;
         }
 
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let mut open = self.show_about_dialog;
         let mut close_requested = false;
-        egui::Window::new("About Klaw")
+        egui::Window::new(translator.text("about-title"))
             .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -417,7 +430,11 @@ impl ChatApp {
                 ui.set_min_width(360.0);
                 ui.vertical_centered(|ui| {
                     ui.add_space(10.0);
-                    ui.label(RichText::new("Klaw").strong().size(22.0));
+                    ui.label(
+                        RichText::new(translator.text("assistant-label"))
+                            .strong()
+                            .size(22.0),
+                    );
                     ui.add_space(18.0);
 
                     if let Some(origin) = &self.gateway_origin {
@@ -428,12 +445,15 @@ impl ChatApp {
                         ui.add_space(12.0);
                     }
 
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    ui.label(translator.text_args(
+                        "about-version",
+                        HashMap::from([("version", env!("CARGO_PKG_VERSION").to_string())]),
+                    ));
                     ui.add_space(4.0);
                     ui.hyperlink_to(ABOUT_GITHUB_URL, ABOUT_GITHUB_URL);
                     ui.add_space(12.0);
 
-                    if ui.button("Close").clicked() {
+                    if ui.button(translator.text("about-close")).clicked() {
                         close_requested = true;
                     }
                 });
@@ -442,6 +462,7 @@ impl ChatApp {
     }
 
     fn render_archive_preview_dialog(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let Some(dialog) = self.archive_preview.borrow().clone() else {
             return;
         };
@@ -449,7 +470,7 @@ impl ChatApp {
         let mut close_requested = false;
         let mut download_requested: Option<WebArchiveResource> = None;
         let default_size = archive_preview_default_size(&dialog);
-        egui::Window::new("Resource Preview")
+        egui::Window::new(translator.text("archive-preview-title"))
             .id(egui::Id::new((
                 "archive-resource-preview",
                 dialog.resource.archive_id.as_str(),
@@ -468,17 +489,26 @@ impl ChatApp {
                     .size(Size::remainder().at_least(180.0))
                     .size(Size::exact(52.0))
                     .vertical(|mut strip| {
-                        strip.cell(|ui| render_archive_preview_content(ui, &dialog));
+                        strip.cell(|ui| {
+                            render_archive_preview_content(ui, &dialog, self.ui_language)
+                        });
                         strip.cell(|ui| {
                             ui.separator();
                             ui.add_space(8.0);
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui.button("Close").clicked() {
+                                if ui
+                                    .button(translator.text("archive-preview-close"))
+                                    .clicked()
+                                {
                                     close_requested = true;
                                 }
                                 if matches!(&dialog.status, ArchivePreviewStatus::Ready { .. })
                                     && ui
-                                        .button(format!("{} Download", regular::DOWNLOAD_SIMPLE))
+                                        .button(format!(
+                                            "{} {}",
+                                            regular::DOWNLOAD_SIMPLE,
+                                            translator.text("archive-preview-download")
+                                        ))
                                         .clicked()
                                 {
                                     download_requested = Some(dialog.resource.clone());
@@ -510,6 +540,7 @@ impl ChatApp {
     }
 
     fn render_session_list(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         if !self.is_workspace_ready() {
             return;
         }
@@ -524,7 +555,11 @@ impl ChatApp {
             .default_width(SESSION_LIST_WIDTH)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(format!("{} Agents", regular::ROBOT));
+                    ui.heading(format!(
+                        "{} {}",
+                        regular::ROBOT,
+                        translator.text("session-list-heading")
+                    ));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
                             .add_enabled(self.is_workspace_ready(), Button::new(regular::PLUS))
@@ -537,7 +572,7 @@ impl ChatApp {
                 ui.separator();
 
                 if self.sessions.is_empty() {
-                    ui.label("No agents yet.");
+                    ui.label(translator.text("session-list-empty"));
                     return;
                 }
 
@@ -581,9 +616,9 @@ impl ChatApp {
                                     session.title,
                                     session.session_key,
                                     if session.open {
-                                        "Window visible"
+                                        translator.text("session-visible")
                                     } else {
-                                        "Window hidden"
+                                        translator.text("session-hidden")
                                     }
                                 ));
                         if response.clicked() {
@@ -591,20 +626,35 @@ impl ChatApp {
                         }
                         response.context_menu(|ui| {
                             if ui
-                                .button(format!("{} Rename", regular::PENCIL_SIMPLE))
+                                .button(format!(
+                                    "{} {}",
+                                    regular::PENCIL_SIMPLE,
+                                    translator.text("session-rename")
+                                ))
                                 .clicked()
                             {
                                 rename_session_key = Some(session.session_key.clone());
                                 ui.close();
                             }
-                            if ui.button(format!("{} Copy ID", regular::COPY)).clicked() {
+                            if ui
+                                .button(format!(
+                                    "{} {}",
+                                    regular::COPY,
+                                    translator.text("session-copy-id")
+                                ))
+                                .clicked()
+                            {
                                 copy_session_key = Some(session.session_key.clone());
                                 ui.close();
                             }
                             if ui
                                 .add(Button::new(
-                                    RichText::new(format!("{} Delete", regular::TRASH))
-                                        .color(ui.visuals().error_fg_color),
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        regular::TRASH,
+                                        translator.text("session-delete")
+                                    ))
+                                    .color(ui.visuals().error_fg_color),
                                 ))
                                 .clicked()
                             {
@@ -631,7 +681,9 @@ impl ChatApp {
                 o.commands
                     .push(egui::OutputCommand::CopyText(session_key.clone()));
             });
-            self.toasts.borrow_mut().success("Agent ID copied");
+            self.toasts
+                .borrow_mut()
+                .success(translator.text("session-id-copied"));
         }
         if let Some(session_key) = remove_session_key {
             self.delete_session_key = Some(session_key);
@@ -642,6 +694,7 @@ impl ChatApp {
     }
 
     fn render_rename_dialog(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let Some(session_key) = self.rename_session_key.clone() else {
             return;
         };
@@ -650,7 +703,7 @@ impl ChatApp {
         let mut submit = false;
         let mut cancel = false;
 
-        egui::Window::new("Rename Agent")
+        egui::Window::new(translator.text("rename-title"))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .collapsible(false)
             .resizable(false)
@@ -660,16 +713,16 @@ impl ChatApp {
                 let response = ui.add(
                     TextEdit::singleline(&mut self.rename_session_input)
                         .desired_width(f32::INFINITY)
-                        .hint_text("Agent name"),
+                        .hint_text(translator.text("rename-hint")),
                 );
                 let submit_with_enter =
                     response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() || submit_with_enter {
+                    if ui.button(translator.text("rename-save")).clicked() || submit_with_enter {
                         submit = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(translator.text("rename-cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -692,6 +745,7 @@ impl ChatApp {
     }
 
     fn render_gateway_dialog(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         if !self.show_gateway_dialog {
             return;
         }
@@ -699,16 +753,16 @@ impl ChatApp {
         let mut open = self.show_gateway_dialog;
         let mut reconnect_all = false;
 
-        egui::Window::new("Gateway Token")
+        egui::Window::new(translator.text("gateway-title"))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(420.0);
-                ui.label("If gateway auth is enabled, enter the token here.");
+                ui.label(translator.text("gateway-hint"));
                 ui.label(
-                    RichText::new("Leave it blank when auth is disabled.")
+                    RichText::new(translator.text("gateway-blank-hint"))
                         .small()
                         .weak(),
                 );
@@ -718,17 +772,21 @@ impl ChatApp {
                     TextEdit::singleline(&mut self.gateway_token_input)
                         .password(true)
                         .desired_width(f32::INFINITY)
-                        .hint_text("Gateway token"),
+                        .hint_text(translator.text("gateway-token-hint")),
                 );
                 let submit_with_enter =
                     response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save & Reconnect").clicked() || submit_with_enter {
+                    if ui
+                        .button(translator.text("gateway-save-reconnect"))
+                        .clicked()
+                        || submit_with_enter
+                    {
                         reconnect_all = true;
                     }
-                    if ui.button("Clear").clicked() {
+                    if ui.button(translator.text("gateway-clear")).clicked() {
                         self.gateway_token_input.clear();
                         self.gateway_token = None;
                         self.persist_workspace_state();
@@ -747,6 +805,7 @@ impl ChatApp {
     }
 
     fn render_delete_dialog(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let Some(session_key) = self.delete_session_key.clone() else {
             return;
         };
@@ -760,25 +819,26 @@ impl ChatApp {
         let mut confirm = false;
         let mut cancel = false;
 
-        egui::Window::new("Delete Agent")
+        egui::Window::new(translator.text("delete-title"))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(380.0);
-                ui.label(delete_confirmation_body(&session_title));
+                ui.label(delete_confirmation_body(&session_title, self.ui_language));
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(Button::new(
-                            RichText::new("Delete").color(ui.visuals().error_fg_color),
+                            RichText::new(translator.text("delete-confirm"))
+                                .color(ui.visuals().error_fg_color),
                         ))
                         .clicked()
                     {
                         confirm = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(translator.text("delete-cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -796,6 +856,7 @@ impl ChatApp {
     }
 
     fn render_session_window(&mut self, ctx: &Context, session_key: &str) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let Some(index) = self.session_index(session_key) else {
             return;
         };
@@ -845,15 +906,19 @@ impl ChatApp {
                         .id_salt(("session-messages", &session.session_key))
                         .show(ui, |ui| {
                             if *session.buffers.history_loading.borrow() && messages.is_empty() {
-                                render_history_loading_state(ui);
+                                render_history_loading_state(ui, self.ui_language);
                                 return;
                             }
                             if messages.is_empty() {
-                                render_empty_state(ui, &self.connection_state.borrow());
+                                render_empty_state(
+                                    ui,
+                                    &self.connection_state.borrow(),
+                                    self.ui_language,
+                                );
                                 return;
                             }
                             if *session.buffers.history_loading.borrow() {
-                                render_history_page_loading_state(ui);
+                                render_history_page_loading_state(ui, self.ui_language);
                                 ui.add_space(8.0);
                             }
                             let mut card_action = None;
@@ -872,6 +937,7 @@ impl ChatApp {
                                     &session.card_state_overrides,
                                     &mut trigger_preview_attachment,
                                     &mut trigger_download_attachment,
+                                    self.ui_language,
                                 ) {
                                     card_action = Some(action);
                                 }
@@ -886,7 +952,7 @@ impl ChatApp {
                                 last_visible_role,
                                 session.buffers.active_stream_request_id.borrow().as_deref(),
                             ) {
-                                render_thinking_placeholder(ui);
+                                render_thinking_placeholder(ui, self.ui_language);
                                 ui.add_space(8.0);
                             }
                             trigger_card_action = card_action;
@@ -924,7 +990,7 @@ impl ChatApp {
                     let attachment_count = session.pending_attachments.borrow().len();
                     let can_send = self.connection_state.borrow().can_send();
                     ui.label(
-                        RichText::new("Type / to open command completion.")
+                        RichText::new(translator.text("composer-slash-hint"))
                             .small()
                             .weak(),
                     );
@@ -938,7 +1004,11 @@ impl ChatApp {
                                 TextEdit::multiline(&mut session.draft)
                                     .desired_rows(4)
                                     .desired_width(ui.available_width())
-                                    .hint_text(self.connection_state.borrow().composer_hint_text())
+                                    .hint_text(
+                                        self.connection_state
+                                            .borrow()
+                                            .composer_hint_text(self.ui_language),
+                                    )
                                     .interactive(can_send && !attachment_busy)
                                     .show(ui)
                             },
@@ -1101,9 +1171,14 @@ impl ChatApp {
                         if ui
                             .add_enabled(
                                 can_trigger_file_picker(can_send, selecting_file, uploading_file),
-                                egui::Button::new(format!("{} Upload", regular::PAPERCLIP)).small(),
+                                egui::Button::new(format!(
+                                    "{} {}",
+                                    regular::PAPERCLIP,
+                                    translator.text("upload")
+                                ))
+                                .small(),
                             )
-                            .on_hover_text("Upload and attach files")
+                            .on_hover_text(translator.text("upload-hover"))
                             .clicked()
                         {
                             trigger_file_picker = true;
@@ -1112,12 +1187,16 @@ impl ChatApp {
                             .add_enabled(
                                 attachment_count > 0,
                                 egui::Button::new(format!(
-                                    "{} File ({attachment_count})",
-                                    regular::FILE
+                                    "{} {}",
+                                    regular::FILE,
+                                    translator.text_args(
+                                        "file-count",
+                                        HashMap::from([("count", attachment_count.to_string())])
+                                    )
                                 ))
                                 .small(),
                             )
-                            .on_hover_text("Show uploaded files")
+                            .on_hover_text(translator.text("file-count-hover"))
                             .clicked()
                         {
                             trigger_open_file_dialog = true;
@@ -1126,7 +1205,11 @@ impl ChatApp {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let send_button = ui.add_enabled(
                                 can_send && !attachment_busy,
-                                Button::new(format!("{} Send", regular::PAPER_PLANE)),
+                                Button::new(format!(
+                                    "{} {}",
+                                    regular::PAPER_PLANE,
+                                    translator.text("send")
+                                )),
                             );
                             if send_button.clicked() || send_on_enter {
                                 trigger_send = true;
@@ -1137,14 +1220,14 @@ impl ChatApp {
                                 ui.add_sized(
                                     [model_width, control_height],
                                     TextEdit::singleline(&mut session.selected_route.model)
-                                        .hint_text("Model"),
+                                        .hint_text(translator.text("model-hint")),
                                 );
                                 let provider_changed =
                                     ComboBox::from_id_salt(("session-model-provider", session_key))
                                         .width(provider_width)
                                         .selected_text(
                                             if session.selected_route.model_provider.is_empty() {
-                                                "Provider".to_string()
+                                                translator.text("provider-hint")
                                             } else {
                                                 session.selected_route.model_provider.clone()
                                             },
@@ -1172,10 +1255,16 @@ impl ChatApp {
                             });
                             if selecting_file {
                                 ui.spinner();
-                                ui.label(RichText::new("Selecting file...").small().weak());
+                                ui.label(
+                                    RichText::new(translator.text("selecting-file"))
+                                        .small()
+                                        .weak(),
+                                );
                             } else if uploading_file {
                                 ui.spinner();
-                                ui.label(RichText::new("Uploading...").small().weak());
+                                ui.label(
+                                    RichText::new(translator.text("uploading")).small().weak(),
+                                );
                             }
                         });
                     });
@@ -1208,6 +1297,7 @@ impl ChatApp {
                     &mut trigger_preview_attachment,
                     &mut trigger_download_attachment,
                     &mut remove_attachment_at,
+                    self.ui_language,
                 );
                 self.sessions[index].show_file_dialog = show_file_dialog;
             }
@@ -1267,7 +1357,7 @@ impl ChatApp {
                     self.sessions[index].card_state_overrides.insert(
                         action.card_key,
                         CardInteractionState::Failed {
-                            message: "Failed to send card action.".to_string(),
+                            message: translator.text("send-card-failed"),
                         },
                     );
                 }
@@ -1294,6 +1384,7 @@ impl ChatApp {
     }
 
     fn render_workbench(&mut self, ctx: &Context) {
+        let translator = Translator::new(LocaleDomain::WebUi, self.ui_language);
         let page_mode = {
             let connection_state = self.connection_state.borrow().clone();
             derive_page_mode(&connection_state, self.workspace_loaded)
@@ -1310,11 +1401,14 @@ impl ChatApp {
                             );
                         }
                         ui.add_space(16.0);
-                        ui.heading("Connect to Klaw Gateway");
+                        ui.heading(translator.text("workbench-connect-heading"));
                         ui.add_space(4.0);
-                        ui.label("Connect successfully before loading agents.");
+                        ui.label(translator.text("workbench-connect-body"));
                         ui.add_space(12.0);
-                        if ui.button("Connect").clicked() {
+                        if ui
+                            .button(translator.text("workbench-connect-button"))
+                            .clicked()
+                        {
                             self.request_workspace_connection();
                         }
                     });
@@ -1324,7 +1418,7 @@ impl ChatApp {
             PageMode::LoadingWorkspace => {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.centered_and_justified(|ui| {
-                        ui.label("Loading agents from Klaw gateway…");
+                        ui.label(translator.text("workbench-loading"));
                     });
                 });
                 return;
@@ -1334,14 +1428,14 @@ impl ChatApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.sessions.is_empty() {
                 ui.centered_and_justified(|ui| {
-                    ui.label("No agents yet. Click New Agent to start.");
+                    ui.label(translator.text("workbench-no-agents"));
                 });
                 return;
             }
 
-            ui.label(RichText::new("Agent Workspace").strong());
+            ui.label(RichText::new(translator.text("workbench-heading")).strong());
             ui.label(
-                RichText::new("Each agent opens as its own egui window.")
+                RichText::new(translator.text("workbench-subheading"))
                     .small()
                     .weak(),
             );
@@ -1435,8 +1529,8 @@ fn user_bubble_inner_max_width(
     (header_w.max(body_w) + SLACK).clamp(MIN_INNER, BUBBLE_MAX_WIDTH)
 }
 
-fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState) {
-    let copy = state.empty_state_copy();
+fn render_empty_state(ui: &mut egui::Ui, state: &ConnectionState, language: UiLanguage) {
+    let copy = state.empty_state_copy(language);
     ui.add_space(24.0);
     ui.vertical_centered(|ui| {
         ui.label(RichText::new(copy.title).heading().strong());
@@ -1469,29 +1563,36 @@ fn render_language_combo(
     requested_language
 }
 
-fn render_history_loading_state(ui: &mut egui::Ui) {
+fn render_history_loading_state(ui: &mut egui::Ui, language: UiLanguage) {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     ui.add_space(24.0);
     ui.vertical_centered(|ui| {
         ui.spinner();
         ui.add_space(8.0);
         ui.label(
-            RichText::new("Loading conversation history…")
+            RichText::new(translator.text("history-loading-title"))
                 .heading()
                 .strong(),
         );
         ui.add_space(4.0);
-        ui.label(RichText::new("Fetching messages from Klaw gateway.").weak());
+        ui.label(RichText::new(translator.text("history-loading-body")).weak());
     });
 }
 
-fn render_history_page_loading_state(ui: &mut egui::Ui) {
+fn render_history_page_loading_state(ui: &mut egui::Ui, language: UiLanguage) {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     ui.horizontal(|ui| {
         ui.add(egui::Spinner::new().size(12.0));
-        ui.label(RichText::new("Loading older messages…").small().weak());
+        ui.label(
+            RichText::new(translator.text("history-page-loading"))
+                .small()
+                .weak(),
+        );
     });
 }
 
-fn render_thinking_placeholder(ui: &mut egui::Ui) {
+fn render_thinking_placeholder(ui: &mut egui::Ui, language: UiLanguage) {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     let palette = resolve_assistant_bubble_palette(ui.visuals().dark_mode);
     Frame::group(ui.style())
         .fill(rgb(palette.fill))
@@ -1502,11 +1603,15 @@ fn render_thinking_placeholder(ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.set_max_width(BUBBLE_MAX_WIDTH);
             ui.vertical(|ui| {
-                ui.label(RichText::new("Klaw").strong().color(rgb(palette.heading)));
+                ui.label(
+                    RichText::new(translator.text("assistant-label"))
+                        .strong()
+                        .color(rgb(palette.heading)),
+                );
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.add(egui::Spinner::new().size(12.0));
-                    ui.label(RichText::new("Thinking...").color(rgb(palette.body)));
+                    ui.label(RichText::new(translator.text("thinking")).color(rgb(palette.body)));
                 });
             });
         });
@@ -1523,14 +1628,21 @@ fn render_message(
     card_state_overrides: &HashMap<String, CardInteractionState>,
     trigger_preview_attachment: &mut Option<WebArchiveResource>,
     trigger_download_attachment: &mut Option<WebArchiveResource>,
+    language: UiLanguage,
 ) -> Option<CardActionRequest> {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     let now_ms = current_timestamp_ms();
     let time_label = format_message_timestamp(message.timestamp_ms, now_ms);
     match message.role {
         MessageRole::System => {
             ui.vertical_centered(|ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("System").small().strong().weak());
+                    ui.label(
+                        RichText::new(translator.text("role-system"))
+                            .small()
+                            .strong()
+                            .weak(),
+                    );
                     ui.label(RichText::new(time_label).small().weak());
                 });
                 render_plain_message(ui, &message.text, ui.visuals().weak_text_color());
@@ -1539,9 +1651,9 @@ fn render_message(
         }
         MessageRole::Assistant | MessageRole::User => {
             let role_label = match message.role {
-                MessageRole::Assistant => "Klaw",
-                MessageRole::User => "You",
-                MessageRole::System => "System",
+                MessageRole::Assistant => translator.text("assistant-label"),
+                MessageRole::User => translator.text("role-you"),
+                MessageRole::System => translator.text("role-system"),
             };
             let dark_mode = ui.visuals().dark_mode;
             let is_user = matches!(message.role, MessageRole::User);
@@ -1588,13 +1700,14 @@ fn render_message(
                 Some(user_bubble_inner_max_width(
                     ui,
                     message,
-                    role_label,
+                    &role_label,
                     &time_label,
                 ))
             } else {
                 None
             };
             let mut action_request = None;
+            #[allow(unused_mut)]
             let mut show_bubble = |ui: &mut egui::Ui, inner_max_width: f32| {
                 Frame::group(ui.style())
                     .fill(bubble_fill)
@@ -1621,6 +1734,7 @@ fn render_message(
                                     messages,
                                     message_index,
                                     card_state_overrides,
+                                    language,
                                 ) {
                                     action_request = Some(action);
                                 }
@@ -1634,6 +1748,7 @@ fn render_message(
                                     link_color,
                                     trigger_preview_attachment,
                                     trigger_download_attachment,
+                                    language,
                                 );
                             }
                         });
@@ -1678,12 +1793,14 @@ fn render_card_message(
     messages: &[ChatMessage],
     message_index: usize,
     card_state_overrides: &HashMap<String, CardInteractionState>,
+    language: UiLanguage,
 ) -> Option<CardActionRequest> {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     let card_key = message
         .message_id
         .clone()
         .unwrap_or_else(|| message.id.clone());
-    let derived_state = derived_card_state(messages, message_index, card);
+    let derived_state = derived_card_state(messages, message_index, card, language);
     let effective_state = card_state_overrides
         .get(&card_key)
         .cloned()
@@ -1692,8 +1809,12 @@ fn render_card_message(
 
     let palette = resolve_im_card_palette(card.kind.clone(), ui.visuals().dark_mode);
     let badge_label = match card.kind {
-        ImCardKind::Approval => "Approval",
-        ImCardKind::QuestionSingleSelect => "Question",
+        ImCardKind::Approval => translator.text("card-approval-badge"),
+        ImCardKind::QuestionSingleSelect => translator.text("card-question-badge"),
+    };
+    let fallback_title = match card.kind {
+        ImCardKind::Approval => translator.text("card-approval-title"),
+        ImCardKind::QuestionSingleSelect => translator.text("card-question-title"),
     };
 
     let mut action_request = None;
@@ -1705,12 +1826,9 @@ fn render_card_message(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(card.title_or(match card.kind {
-                        ImCardKind::Approval => "Approval Required",
-                        ImCardKind::QuestionSingleSelect => "Question",
-                    }))
-                    .strong()
-                    .color(rgb(palette.title)),
+                    RichText::new(card.title_or(&fallback_title))
+                        .strong()
+                        .color(rgb(palette.title)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(RichText::new(badge_label).small().color(rgb(palette.badge)));
@@ -1719,7 +1837,7 @@ fn render_card_message(
             if let Some(command_preview) = card.command_preview() {
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new("Command")
+                    RichText::new(translator.text("card-command-label"))
                         .small()
                         .strong()
                         .color(rgb(palette.title)),
@@ -1754,14 +1872,17 @@ fn render_card_message(
             {
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new(format!("Approval ID: {approval_id}"))
-                        .small()
-                        .color(rgb(palette.body)),
+                    RichText::new(translator.text_args(
+                        "card-approval-id",
+                        HashMap::from([("id", approval_id.to_string())]),
+                    ))
+                    .small()
+                    .color(rgb(palette.body)),
                 );
             }
             ui.add_space(8.0);
             if let Some(state) = effective_state.as_ref() {
-                render_card_state_banner(ui, &state);
+                render_card_state_banner(ui, state);
             }
             ui.horizontal_wrapped(|ui| {
                 for action in &card.actions {
@@ -1787,8 +1908,13 @@ fn render_card_message(
                             let button =
                                 ui.add_enabled(enabled, Button::new(action.label_or_default()));
                             if button.clicked() {
-                                action_request =
-                                    build_card_action_request(session_key, &card_key, card, action);
+                                action_request = build_card_action_request(
+                                    session_key,
+                                    &card_key,
+                                    card,
+                                    action,
+                                    language,
+                                );
                             }
                         }
                     }
@@ -1818,7 +1944,9 @@ fn build_card_action_request(
     card_key: &str,
     card: &ImCard,
     action: &ImCardAction,
+    language: UiLanguage,
 ) -> Option<CardActionRequest> {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     let command = match action.kind {
         ImCardActionKind::Approve => {
             let approval_id = action.approval_id()?;
@@ -1883,9 +2011,10 @@ fn build_card_action_request(
     }
     let completion_label = match card.kind {
         ImCardKind::Approval => None,
-        ImCardKind::QuestionSingleSelect => {
-            Some(format!("Selected: {}", action.label_or_default()))
-        }
+        ImCardKind::QuestionSingleSelect => Some(translator.text_args(
+            "card-selected-answer",
+            HashMap::from([("answer", action.label_or_default().to_string())]),
+        )),
     };
     Some(CardActionRequest {
         card_key: card_key.to_string(),
@@ -1899,13 +2028,14 @@ fn build_card_action_request(
 pub(super) fn sync_card_state_overrides(
     messages: &[ChatMessage],
     overrides: &mut HashMap<String, CardInteractionState>,
+    language: UiLanguage,
 ) {
     let updates = messages
         .iter()
         .enumerate()
         .filter_map(|(message_index, message)| {
             let card = message.card.as_ref()?;
-            let derived_state = derived_card_state(messages, message_index, card)?;
+            let derived_state = derived_card_state(messages, message_index, card, language)?;
             let card_key = message
                 .message_id
                 .clone()
@@ -1922,7 +2052,9 @@ fn derived_card_state(
     messages: &[ChatMessage],
     message_index: usize,
     card: &ImCard,
+    language: UiLanguage,
 ) -> Option<CardInteractionState> {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     match card.kind {
         ImCardKind::Approval => {
             let approval_id = card.approval_id()?;
@@ -1930,12 +2062,12 @@ fn derived_card_state(
                 parse_internal_card_command(&message.text).and_then(|command| match command {
                     InternalCardCommand::Approve(id) if id == approval_id => {
                         Some(CardInteractionState::Completed {
-                            label: "Approved".to_string(),
+                            label: translator.text("card-approved"),
                         })
                     }
                     InternalCardCommand::Reject(id) if id == approval_id => {
                         Some(CardInteractionState::Completed {
-                            label: "Rejected".to_string(),
+                            label: translator.text("card-rejected"),
                         })
                     }
                     _ => None,
@@ -1951,9 +2083,12 @@ fn derived_card_state(
                         option_id,
                     } if answered_question_id == question_id => {
                         Some(CardInteractionState::Completed {
-                            label: format!(
-                                "Selected: {}",
-                                find_card_option_label(card, &option_id).unwrap_or(option_id)
+                            label: translator.text_args(
+                                "card-selected-answer",
+                                HashMap::from([(
+                                    "answer",
+                                    find_card_option_label(card, &option_id).unwrap_or(option_id),
+                                )]),
                             ),
                         })
                     }
@@ -2037,6 +2172,7 @@ fn render_message_body(
     link_color: Color32,
     trigger_preview_attachment: &mut Option<WebArchiveResource>,
     trigger_download_attachment: &mut Option<WebArchiveResource>,
+    language: UiLanguage,
 ) {
     let attachments = message_resources(message);
     let has_text = !message.text.trim().is_empty();
@@ -2080,6 +2216,7 @@ fn render_message_body(
                     body_color,
                     trigger_preview_attachment,
                     trigger_download_attachment,
+                    language,
                 );
             }
         });
@@ -2163,7 +2300,9 @@ fn render_resource_card(
     body_color: Color32,
     trigger_preview_attachment: &mut Option<WebArchiveResource>,
     trigger_download_attachment: &mut Option<WebArchiveResource>,
+    language: UiLanguage,
 ) {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     let icon = if resource_is_image(resource) {
         regular::IMAGE
     } else {
@@ -2200,7 +2339,7 @@ fn render_resource_card(
                                 regular::EYE,
                                 archive_resource_card_action(resource)
                             ))
-                            .on_hover_text("Preview archive resource")
+                            .on_hover_text(translator.text("archive-hover-preview"))
                             .clicked()
                         {
                             *trigger_preview_attachment = Some(resource.clone());
@@ -2211,7 +2350,7 @@ fn render_resource_card(
                             regular::DOWNLOAD_SIMPLE,
                             archive_resource_card_action(resource)
                         ))
-                        .on_hover_text("Download archive resource")
+                        .on_hover_text(translator.text("archive-hover-download"))
                         .clicked()
                     {
                         *trigger_download_attachment = Some(resource.clone());
@@ -2311,14 +2450,19 @@ fn render_archive_preview_header(ui: &mut egui::Ui, dialog: &ArchivePreviewDialo
     });
 }
 
-fn render_archive_preview_content(ui: &mut egui::Ui, dialog: &ArchivePreviewDialog) {
+fn render_archive_preview_content(
+    ui: &mut egui::Ui,
+    dialog: &ArchivePreviewDialog,
+    language: UiLanguage,
+) {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     match &dialog.status {
         ArchivePreviewStatus::Loading => {
             ui.vertical_centered(|ui| {
                 ui.add_space(24.0);
                 ui.spinner();
                 ui.add_space(8.0);
-                ui.label("Loading preview...");
+                ui.label(translator.text("archive-preview-loading"));
             });
         }
         ArchivePreviewStatus::Ready {
@@ -2331,7 +2475,7 @@ fn render_archive_preview_content(ui: &mut egui::Ui, dialog: &ArchivePreviewDial
             } else if preview_status_is_text(dialog, content_type.as_deref()) {
                 render_text_preview_body(ui, bytes);
             } else {
-                render_file_preview_body(ui, dialog);
+                render_file_preview_body(ui, dialog, language);
             }
         }
         ArchivePreviewStatus::Failed(message) => {
@@ -2368,7 +2512,12 @@ fn render_text_preview_body(ui: &mut egui::Ui, bytes: &[u8]) {
     });
 }
 
-fn render_file_preview_body(ui: &mut egui::Ui, dialog: &ArchivePreviewDialog) {
+fn render_file_preview_body(
+    ui: &mut egui::Ui,
+    dialog: &ArchivePreviewDialog,
+    language: UiLanguage,
+) {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     ui.vertical_centered(|ui| {
         ui.add_space(24.0);
         ui.label(RichText::new(regular::FILE).size(42.0));
@@ -2389,7 +2538,7 @@ fn render_file_preview_body(ui: &mut egui::Ui, dialog: &ArchivePreviewDialog) {
                 .weak(),
         );
         ui.add_space(12.0);
-        ui.label(RichText::new("Preview is not available for this file type.").weak());
+        ui.label(RichText::new(translator.text("archive-preview-unavailable")).weak());
     });
 }
 
@@ -2554,24 +2703,37 @@ fn live_fps(ctx: &Context) -> f32 {
     }
 }
 
-fn session_route_label(session: &SessionWindow) -> String {
+fn session_route_label(session: &SessionWindow, language: UiLanguage) -> String {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     let provider = session.selected_route.model_provider.trim();
     let model = session.selected_route.model.trim();
     match (provider.is_empty(), model.is_empty()) {
-        (true, true) => "Route: default".to_string(),
-        (false, true) => format!("Route: {provider}"),
-        (true, false) => format!("Route: {model}"),
-        (false, false) => format!("Route: {provider}/{model}"),
+        (true, true) => translator.text("route-default"),
+        (false, true) => translator.text_args(
+            "route-provider",
+            HashMap::from([("provider", provider.to_string())]),
+        ),
+        (true, false) => {
+            translator.text_args("route-model", HashMap::from([("model", model.to_string())]))
+        }
+        (false, false) => translator.text_args(
+            "route-provider-model",
+            HashMap::from([
+                ("provider", provider.to_string()),
+                ("model", model.to_string()),
+            ]),
+        ),
     }
 }
 
-fn session_activity_label(session: &SessionWindow) -> Option<&'static str> {
+fn session_activity_label(session: &SessionWindow, language: UiLanguage) -> Option<String> {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     if *session.buffers.history_loading.borrow() {
-        Some("History")
+        Some(translator.text("activity-history"))
     } else if *session.uploading_file.borrow() {
-        Some("Uploading")
+        Some(translator.text("activity-uploading"))
     } else if *session.selecting_file.borrow() {
-        Some("Picking File")
+        Some(translator.text("activity-picking-file"))
     } else if session
         .buffers
         .active_stream_request_id
@@ -2579,9 +2741,9 @@ fn session_activity_label(session: &SessionWindow) -> Option<&'static str> {
         .as_deref()
         .is_some()
     {
-        Some("Streaming")
+        Some(translator.text("activity-streaming"))
     } else if !session.pending_attachments.borrow().is_empty() {
-        Some("Files Ready")
+        Some(translator.text("activity-files-ready"))
     } else {
         None
     }
@@ -2594,9 +2756,11 @@ fn render_session_file_dialog(
     trigger_preview_attachment: &mut Option<WebArchiveResource>,
     trigger_download_attachment: &mut Option<WebArchiveResource>,
     remove_attachment_at: &mut Option<usize>,
+    language: UiLanguage,
 ) {
+    let translator = Translator::new(LocaleDomain::WebUi, language);
     let mut keep_open = *open;
-    egui::Window::new("Uploaded Files")
+    egui::Window::new(translator.text("file-dialog-title"))
         .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .collapsible(false)
         .resizable(true)
@@ -2605,14 +2769,14 @@ fn render_session_file_dialog(
         .open(&mut keep_open)
         .show(ctx, |ui| {
             ui.label(
-                RichText::new("Right-click a row to preview or remove it from this page.")
+                RichText::new(translator.text("file-dialog-hint"))
                     .small()
                     .weak(),
             );
             ui.add_space(8.0);
 
             if attachments.is_empty() {
-                ui.label("No uploaded files.");
+                ui.label(translator.text("file-dialog-empty"));
                 return;
             }
 
@@ -2624,13 +2788,13 @@ fn render_session_file_dialog(
                 .column(Column::auto().at_least(72.0))
                 .header(24.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("File Name");
+                        ui.strong(translator.text("file-dialog-col-name"));
                     });
                     header.col(|ui| {
-                        ui.strong("Archive ID");
+                        ui.strong(translator.text("file-dialog-col-archive-id"));
                     });
                     header.col(|ui| {
-                        ui.strong("Size");
+                        ui.strong(translator.text("file-dialog-col-size"));
                     });
                 })
                 .body(|body| {
@@ -2649,6 +2813,7 @@ fn render_session_file_dialog(
                                 trigger_preview_attachment,
                                 trigger_download_attachment,
                                 remove_attachment_at,
+                                &translator,
                             );
                         });
                         row.col(|ui| {
@@ -2660,6 +2825,7 @@ fn render_session_file_dialog(
                                 trigger_preview_attachment,
                                 trigger_download_attachment,
                                 remove_attachment_at,
+                                &translator,
                             );
                         });
                         row.col(|ui| {
@@ -2671,6 +2837,7 @@ fn render_session_file_dialog(
                                 trigger_preview_attachment,
                                 trigger_download_attachment,
                                 remove_attachment_at,
+                                &translator,
                             );
                         });
                     });
@@ -2686,16 +2853,28 @@ fn render_attachment_context_menu(
     trigger_preview_attachment: &mut Option<WebArchiveResource>,
     trigger_download_attachment: &mut Option<WebArchiveResource>,
     remove_attachment_at: &mut Option<usize>,
+    translator: &Translator,
 ) {
     response.context_menu(|ui| {
         let resource = web_archive_resource_from_attachment(attachment.clone());
         if archive_resource_is_previewable(&resource) {
-            if ui.button(format!("{} Preview", regular::EYE)).clicked() {
+            if ui
+                .button(format!(
+                    "{} {}",
+                    regular::EYE,
+                    translator.text("attachment-preview")
+                ))
+                .clicked()
+            {
                 *trigger_preview_attachment = Some(resource);
                 ui.close();
             }
         } else if ui
-            .button(format!("{} Download", regular::DOWNLOAD_SIMPLE))
+            .button(format!(
+                "{} {}",
+                regular::DOWNLOAD_SIMPLE,
+                translator.text("attachment-download")
+            ))
             .clicked()
         {
             *trigger_download_attachment = Some(resource);
@@ -2703,8 +2882,12 @@ fn render_attachment_context_menu(
         }
         if ui
             .add(Button::new(
-                RichText::new(format!("{} Delete", regular::TRASH))
-                    .color(ui.visuals().error_fg_color),
+                RichText::new(format!(
+                    "{} {}",
+                    regular::TRASH,
+                    translator.text("attachment-delete")
+                ))
+                .color(ui.visuals().error_fg_color),
             ))
             .clicked()
         {

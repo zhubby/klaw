@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-15
+
+### Added
+
+- WebUI i18n key set for complete WebUI internationalization (settings, about, archive preview, session sidebar, dialogs, composer area, workbench, status bar, empty state, card messages, file dialog, attachment context menu, role labels, route labels, activity labels).
+- Locale tests for all new WebUI keys in both English and Simplified Chinese.
+
 ## 2026-05-09
 
 ### Added

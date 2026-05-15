@@ -379,7 +379,11 @@ impl ChatApp {
             prepend_history_page(&mut history, page_messages);
             let messages = history.clone();
             drop(history);
-            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+            sync_card_state_overrides(
+                &messages,
+                &mut self.sessions[index].card_state_overrides,
+                self.ui_language,
+            );
             *self.sessions[index].buffers.history_loading.borrow_mut() = false;
             let has_more = result
                 .get("has_more")
@@ -548,7 +552,11 @@ impl ChatApp {
                 .borrow_mut()
                 .push(message);
             let messages = self.sessions[index].buffers.messages.borrow().clone();
-            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+            sync_card_state_overrides(
+                &messages,
+                &mut self.sessions[index].card_state_overrides,
+                self.ui_language,
+            );
         }
         *self.sessions[index]
             .buffers
@@ -669,7 +677,11 @@ impl ChatApp {
             "serverRequest/resolved" => {
                 for session in &mut self.sessions {
                     let messages = session.buffers.messages.borrow().clone();
-                    sync_card_state_overrides(&messages, &mut session.card_state_overrides);
+                    sync_card_state_overrides(
+                        &messages,
+                        &mut session.card_state_overrides,
+                        self.ui_language,
+                    );
                 }
             }
             _ => {}
@@ -749,6 +761,7 @@ impl ChatApp {
                 sync_card_state_overrides(
                     &messages,
                     &mut self.sessions[index].card_state_overrides,
+                    self.ui_language,
                 );
             }
             crate::StreamMessageAction::PushAssistant => {
@@ -768,6 +781,7 @@ impl ChatApp {
                 sync_card_state_overrides(
                     &messages,
                     &mut self.sessions[index].card_state_overrides,
+                    self.ui_language,
                 );
                 self.notify_new_assistant_reply(session_key, content);
             }
@@ -807,7 +821,11 @@ impl ChatApp {
             }
             let messages = history.clone();
             drop(history);
-            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+            sync_card_state_overrides(
+                &messages,
+                &mut self.sessions[index].card_state_overrides,
+                self.ui_language,
+            );
             return;
         }
         let message = ChatMessage::new_with_metadata(
@@ -825,7 +843,11 @@ impl ChatApp {
         if should_fade && let Some(message) = messages.last() {
             self.sessions[index].register_fade_in_message(message);
         }
-        sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+        sync_card_state_overrides(
+            &messages,
+            &mut self.sessions[index].card_state_overrides,
+            self.ui_language,
+        );
     }
 
     fn complete_user_message(
@@ -858,7 +880,11 @@ impl ChatApp {
             }
             let messages = history.clone();
             drop(history);
-            sync_card_state_overrides(&messages, &mut self.sessions[index].card_state_overrides);
+            sync_card_state_overrides(
+                &messages,
+                &mut self.sessions[index].card_state_overrides,
+                self.ui_language,
+            );
             return;
         }
         history.push(ChatMessage::new_with_metadata(

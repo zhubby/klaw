@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## 2026-05-15
+
+### Added
+
+- Complete i18n adaptation for WebUI: all user-facing strings now use `Translator` with `LocaleDomain::WebUi`, supporting English and Simplified Chinese.
+  - Status bar labels, hover texts, and activity indicators.
+  - Settings dialog (title, section labels, theme mode labels, theme default hint).
+  - About dialog (title, version label, close button).
+  - Session sidebar (heading, empty state, context menu items, toast messages).
+  - Rename, Gateway Token, and Delete Agent dialogs.
+  - Composer area (slash hint, connection state hints, upload/send/model/provider labels).
+  - Workbench / connection guide (connect heading, body, loading state, workspace labels).
+  - Thinking placeholder and assistant/user/system role labels.
+  - Card messages (approval/question badges, titles, command label, approval ID).
+  - Archive preview dialog and resource hover texts.
+  - File dialog (title, hint, empty state, column headers).
+  - Attachment context menu items.
+  - Session route and activity labels in status bar.
+- `ConnectionState::composer_hint_text` and `empty_state_copy` now accept `UiLanguage` and use `Translator`.
+- `delete_confirmation_body` now accepts `UiLanguage` and uses parameterized `Translator` key.
+- 159 locale tests covering all new WebUI translation keys in both English and Simplified Chinese.
+
 ## 2026-05-14
 
 ### Added

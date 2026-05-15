@@ -150,6 +150,578 @@ mod tests {
     }
 
     #[test]
+    fn webui_settings_dialog_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("settings-title"), "Settings");
+        assert_eq!(translator.text("settings-general"), "General Settings");
+        assert_eq!(
+            translator.text_args(
+                "settings-current-theme-mode",
+                HashMap::from([("mode", "System".to_string())])
+            ),
+            "Current theme mode: System"
+        );
+        assert_eq!(translator.text("settings-theme-mode"), "Theme Mode");
+        assert_eq!(translator.text("settings-light-theme"), "Light Theme");
+        assert_eq!(translator.text("settings-dark-theme"), "Dark Theme");
+        assert_eq!(
+            translator.text("settings-theme-default-hint"),
+            "Default keeps the existing egui light/dark visuals."
+        );
+    }
+
+    #[test]
+    fn webui_settings_dialog_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("settings-title"), "设置");
+        assert_eq!(translator.text("settings-general"), "常规设置");
+        assert_eq!(
+            translator.text_args(
+                "settings-current-theme-mode",
+                HashMap::from([("mode", "系统".to_string())])
+            ),
+            "当前主题模式：系统"
+        );
+        assert_eq!(translator.text("settings-theme-mode"), "主题模式");
+        assert_eq!(translator.text("settings-light-theme"), "亮色主题");
+        assert_eq!(translator.text("settings-dark-theme"), "暗色主题");
+        assert_eq!(
+            translator.text("settings-theme-default-hint"),
+            "默认使用 egui 自带的亮色/暗色外观。"
+        );
+    }
+
+    #[test]
+    fn webui_about_dialog_translates_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("about-title"), "About Klaw");
+        assert_eq!(
+            translator.text_args(
+                "about-version",
+                HashMap::from([("version", "0.18.0".to_string())])
+            ),
+            "Version 0.18.0"
+        );
+        assert_eq!(translator.text("about-close"), "Close");
+    }
+
+    #[test]
+    fn webui_about_dialog_translates_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("about-title"), "关于 Klaw");
+        assert_eq!(
+            translator.text_args(
+                "about-version",
+                HashMap::from([("version", "0.18.0".to_string())])
+            ),
+            "版本 0.18.0"
+        );
+        assert_eq!(translator.text("about-close"), "关闭");
+    }
+
+    #[test]
+    fn webui_session_list_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("session-list-heading"), "Agents");
+        assert_eq!(translator.text("session-list-empty"), "No agents yet.");
+        assert_eq!(translator.text("session-visible"), "Window visible");
+        assert_eq!(translator.text("session-hidden"), "Window hidden");
+        assert_eq!(translator.text("session-rename"), "Rename");
+        assert_eq!(translator.text("session-copy-id"), "Copy ID");
+        assert_eq!(translator.text("session-delete"), "Delete");
+        assert_eq!(translator.text("session-id-copied"), "Agent ID copied");
+    }
+
+    #[test]
+    fn webui_session_list_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("session-list-heading"), "代理");
+        assert_eq!(translator.text("session-list-empty"), "暂无代理。");
+        assert_eq!(translator.text("session-visible"), "窗口可见");
+        assert_eq!(translator.text("session-hidden"), "窗口隐藏");
+        assert_eq!(translator.text("session-rename"), "重命名");
+        assert_eq!(translator.text("session-copy-id"), "复制 ID");
+        assert_eq!(translator.text("session-delete"), "删除");
+        assert_eq!(translator.text("session-id-copied"), "代理 ID 已复制");
+    }
+
+    #[test]
+    fn webui_dialogs_translate_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        // Rename dialog
+        assert_eq!(translator.text("rename-title"), "Rename Agent");
+        assert_eq!(translator.text("rename-hint"), "Agent name");
+        assert_eq!(translator.text("rename-save"), "Save");
+        assert_eq!(translator.text("rename-cancel"), "Cancel");
+
+        // Gateway dialog
+        assert_eq!(translator.text("gateway-title"), "Gateway Token");
+        assert_eq!(
+            translator.text("gateway-hint"),
+            "If gateway auth is enabled, enter the token here."
+        );
+        assert_eq!(
+            translator.text("gateway-blank-hint"),
+            "Leave it blank when auth is disabled."
+        );
+        assert_eq!(translator.text("gateway-token-hint"), "Gateway token");
+        assert_eq!(
+            translator.text("gateway-save-reconnect"),
+            "Save & Reconnect"
+        );
+        assert_eq!(translator.text("gateway-clear"), "Clear");
+
+        // Delete dialog
+        assert_eq!(translator.text("delete-title"), "Delete Agent");
+        let delete_msg = translator.text_args(
+            "delete-confirmation",
+            HashMap::from([("agent_name", "My Agent".to_string())]),
+        );
+        assert!(delete_msg.contains("My Agent"));
+        assert!(delete_msg.contains("permanently"));
+        assert!(delete_msg.starts_with("Delete agent"));
+        assert!(delete_msg.ends_with("This cannot be undone."));
+        assert_eq!(translator.text("delete-confirm"), "Delete");
+        assert_eq!(translator.text("delete-cancel"), "Cancel");
+    }
+
+    #[test]
+    fn webui_dialogs_translate_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        // Rename dialog
+        assert_eq!(translator.text("rename-title"), "重命名代理");
+        assert_eq!(translator.text("rename-hint"), "代理名称");
+        assert_eq!(translator.text("rename-save"), "保存");
+        assert_eq!(translator.text("rename-cancel"), "取消");
+
+        // Gateway dialog
+        assert_eq!(translator.text("gateway-title"), "网关令牌");
+        assert_eq!(
+            translator.text("gateway-hint"),
+            "如果网关认证已启用，请在此输入令牌。"
+        );
+        assert_eq!(
+            translator.text("gateway-blank-hint"),
+            "认证未启用时留空即可。"
+        );
+        assert_eq!(translator.text("gateway-token-hint"), "网关令牌");
+        assert_eq!(translator.text("gateway-save-reconnect"), "保存并重新连接");
+        assert_eq!(translator.text("gateway-clear"), "清除");
+
+        // Delete dialog
+        assert_eq!(translator.text("delete-title"), "删除代理");
+        assert_eq!(
+            translator.text_args(
+                "delete-confirmation",
+                HashMap::from([("agent_name", "我的代理".to_string())])
+            ),
+            "确定永久删除代理「我的代理」？此操作不可撤销。"
+        );
+        assert_eq!(translator.text("delete-confirm"), "删除");
+        assert_eq!(translator.text("delete-cancel"), "取消");
+    }
+
+    #[test]
+    fn webui_composer_area_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(
+            translator.text("composer-slash-hint"),
+            "Type / to open command completion."
+        );
+        assert_eq!(translator.text("composer-connected-hint"), "Message Klaw…");
+        assert_eq!(
+            translator.text("composer-connecting-hint"),
+            "Connecting to Klaw…"
+        );
+        assert_eq!(
+            translator.text("composer-disconnected-hint"),
+            "Reconnect to message Klaw…"
+        );
+        assert_eq!(
+            translator.text("composer-error-hint"),
+            "Fix the connection to keep chatting…"
+        );
+        assert_eq!(translator.text("upload"), "Upload");
+        assert_eq!(translator.text("upload-hover"), "Upload and attach files");
+        assert_eq!(
+            translator.text_args("file-count", HashMap::from([("count", "3".to_string())])),
+            "File (3)"
+        );
+        assert_eq!(translator.text("file-count-hover"), "Show uploaded files");
+        assert_eq!(translator.text("send"), "Send");
+        assert_eq!(translator.text("model-hint"), "Model");
+        assert_eq!(translator.text("provider-hint"), "Provider");
+        assert_eq!(translator.text("selecting-file"), "Selecting file…");
+        assert_eq!(translator.text("uploading"), "Uploading…");
+        assert_eq!(
+            translator.text("send-card-failed"),
+            "Failed to send card action."
+        );
+    }
+
+    #[test]
+    fn webui_composer_area_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(
+            translator.text("composer-slash-hint"),
+            "输入 / 打开命令补全。"
+        );
+        assert_eq!(
+            translator.text("composer-connected-hint"),
+            "给 Klaw 发消息…"
+        );
+        assert_eq!(
+            translator.text("composer-connecting-hint"),
+            "正在连接 Klaw…"
+        );
+        assert_eq!(
+            translator.text("composer-disconnected-hint"),
+            "请重新连接后再给 Klaw 发消息…"
+        );
+        assert_eq!(
+            translator.text("composer-error-hint"),
+            "请修复连接后继续对话…"
+        );
+        assert_eq!(translator.text("upload"), "上传");
+        assert_eq!(translator.text("upload-hover"), "上传并附加文件");
+        assert_eq!(
+            translator.text_args("file-count", HashMap::from([("count", "3".to_string())])),
+            "文件 (3)"
+        );
+        assert_eq!(translator.text("file-count-hover"), "显示已上传文件");
+        assert_eq!(translator.text("send"), "发送");
+        assert_eq!(translator.text("model-hint"), "模型");
+        assert_eq!(translator.text("provider-hint"), "提供商");
+        assert_eq!(translator.text("selecting-file"), "选择文件…");
+        assert_eq!(translator.text("uploading"), "上传中…");
+        assert_eq!(translator.text("send-card-failed"), "发送卡片操作失败。");
+    }
+
+    #[test]
+    fn webui_workbench_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(
+            translator.text("workbench-connect-heading"),
+            "Connect to Klaw Gateway"
+        );
+        assert_eq!(
+            translator.text("workbench-connect-body"),
+            "Connect successfully before loading agents."
+        );
+        assert_eq!(translator.text("workbench-connect-button"), "Connect");
+        assert_eq!(
+            translator.text("workbench-loading"),
+            "Loading agents from Klaw gateway…"
+        );
+        assert_eq!(
+            translator.text("workbench-no-agents"),
+            "No agents yet. Click New Agent to start."
+        );
+        assert_eq!(translator.text("workbench-heading"), "Agent Workspace");
+        assert_eq!(
+            translator.text("workbench-subheading"),
+            "Each agent opens as its own egui window."
+        );
+    }
+
+    #[test]
+    fn webui_workbench_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(
+            translator.text("workbench-connect-heading"),
+            "连接到 Klaw 网关"
+        );
+        assert_eq!(
+            translator.text("workbench-connect-body"),
+            "请先成功连接后再加载代理。"
+        );
+        assert_eq!(translator.text("workbench-connect-button"), "连接");
+        assert_eq!(
+            translator.text("workbench-loading"),
+            "正在从 Klaw 网关加载代理…"
+        );
+        assert_eq!(
+            translator.text("workbench-no-agents"),
+            "暂无代理。点击新建代理开始。"
+        );
+        assert_eq!(translator.text("workbench-heading"), "代理工作区");
+        assert_eq!(
+            translator.text("workbench-subheading"),
+            "每个代理以独立窗口打开。"
+        );
+    }
+
+    #[test]
+    fn webui_statusbar_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("statusbar-theme-mode"), "Theme Mode");
+        assert_eq!(
+            translator.text_args(
+                "statusbar-agents",
+                HashMap::from([("total", "5".to_string()), ("open", "3".to_string())])
+            ),
+            "Agents: 5/3"
+        );
+        assert_eq!(
+            translator.text("statusbar-agents-hover"),
+            "Total agent windows / currently open windows."
+        );
+        assert_eq!(translator.text("statusbar-stream"), "Stream");
+        assert_eq!(
+            translator.text("statusbar-stream-on-hover"),
+            "On: stream replies live. Off: wait for a full reply and play fade-in."
+        );
+        assert_eq!(
+            translator.text("statusbar-fps-hover"),
+            "Approximate live frame rate from the latest egui frame delta."
+        );
+        assert_eq!(
+            translator.text("statusbar-activity-hover"),
+            "Current activity for the active agent."
+        );
+        assert_eq!(
+            translator.text("statusbar-messages-hover"),
+            "Messages currently loaded in the active agent window."
+        );
+        assert_eq!(
+            translator.text("statusbar-no-active-agent"),
+            "No active agent"
+        );
+    }
+
+    #[test]
+    fn webui_statusbar_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("statusbar-theme-mode"), "主题模式");
+        assert_eq!(
+            translator.text_args(
+                "statusbar-agents",
+                HashMap::from([("total", "5".to_string()), ("open", "3".to_string())])
+            ),
+            "代理：5/3"
+        );
+        assert_eq!(
+            translator.text("statusbar-agents-hover"),
+            "代理总数 / 当前打开的窗口数。"
+        );
+        assert_eq!(translator.text("statusbar-stream"), "流式");
+        assert_eq!(
+            translator.text("statusbar-stream-on-hover"),
+            "开启：实时流式回复。关闭：等待完整回复后淡入显示。"
+        );
+        assert_eq!(
+            translator.text("statusbar-fps-hover"),
+            "基于最新 egui 帧间隔的近似实时帧率。"
+        );
+        assert_eq!(
+            translator.text("statusbar-activity-hover"),
+            "当前活跃代理的活动状态。"
+        );
+        assert_eq!(
+            translator.text("statusbar-messages-hover"),
+            "活跃代理窗口中已加载的消息数。"
+        );
+        assert_eq!(translator.text("statusbar-no-active-agent"), "无活跃代理");
+    }
+
+    #[test]
+    fn webui_empty_state_translates_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(
+            translator.text("empty-connected-title"),
+            "Start a conversation with Klaw"
+        );
+        assert_eq!(
+            translator.text("empty-connected-body"),
+            "Send a message below to begin this chat."
+        );
+        assert_eq!(
+            translator.text("empty-connecting-title"),
+            "Connecting to Klaw"
+        );
+        assert_eq!(
+            translator.text("empty-connecting-body"),
+            "Waiting for the chat room to come online."
+        );
+        assert_eq!(
+            translator.text("empty-disconnected-title"),
+            "Reconnect to Klaw"
+        );
+        assert_eq!(
+            translator.text("empty-disconnected-body"),
+            "Reconnect from the toolbar, then send your next message."
+        );
+        assert_eq!(translator.text("empty-error-title"), "Connection error");
+        assert_eq!(
+            translator.text_args(
+                "empty-error-body",
+                HashMap::from([("error", "send failed".to_string())])
+            ),
+            "Klaw could not keep the chat connection alive: send failed"
+        );
+    }
+
+    #[test]
+    fn webui_empty_state_translates_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("empty-connected-title"), "开始与 Klaw 对话");
+        assert_eq!(
+            translator.text("empty-connected-body"),
+            "在下方发送消息开始此对话。"
+        );
+        assert_eq!(translator.text("empty-connecting-title"), "正在连接 Klaw");
+        assert_eq!(
+            translator.text("empty-connecting-body"),
+            "正在等待聊天服务上线。"
+        );
+        assert_eq!(translator.text("empty-disconnected-title"), "重新连接 Klaw");
+        assert_eq!(
+            translator.text("empty-disconnected-body"),
+            "请从工具栏重新连接，然后发送您的下一条消息。"
+        );
+        assert_eq!(translator.text("empty-error-title"), "连接错误");
+        assert_eq!(
+            translator.text_args(
+                "empty-error-body",
+                HashMap::from([("error", "发送失败".to_string())])
+            ),
+            "Klaw 无法保持聊天连接：发送失败"
+        );
+    }
+
+    #[test]
+    fn webui_card_messages_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("card-approval-badge"), "Approval");
+        assert_eq!(translator.text("card-question-badge"), "Question");
+        assert_eq!(translator.text("card-approval-title"), "Approval Required");
+        assert_eq!(translator.text("card-question-title"), "Question");
+        assert_eq!(translator.text("card-command-label"), "Command");
+        assert_eq!(
+            translator.text_args(
+                "card-approval-id",
+                HashMap::from([("id", "abc123".to_string())])
+            ),
+            "Approval ID: abc123"
+        );
+        assert_eq!(
+            translator.text_args(
+                "card-selected-answer",
+                HashMap::from([("answer", "Option A".to_string())])
+            ),
+            "Selected: Option A"
+        );
+    }
+
+    #[test]
+    fn webui_card_messages_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("card-approval-badge"), "审批");
+        assert_eq!(translator.text("card-question-badge"), "问题");
+        assert_eq!(translator.text("card-approval-title"), "需要审批");
+        assert_eq!(translator.text("card-question-title"), "问题");
+        assert_eq!(translator.text("card-command-label"), "命令");
+        assert_eq!(
+            translator.text_args(
+                "card-approval-id",
+                HashMap::from([("id", "abc123".to_string())])
+            ),
+            "审批 ID：abc123"
+        );
+        assert_eq!(
+            translator.text_args(
+                "card-selected-answer",
+                HashMap::from([("answer", "选项 A".to_string())])
+            ),
+            "已选择：选项 A"
+        );
+    }
+
+    #[test]
+    fn webui_file_dialog_translates_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("file-dialog-title"), "Uploaded Files");
+        assert_eq!(
+            translator.text("file-dialog-hint"),
+            "Right-click a row to preview or remove it from this page."
+        );
+        assert_eq!(translator.text("file-dialog-empty"), "No uploaded files.");
+        assert_eq!(translator.text("file-dialog-col-name"), "File Name");
+        assert_eq!(translator.text("file-dialog-col-archive-id"), "Archive ID");
+        assert_eq!(translator.text("file-dialog-col-size"), "Size");
+    }
+
+    #[test]
+    fn webui_file_dialog_translates_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("file-dialog-title"), "已上传文件");
+        assert_eq!(
+            translator.text("file-dialog-hint"),
+            "右键点击行可预览或从当前页面移除。"
+        );
+        assert_eq!(translator.text("file-dialog-empty"), "无已上传文件。");
+        assert_eq!(translator.text("file-dialog-col-name"), "文件名");
+        assert_eq!(translator.text("file-dialog-col-archive-id"), "存档 ID");
+        assert_eq!(translator.text("file-dialog-col-size"), "大小");
+    }
+
+    #[test]
+    fn webui_attachment_context_menu_translates_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("attachment-preview"), "Preview");
+        assert_eq!(translator.text("attachment-download"), "Download");
+        assert_eq!(translator.text("attachment-delete"), "Delete");
+    }
+
+    #[test]
+    fn webui_attachment_context_menu_translates_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("attachment-preview"), "预览");
+        assert_eq!(translator.text("attachment-download"), "下载");
+        assert_eq!(translator.text("attachment-delete"), "删除");
+    }
+
+    #[test]
+    fn webui_archive_preview_translates_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("archive-preview-title"), "Resource Preview");
+        assert_eq!(translator.text("archive-preview-close"), "Close");
+        assert_eq!(translator.text("archive-preview-download"), "Download");
+    }
+
+    #[test]
+    fn webui_archive_preview_translates_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("archive-preview-title"), "资源预览");
+        assert_eq!(translator.text("archive-preview-close"), "关闭");
+        assert_eq!(translator.text("archive-preview-download"), "下载");
+    }
+
+    #[test]
     fn missing_translation_falls_back_to_english_then_key() {
         let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
 
@@ -6021,6 +6593,234 @@ mod tests {
                 ])
             ),
             "确定删除定价条目 openai/gpt-4 吗？"
+        );
+    }
+
+    #[test]
+    fn webui_thinking_placeholder_translates_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+        assert_eq!(translator.text("assistant-label"), "Klaw");
+        assert_eq!(translator.text("thinking"), "Thinking…");
+    }
+
+    #[test]
+    fn webui_thinking_placeholder_translates_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+        assert_eq!(translator.text("assistant-label"), "Klaw");
+        assert_eq!(translator.text("thinking"), "思考中…");
+    }
+
+    #[test]
+    fn webui_history_loading_states_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+        assert_eq!(
+            translator.text("history-loading-title"),
+            "Loading conversation history…"
+        );
+        assert_eq!(
+            translator.text("history-loading-body"),
+            "Fetching messages from Klaw gateway."
+        );
+        assert_eq!(
+            translator.text("history-page-loading"),
+            "Loading older messages…"
+        );
+    }
+
+    #[test]
+    fn webui_history_loading_states_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("history-loading-title"),
+            "正在加载对话历史…"
+        );
+        assert_eq!(
+            translator.text("history-loading-body"),
+            "正在从 Klaw 网关获取消息。"
+        );
+        assert_eq!(
+            translator.text("history-page-loading"),
+            "正在加载更早的消息…"
+        );
+    }
+
+    #[test]
+    fn webui_role_labels_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("role-you"), "You");
+        assert_eq!(translator.text("role-system"), "System");
+    }
+
+    #[test]
+    fn webui_role_labels_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("role-you"), "你");
+        assert_eq!(translator.text("role-system"), "系统");
+    }
+
+    #[test]
+    fn webui_card_completion_labels_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("card-approved"), "Approved");
+        assert_eq!(translator.text("card-rejected"), "Rejected");
+    }
+
+    #[test]
+    fn webui_card_completion_labels_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("card-approved"), "已审批");
+        assert_eq!(translator.text("card-rejected"), "已拒绝");
+    }
+
+    #[test]
+    fn webui_archive_preview_labels_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(
+            translator.text("archive-preview-loading"),
+            "Loading preview..."
+        );
+        assert_eq!(
+            translator.text("archive-preview-unavailable"),
+            "Preview is not available for this file type."
+        );
+        assert_eq!(
+            translator.text("archive-hover-preview"),
+            "Preview archive resource"
+        );
+        assert_eq!(
+            translator.text("archive-hover-download"),
+            "Download archive resource"
+        );
+    }
+
+    #[test]
+    fn webui_archive_preview_labels_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(
+            translator.text("archive-preview-loading"),
+            "正在加载预览..."
+        );
+        assert_eq!(
+            translator.text("archive-preview-unavailable"),
+            "此文件类型不支持预览。"
+        );
+        assert_eq!(translator.text("archive-hover-preview"), "预览存档资源");
+        assert_eq!(translator.text("archive-hover-download"), "下载存档资源");
+    }
+
+    #[test]
+    fn webui_route_labels_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("route-default"), "Route: default");
+        assert_eq!(
+            translator.text_args(
+                "route-provider",
+                HashMap::from([("provider", "openai".to_string())])
+            ),
+            "Route: openai"
+        );
+        assert_eq!(
+            translator.text_args(
+                "route-model",
+                HashMap::from([("model", "gpt-4".to_string())])
+            ),
+            "Route: gpt-4"
+        );
+        assert_eq!(
+            translator.text_args(
+                "route-provider-model",
+                HashMap::from([
+                    ("provider", "openai".to_string()),
+                    ("model", "gpt-4".to_string())
+                ])
+            ),
+            "Route: openai/gpt-4"
+        );
+    }
+
+    #[test]
+    fn webui_route_labels_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("route-default"), "路由：默认");
+        assert_eq!(
+            translator.text_args(
+                "route-provider",
+                HashMap::from([("provider", "openai".to_string())])
+            ),
+            "路由：openai"
+        );
+        assert_eq!(
+            translator.text_args(
+                "route-model",
+                HashMap::from([("model", "gpt-4".to_string())])
+            ),
+            "路由：gpt-4"
+        );
+        assert_eq!(
+            translator.text_args(
+                "route-provider-model",
+                HashMap::from([
+                    ("provider", "openai".to_string()),
+                    ("model", "gpt-4".to_string())
+                ])
+            ),
+            "路由：openai/gpt-4"
+        );
+    }
+
+    #[test]
+    fn webui_activity_labels_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(translator.text("activity-history"), "History");
+        assert_eq!(translator.text("activity-uploading"), "Uploading");
+        assert_eq!(translator.text("activity-picking-file"), "Picking File");
+        assert_eq!(translator.text("activity-streaming"), "Streaming");
+        assert_eq!(translator.text("activity-files-ready"), "Files Ready");
+    }
+
+    #[test]
+    fn webui_activity_labels_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(translator.text("activity-history"), "历史");
+        assert_eq!(translator.text("activity-uploading"), "上传中");
+        assert_eq!(translator.text("activity-picking-file"), "选择文件");
+        assert_eq!(translator.text("activity-streaming"), "流式传输中");
+        assert_eq!(translator.text("activity-files-ready"), "文件就绪");
+    }
+
+    #[test]
+    fn webui_statusbar_messages_translate_in_english() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::English);
+
+        assert_eq!(
+            translator.text_args(
+                "statusbar-messages",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "5 msgs"
+        );
+    }
+
+    #[test]
+    fn webui_statusbar_messages_translate_in_chinese() {
+        let translator = Translator::new(LocaleDomain::WebUi, UiLanguage::SimplifiedChinese);
+
+        assert_eq!(
+            translator.text_args(
+                "statusbar-messages",
+                HashMap::from([("count", "5".to_string())])
+            ),
+            "5 条消息"
         );
     }
 }
