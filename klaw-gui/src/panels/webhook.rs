@@ -15,9 +15,9 @@ use klaw_config::{
 };
 use klaw_gateway::Route;
 use klaw_session::{
-    SessionError, SessionListQuery, SessionManager, SqliteSessionManager, WebhookAgentQuery,
-    WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord, WebhookEventSortOrder,
-    WebhookEventStatus,
+    SessionError, SessionIndex, SessionListQuery, SessionManager, SqliteSessionManager,
+    WebhookAgentQuery, WebhookAgentRecord, WebhookEventQuery, WebhookEventRecord,
+    WebhookEventSortOrder, WebhookEventStatus,
 };
 use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint, toggle::toggle};
 use klaw_util::default_data_dir;
@@ -1975,58 +1975,119 @@ fn load_prompt_markdown(path: &Path) -> Result<String, String> {
 fn load_session_options() -> Result<Vec<TrickSessionOption>, String> {
     run_session_task(move |manager| async move {
         let sessions = manager.list_sessions(SessionListQuery::default()).await?;
-        let sessions_by_key = sessions
-            .iter()
-            .cloned()
-            .map(|session| (session.session_key.clone(), session))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        let mut session_options = sessions
-            .into_iter()
-            .filter(|session| {
-                SessionChannel::from_str(session.channel.as_str())
-                    .is_some_and(|ch| ch.is_interactive())
-            })
-            .filter_map(|session| {
-                let target_key = session
-                    .active_session_key
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or(session.session_key.as_str());
-                let target = sessions_by_key.get(target_key).unwrap_or(&session);
-                let target_channel = SessionChannel::from_str(target.channel.as_str());
-                let delivery_ready = match target_channel {
-                    Some(
-                        SessionChannel::Telegram
-                        | SessionChannel::Terminal
-                        | SessionChannel::Websocket,
-                    ) => true,
-                    Some(SessionChannel::Dingtalk) => target
-                        .delivery_metadata_json
-                        .as_deref()
-                        .is_some_and(|value| value.contains("channel.dingtalk.session_webhook")),
-                    _ => false,
-                };
-                if !delivery_ready {
-                    return None;
-                }
-                let target_suffix = if target.session_key == session.session_key {
-                    "active=self".to_string()
-                } else {
-                    format!("active={}", target.session_key)
-                };
-                Some(TrickSessionOption {
-                    label: format!(
-                        "{} ({}, chat={}, {})",
-                        session.session_key, session.channel, session.chat_id, target_suffix
-                    ),
-                    base_session_key: session.session_key,
-                })
-            })
-            .collect::<Vec<_>>();
-        session_options.sort_by(|a, b| a.label.cmp(&b.label));
-        session_options.dedup_by(|a, b| a.base_session_key == b.base_session_key);
-        Ok(session_options)
+        Ok(build_trick_session_options(sessions))
     })
+}
+
+fn build_trick_session_options(sessions: Vec<SessionIndex>) -> Vec<TrickSessionOption> {
+    let sessions_by_key = sessions
+        .iter()
+        .cloned()
+        .map(|session| (session.session_key.clone(), session))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let active_session_keys = sessions
+        .iter()
+        .filter_map(|session| {
+            let active = session.active_session_key.as_deref()?.trim();
+            (!active.is_empty() && active != session.session_key).then_some(active)
+        })
+        .filter(|value| sessions_by_key.contains_key(*value))
+        .map(ToString::to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let mut session_options = sessions
+        .into_iter()
+        .filter(is_trick_base_session_candidate)
+        .filter(|session| !active_session_keys.contains(&session.session_key))
+        .filter_map(|session| {
+            let target_key = session
+                .active_session_key
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(session.session_key.as_str());
+            let target = sessions_by_key.get(target_key).unwrap_or(&session);
+            if !trick_delivery_ready(target) {
+                return None;
+            }
+            let target_suffix = if target.session_key == session.session_key {
+                "active=self".to_string()
+            } else {
+                format!("active={}", target.session_key)
+            };
+            Some(TrickSessionOption {
+                label: format!(
+                    "{} ({}, chat={}, {})",
+                    session.session_key, session.channel, session.chat_id, target_suffix
+                ),
+                base_session_key: session.session_key,
+            })
+        })
+        .collect::<Vec<_>>();
+    session_options.sort_by(|a, b| a.label.cmp(&b.label));
+    session_options.dedup_by(|a, b| a.base_session_key == b.base_session_key);
+    session_options
+}
+
+fn is_trick_base_session_candidate(session: &SessionIndex) -> bool {
+    if has_internal_session_key_prefix(&session.session_key) {
+        return false;
+    }
+    let Some(channel) = SessionChannel::from_str(session.channel.as_str()) else {
+        return false;
+    };
+    if !channel.is_interactive() {
+        return false;
+    }
+    match channel {
+        SessionChannel::Dingtalk | SessionChannel::Telegram => {
+            im_base_session_key(&session.channel, &session.session_key, &session.chat_id)
+                .is_some_and(|base| base == session.session_key)
+        }
+        SessionChannel::Terminal | SessionChannel::Websocket => true,
+        SessionChannel::Cron | SessionChannel::Heartbeat | SessionChannel::Webhook => false,
+    }
+}
+
+fn has_internal_session_key_prefix(session_key: &str) -> bool {
+    ["cron:", "webhook:", "heartbeat:", "callback:"]
+        .iter()
+        .any(|prefix| session_key.starts_with(prefix))
+}
+
+fn im_base_session_key(channel: &str, session_key: &str, chat_id: &str) -> Option<String> {
+    let chat_id = chat_id.trim();
+    if chat_id.is_empty() {
+        return None;
+    }
+    let mut parts = session_key.split(':');
+    let key_channel = parts.next()?.trim();
+    if key_channel != channel {
+        return None;
+    }
+    let account_or_chat = parts.next()?.trim();
+    if account_or_chat.is_empty() {
+        return None;
+    }
+    let Some(key_chat_id) = parts.next().map(str::trim) else {
+        return (account_or_chat == chat_id).then(|| format!("{channel}:{chat_id}"));
+    };
+    if key_chat_id.is_empty() {
+        return None;
+    }
+    Some(format!("{channel}:{account_or_chat}:{chat_id}"))
+}
+
+fn trick_delivery_ready(session: &SessionIndex) -> bool {
+    match SessionChannel::from_str(session.channel.as_str()) {
+        Some(SessionChannel::Telegram | SessionChannel::Terminal | SessionChannel::Websocket) => {
+            true
+        }
+        Some(SessionChannel::Dingtalk) => session
+            .delivery_metadata_json
+            .as_deref()
+            .is_some_and(|value| value.contains("channel.dingtalk.session_webhook")),
+        _ => false,
+    }
 }
 
 fn default_webhook_provider(config: &AppConfig) -> String {
@@ -2237,13 +2298,14 @@ where
 mod tests {
     use super::{
         PromptTemplateRecord, TrickPromptState, TrickSessionOption, WebhookPanel, WebhookQueryKind,
-        build_trick_url, default_webhook_model, list_prompt_templates_in_dir, normalize_hook_id,
-        percent_encode_query_value, prompt_templates_dir_from_config, query_mode_primary_label,
-        trick_base_url,
+        build_trick_session_options, build_trick_url, default_webhook_model,
+        list_prompt_templates_in_dir, normalize_hook_id, percent_encode_query_value,
+        prompt_templates_dir_from_config, query_mode_primary_label, trick_base_url,
     };
     use crate::GatewayStatusSnapshot;
     use klaw_config::{AppConfig, TailscaleMode};
     use klaw_gateway::{GatewayRuntimeInfo, TailscaleRuntimeInfo, TailscaleStatus};
+    use klaw_session::SessionIndex;
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -2384,5 +2446,123 @@ mod tests {
     #[test]
     fn percent_encode_query_value_encodes_spaces_and_symbols() {
         assert_eq!(percent_encode_query_value("a b/c"), "a%20b%2Fc".to_string());
+    }
+
+    #[test]
+    fn trick_session_options_hide_internal_and_derived_sessions() {
+        let options = build_trick_session_options(vec![
+            session_index("dingtalk:acc:chat-1", "chat-1", "dingtalk")
+                .with_active("dingtalk:acc:chat-1:active")
+                .into(),
+            session_index("dingtalk:acc:chat-1:active", "chat-1", "dingtalk")
+                .with_delivery_metadata(Some(
+                    "{\"channel.dingtalk.session_webhook\":\"https://example/session\"}",
+                ))
+                .into(),
+            session_index("cron:job:req-1", "chat-1", "dingtalk")
+                .with_delivery_metadata(Some(
+                    "{\"channel.dingtalk.session_webhook\":\"https://example/cron\"}",
+                ))
+                .into(),
+            session_index("webhook:hook:req-1", "webhook:hook:req-1", "webhook").into(),
+            session_index("heartbeat:dingtalk:acc:chat-1", "chat-1", "heartbeat").into(),
+            session_index("callback:telegram:req-1", "chat-1", "telegram").into(),
+        ]);
+
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].base_session_key, "dingtalk:acc:chat-1");
+        assert_eq!(
+            options[0].label,
+            "dingtalk:acc:chat-1 (dingtalk, chat=chat-1, active=dingtalk:acc:chat-1:active)"
+        );
+    }
+
+    #[test]
+    fn trick_session_options_require_dingtalk_delivery_metadata() {
+        let options = build_trick_session_options(vec![
+            session_index("dingtalk:acc:missing", "missing", "dingtalk").into(),
+            session_index("dingtalk:acc:ready", "ready", "dingtalk")
+                .with_delivery_metadata(Some(
+                    "{\"channel.dingtalk.session_webhook\":\"https://example/ready\"}",
+                ))
+                .into(),
+        ]);
+
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.base_session_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dingtalk:acc:ready"]
+        );
+    }
+
+    #[test]
+    fn trick_session_options_keep_non_im_base_sessions() {
+        let options = build_trick_session_options(vec![
+            session_index("telegram:acc:chat-1", "chat-1", "telegram").into(),
+            session_index("telegram:acc:chat-1:child", "chat-1", "telegram").into(),
+            session_index("terminal:main", "main", "terminal")
+                .with_active("terminal:main")
+                .into(),
+            session_index("websocket:base", "websocket:base", "websocket")
+                .with_active("websocket:base:child")
+                .into(),
+            session_index("websocket:base:child", "websocket:base", "websocket").into(),
+        ]);
+
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.base_session_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["telegram:acc:chat-1", "terminal:main", "websocket:base"]
+        );
+        assert!(
+            options
+                .iter()
+                .any(|option| option.label.contains("active=websocket:base:child"))
+        );
+    }
+
+    fn session_index(session_key: &str, chat_id: &str, channel: &str) -> TestSessionIndexBuilder {
+        TestSessionIndexBuilder(SessionIndex {
+            session_key: session_key.to_string(),
+            chat_id: chat_id.to_string(),
+            channel: channel.to_string(),
+            title: None,
+            active_session_key: Some(session_key.to_string()),
+            model_provider: None,
+            model_provider_explicit: false,
+            model: None,
+            model_explicit: false,
+            delivery_metadata_json: None,
+            is_active: true,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            last_message_at_ms: 1,
+            turn_count: 0,
+            jsonl_path: String::new(),
+        })
+    }
+
+    struct TestSessionIndexBuilder(SessionIndex);
+
+    impl TestSessionIndexBuilder {
+        fn with_active(mut self, active_session_key: &str) -> Self {
+            self.0.active_session_key = Some(active_session_key.to_string());
+            self
+        }
+
+        fn with_delivery_metadata(mut self, metadata: Option<&str>) -> Self {
+            self.0.delivery_metadata_json = metadata.map(ToString::to_string);
+            self
+        }
+    }
+
+    impl From<TestSessionIndexBuilder> for SessionIndex {
+        fn from(builder: TestSessionIndexBuilder) -> Self {
+            builder.0
+        }
     }
 }
