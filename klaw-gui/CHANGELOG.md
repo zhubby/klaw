@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-18
+
+### Changed
+
+- Settings 面板的通用、安全与隐私、网络、同步分区改用固定 `egui_dock` 标签页切换。
+
 ## 2026-05-17
 
 ### Fixed

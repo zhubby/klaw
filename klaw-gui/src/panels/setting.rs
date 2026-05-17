@@ -15,6 +15,7 @@ use crate::sync_runtime::{
 };
 use crate::theme;
 use crate::time_format::format_optional_timestamp_millis;
+use egui_dock::{AllowedSplits, DockArea, DockState, NodeIndex, Style, SurfaceIndex, TabIndex};
 use egui_extras::{Size, StripBuilder};
 use klaw_storage::{
     BackupItem, BackupPlan, BackupProgress, BackupService, S3SnapshotStoreConfig, SnapshotListItem,
@@ -75,6 +76,7 @@ pub struct SettingPanel {
     settings: AppSettings,
     theme_state: UiState,
     active_section: SettingsSection,
+    section_dock_state: DockState<SettingsSection>,
     save_error: Option<String>,
     sync_task_rx: Option<Receiver<SyncTaskMessage>>,
     sync_task_kind: Option<SyncRuntimeTaskKind>,
@@ -89,6 +91,7 @@ impl Default for SettingPanel {
             settings,
             theme_state: persistence::load_ui_state(),
             active_section: SettingsSection::General,
+            section_dock_state: Self::section_dock_state(SettingsSection::General),
             save_error: None,
             sync_task_rx: None,
             sync_task_kind: None,
@@ -129,54 +132,7 @@ impl PanelRenderer for SettingPanel {
                 .size(Size::remainder().at_least(MIN_CONTENT_HEIGHT))
                 .vertical(|mut strip| {
                     strip.cell(|ui| {
-                        StripBuilder::new(ui)
-                            .size(Size::exact(160.0))
-                            .size(Size::exact(12.0))
-                            .size(Size::remainder().at_least(420.0))
-                            .horizontal(|mut strip| {
-                                strip.cell(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.set_min_width(140.0);
-                                        ui.set_max_width(160.0);
-                                        for section in [
-                                            SettingsSection::General,
-                                            SettingsSection::SecurityPrivacy,
-                                            SettingsSection::Network,
-                                            SettingsSection::Sync,
-                                        ] {
-                                            let is_active = this.active_section == section;
-                                            let text =
-                                                format!("{} {}", section.icon(), section.title(&t));
-                                            if ui.selectable_label(is_active, text).clicked() {
-                                                this.active_section = section;
-                                            }
-                                        }
-                                    });
-                                });
-                                strip.cell(|ui| {
-                                    ui.add(egui::Separator::default().vertical());
-                                });
-                                strip.cell(|ui| {
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("settings-section-scroll")
-                                        .auto_shrink([false, false])
-                                        .show(ui, |ui| match this.active_section {
-                                            SettingsSection::General => {
-                                                this.render_general_section(ui, notifications)
-                                            }
-                                            SettingsSection::SecurityPrivacy => this
-                                                .render_security_privacy_section(ui, notifications),
-                                            SettingsSection::Network => {
-                                                this.render_network_section(ui)
-                                            }
-                                            SettingsSection::Sync => this.render_sync_section(
-                                                ui,
-                                                notifications,
-                                                &runtime,
-                                            ),
-                                        });
-                                });
-                            });
+                        this.render_section_dock(ui, notifications, &runtime, &t);
                     });
                 });
         };
@@ -196,9 +152,124 @@ impl PanelRenderer for SettingPanel {
     }
 }
 
+struct SettingsSectionTabViewer<'a> {
+    panel: &'a mut SettingPanel,
+    notifications: &'a mut NotificationCenter,
+    runtime: &'a SyncRuntimeSnapshot,
+    translator: &'a Translator,
+}
+
+impl egui_dock::TabViewer for SettingsSectionTabViewer<'_> {
+    type Tab = SettingsSection;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        format!("{} {}", tab.icon(), tab.title(self.translator)).into()
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("settings-section-tab", *tab as u8))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        self.panel.active_section = *tab;
+        egui::ScrollArea::vertical()
+            .id_salt(("settings-section-scroll", *tab as u8))
+            .auto_shrink([false, false])
+            .show(ui, |ui| match *tab {
+                SettingsSection::General => {
+                    self.panel.render_general_section(ui, self.notifications)
+                }
+                SettingsSection::SecurityPrivacy => self
+                    .panel
+                    .render_security_privacy_section(ui, self.notifications),
+                SettingsSection::Network => self.panel.render_network_section(ui),
+                SettingsSection::Sync => {
+                    self.panel
+                        .render_sync_section(ui, self.notifications, self.runtime);
+                }
+            });
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        if response.clicked() {
+            self.panel.active_section = *tab;
+        }
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
+        false
+    }
+
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false]
+    }
+}
+
 impl SettingPanel {
     fn translator() -> Translator {
         Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
+    fn section_dock_state(active_section: SettingsSection) -> DockState<SettingsSection> {
+        let mut dock_state = DockState::new(vec![
+            SettingsSection::General,
+            SettingsSection::SecurityPrivacy,
+            SettingsSection::Network,
+            SettingsSection::Sync,
+        ]);
+        let active_index = match active_section {
+            SettingsSection::General => 0,
+            SettingsSection::SecurityPrivacy => 1,
+            SettingsSection::Network => 2,
+            SettingsSection::Sync => 3,
+        };
+        dock_state.set_active_tab((
+            SurfaceIndex::main(),
+            NodeIndex::root(),
+            TabIndex(active_index),
+        ));
+        dock_state
+    }
+
+    fn render_section_dock(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        runtime: &SyncRuntimeSnapshot,
+        t: &Translator,
+    ) {
+        let mut dock_state = std::mem::replace(
+            &mut self.section_dock_state,
+            Self::section_dock_state(self.active_section),
+        );
+        let mut style = Style::from_egui(ui.style().as_ref());
+        style.tab_bar.show_scroll_bar_on_overflow = false;
+
+        DockArea::new(&mut dock_state)
+            .id(egui::Id::new("settings-section-dock"))
+            .style(style)
+            .show_add_buttons(false)
+            .show_close_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .tab_context_menus(false)
+            .draggable_tabs(false)
+            .allowed_splits(AllowedSplits::None)
+            .show_inside(
+                ui,
+                &mut SettingsSectionTabViewer {
+                    panel: self,
+                    notifications,
+                    runtime,
+                    translator: t,
+                },
+            );
+
+        self.section_dock_state = dock_state;
     }
 
     fn sync_theme_state(&mut self) {
