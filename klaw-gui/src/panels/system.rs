@@ -207,10 +207,43 @@ fn format_bytes_si(value: u64) -> String {
     }
 }
 
-fn host_info_row(ui: &mut egui::Ui, key: &str, value: String) {
-    ui.label(key);
-    ui.monospace(value);
-    ui.end_row();
+fn host_info_row(ui: &mut egui::Ui, row_index: usize, key: &str, value: String) {
+    let column_spacing = 14.0;
+    // Inside ScrollArea, available_width can describe the scroll content width rather
+    // than the visible viewport. Use the clip rect so the split tracks what users see.
+    let row_width = ui.clip_rect().width();
+    let row_height = ui.spacing().interact_size.y;
+    let col_width = ((row_width - column_spacing) / 2.0).max(0.0);
+    let (row_rect, _) =
+        ui.allocate_exact_size(egui::vec2(row_width, row_height), egui::Sense::hover());
+
+    if row_index % 2 == 0 {
+        ui.painter()
+            .rect_filled(row_rect, 0.0, ui.visuals().faint_bg_color);
+    }
+
+    let key_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(col_width, row_height));
+    let value_rect = egui::Rect::from_min_size(
+        egui::pos2(row_rect.min.x + col_width + column_spacing, row_rect.min.y),
+        egui::vec2(col_width, row_height),
+    );
+
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(key_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.add(egui::Label::new(key).truncate());
+        },
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(value_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.add(egui::Label::new(RichText::new(value).monospace()).truncate());
+        },
+    );
 }
 
 #[allow(dead_code)]
@@ -530,9 +563,6 @@ impl SystemPanel {
         ui.strong(t.text("system-system-information"));
         ui.add_space(6.0);
 
-        let info_width = ui.available_width();
-        let col_width = info_width / 2.0;
-
         let na = t.text("system-host-na");
         let loading = t.text("system-host-loading");
 
@@ -540,187 +570,182 @@ impl SystemPanel {
             .id_salt("system-host-info-scroll")
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                egui::Grid::new("system-host-info-grid")
-                    .num_columns(2)
-                    .min_col_width(col_width)
-                    .spacing([14.0, 6.0])
-                    .striped(true)
-                    .show(ui, |ui| {
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-app-uptime"),
-                            format_host_duration(uptime_secs),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-name"),
-                            host_optional_text_with_na(System::host_name(), &na),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-os-name"),
-                            host_optional_text_with_na(System::name(), &na),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-os-version"),
-                            host_optional_text_with_na(System::os_version(), &na),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-long-os-version"),
-                            host_optional_text_with_na(System::long_os_version(), &na),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-kernel-version"),
-                            host_optional_text_with_na(System::kernel_version(), &na),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-cpu-architecture"),
-                            std::env::consts::ARCH.to_string(),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-logical-cpu-count"),
-                            logical_cpus.to_string(),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-physical-core-count"),
-                            physical_cores.to_string(),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-primary-cpu-brand"),
-                            self.host_info
-                                .system
-                                .cpus()
-                                .first()
-                                .map(|cpu| cpu.brand().to_string())
-                                .filter(|value| !value.is_empty())
-                                .unwrap_or_else(|| na.clone()),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-primary-cpu-frequency"),
-                            self.host_info
-                                .system
-                                .cpus()
-                                .first()
-                                .map(|cpu| {
-                                    t.text_args(
-                                        "system-cpu-frequency-mhz",
-                                        HashMap::from([("freq", cpu.frequency().to_string())]),
-                                    )
-                                })
-                                .unwrap_or_else(|| na.clone()),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-total-memory"),
-                            format_bytes_si(total_memory),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-used-memory"),
-                            format_bytes_si(used_memory),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-free-memory"),
-                            format_bytes_si(free_memory),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-total-swap"),
-                            format_bytes_si(self.host_info.system.total_swap()),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-used-swap"),
-                            format_bytes_si(self.host_info.system.used_swap()),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-system-uptime"),
-                            format_host_duration(system_uptime_secs),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-system-boot-time"),
-                            crate::time_format::format_timestamp_seconds(System::boot_time()),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-load-average"),
-                            format_host_load_avg(load_avg),
-                        );
-                        host_info_row(
-                            ui,
-                            &t.text("system-host-data-directory"),
-                            self.host_info.data_dir_path.display().to_string(),
-                        );
+                let mut row_index = 0;
+                let mut row = |ui: &mut egui::Ui, key: &str, value: String| {
+                    host_info_row(ui, row_index, key, value);
+                    row_index += 1;
+                };
 
-                        if let Some(stats) = self.host_info.data_dir_stats.as_ref() {
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-size"),
-                                format_bytes_si(stats.used_bytes),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-file-count"),
-                                stats.file_count.to_string(),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-mount-point"),
-                                stats
-                                    .mount_point
-                                    .as_ref()
-                                    .map(|path| path.display().to_string())
-                                    .unwrap_or_else(|| na.clone()),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-disk-capacity"),
-                                format_bytes_si(stats.disk_total_bytes),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-disk-available"),
-                                format_bytes_si(stats.disk_available_bytes),
-                            );
-                        } else {
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-size"),
-                                loading.clone(),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-file-count"),
-                                loading.clone(),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-mount-point"),
-                                loading.clone(),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-disk-capacity"),
-                                loading.clone(),
-                            );
-                            host_info_row(
-                                ui,
-                                &t.text("system-host-data-dir-disk-available"),
-                                loading.clone(),
-                            );
-                        }
-                    });
+                row(
+                    ui,
+                    &t.text("system-host-app-uptime"),
+                    format_host_duration(uptime_secs),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-name"),
+                    host_optional_text_with_na(System::host_name(), &na),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-os-name"),
+                    host_optional_text_with_na(System::name(), &na),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-os-version"),
+                    host_optional_text_with_na(System::os_version(), &na),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-long-os-version"),
+                    host_optional_text_with_na(System::long_os_version(), &na),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-kernel-version"),
+                    host_optional_text_with_na(System::kernel_version(), &na),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-cpu-architecture"),
+                    std::env::consts::ARCH.to_string(),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-logical-cpu-count"),
+                    logical_cpus.to_string(),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-physical-core-count"),
+                    physical_cores.to_string(),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-primary-cpu-brand"),
+                    self.host_info
+                        .system
+                        .cpus()
+                        .first()
+                        .map(|cpu| cpu.brand().to_string())
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| na.clone()),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-primary-cpu-frequency"),
+                    self.host_info
+                        .system
+                        .cpus()
+                        .first()
+                        .map(|cpu| {
+                            t.text_args(
+                                "system-cpu-frequency-mhz",
+                                HashMap::from([("freq", cpu.frequency().to_string())]),
+                            )
+                        })
+                        .unwrap_or_else(|| na.clone()),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-total-memory"),
+                    format_bytes_si(total_memory),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-used-memory"),
+                    format_bytes_si(used_memory),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-free-memory"),
+                    format_bytes_si(free_memory),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-total-swap"),
+                    format_bytes_si(self.host_info.system.total_swap()),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-used-swap"),
+                    format_bytes_si(self.host_info.system.used_swap()),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-system-uptime"),
+                    format_host_duration(system_uptime_secs),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-system-boot-time"),
+                    crate::time_format::format_timestamp_seconds(System::boot_time()),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-load-average"),
+                    format_host_load_avg(load_avg),
+                );
+                row(
+                    ui,
+                    &t.text("system-host-data-directory"),
+                    self.host_info.data_dir_path.display().to_string(),
+                );
+
+                if let Some(stats) = self.host_info.data_dir_stats.as_ref() {
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-size"),
+                        format_bytes_si(stats.used_bytes),
+                    );
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-file-count"),
+                        stats.file_count.to_string(),
+                    );
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-mount-point"),
+                        stats
+                            .mount_point
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| na.clone()),
+                    );
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-disk-capacity"),
+                        format_bytes_si(stats.disk_total_bytes),
+                    );
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-disk-available"),
+                        format_bytes_si(stats.disk_available_bytes),
+                    );
+                } else {
+                    row(ui, &t.text("system-host-data-dir-size"), loading.clone());
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-file-count"),
+                        loading.clone(),
+                    );
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-mount-point"),
+                        loading.clone(),
+                    );
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-disk-capacity"),
+                        loading.clone(),
+                    );
+                    row(
+                        ui,
+                        &t.text("system-host-data-dir-disk-available"),
+                        loading.clone(),
+                    );
+                }
             });
     }
 
