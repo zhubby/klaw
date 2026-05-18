@@ -2187,3 +2187,25 @@ archive-notify-load-filters-failed = Failed to load filters: { $error }
 archive-notify-query-failed = Failed to query archives: { $error }
 archive-notify-preview-failed = Failed to preview archive: { $error }
 archive-notify-open-preview-failed = Failed to open archive for preview: { $error }
+
+## Logs panel
+logs-subtitle = Live process logs from tracing output
+logs-level-trace = trace
+logs-level-debug = debug
+logs-level-info = info
+logs-level-warn = warn
+logs-level-error = error
+logs-level-unknown = unknown
+logs-search = Search
+logs-pause-stream = Pause stream
+logs-auto-scroll = Auto-scroll
+logs-btn-clear = Clear
+logs-btn-apply = Apply
+logs-btn-export = Export
+logs-max-lines = Max lines
+logs-export-path = Export path
+logs-notify-buffer-cleared = Log buffer cleared
+logs-notify-capacity-updated = Log capacity updated
+logs-notify-exported = Logs exported to { $path }
+logs-stats-line = Buffered: { $buffered } | Visible: { $visible } | Panel dropped: { $panel_dropped } | Transport dropped: { $transport_dropped } | Bridge dropped: { $bridge_dropped }
+logs-transport-warning = GUI transport has dropped { $chunks } chunks ({ $bytes } bytes). Runtime logging continued, but the GUI sink fell behind.

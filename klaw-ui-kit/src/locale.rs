@@ -6823,4 +6823,130 @@ mod tests {
             "5 条消息"
         );
     }
+
+    #[test]
+    fn gui_logs_panel_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text("logs-subtitle"),
+            "Live process logs from tracing output"
+        );
+        assert_eq!(translator.text("logs-level-trace"), "trace");
+        assert_eq!(translator.text("logs-level-debug"), "debug");
+        assert_eq!(translator.text("logs-level-info"), "info");
+        assert_eq!(translator.text("logs-level-warn"), "warn");
+        assert_eq!(translator.text("logs-level-error"), "error");
+        assert_eq!(translator.text("logs-level-unknown"), "unknown");
+        assert_eq!(translator.text("logs-search"), "Search");
+        assert_eq!(translator.text("logs-pause-stream"), "Pause stream");
+        assert_eq!(translator.text("logs-auto-scroll"), "Auto-scroll");
+        assert_eq!(translator.text("logs-btn-clear"), "Clear");
+        assert_eq!(translator.text("logs-btn-apply"), "Apply");
+        assert_eq!(translator.text("logs-btn-export"), "Export");
+        assert_eq!(translator.text("logs-max-lines"), "Max lines");
+        assert_eq!(translator.text("logs-export-path"), "Export path");
+        assert_eq!(
+            translator.text("logs-notify-buffer-cleared"),
+            "Log buffer cleared"
+        );
+        assert_eq!(
+            translator.text("logs-notify-capacity-updated"),
+            "Log capacity updated"
+        );
+    }
+
+    #[test]
+    fn gui_logs_panel_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text("logs-subtitle"),
+            "来自追踪输出的实时进程日志"
+        );
+        assert_eq!(translator.text("logs-level-trace"), "跟踪");
+        assert_eq!(translator.text("logs-level-debug"), "调试");
+        assert_eq!(translator.text("logs-level-info"), "信息");
+        assert_eq!(translator.text("logs-level-warn"), "警告");
+        assert_eq!(translator.text("logs-level-error"), "错误");
+        assert_eq!(translator.text("logs-level-unknown"), "未知");
+        assert_eq!(translator.text("logs-search"), "搜索");
+        assert_eq!(translator.text("logs-pause-stream"), "暂停流");
+        assert_eq!(translator.text("logs-auto-scroll"), "自动滚动");
+        assert_eq!(translator.text("logs-btn-clear"), "清除");
+        assert_eq!(translator.text("logs-btn-apply"), "应用");
+        assert_eq!(translator.text("logs-btn-export"), "导出");
+        assert_eq!(translator.text("logs-max-lines"), "最大行数");
+        assert_eq!(translator.text("logs-export-path"), "导出路径");
+        assert_eq!(
+            translator.text("logs-notify-buffer-cleared"),
+            "日志缓冲已清除"
+        );
+        assert_eq!(
+            translator.text("logs-notify-capacity-updated"),
+            "日志容量已更新"
+        );
+    }
+
+    #[test]
+    fn gui_logs_panel_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "logs-notify-exported",
+                HashMap::from([("path", "/tmp/gui-live.log".to_string())])
+            ),
+            "Logs exported to /tmp/gui-live.log"
+        );
+        assert_eq!(
+            translator.text_args(
+                "logs-stats-line",
+                HashMap::from([
+                    ("buffered", "100".to_string()),
+                    ("visible", "80".to_string()),
+                    ("panel_dropped", "5".to_string()),
+                    ("transport_dropped", "3".to_string()),
+                    ("bridge_dropped", "2".to_string()),
+                ])
+            ),
+            "Buffered: 100 | Visible: 80 | Panel dropped: 5 | Transport dropped: 3 | Bridge dropped: 2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "logs-transport-warning",
+                HashMap::from([("chunks", "10".to_string()), ("bytes", "4096".to_string()),])
+            ),
+            "GUI transport has dropped 10 chunks (4096 bytes). Runtime logging continued, but the GUI sink fell behind."
+        );
+    }
+
+    #[test]
+    fn gui_logs_panel_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "logs-notify-exported",
+                HashMap::from([("path", "/tmp/gui-live.log".to_string())])
+            ),
+            "日志已导出到 /tmp/gui-live.log"
+        );
+        assert_eq!(
+            translator.text_args(
+                "logs-stats-line",
+                HashMap::from([
+                    ("buffered", "100".to_string()),
+                    ("visible", "80".to_string()),
+                    ("panel_dropped", "5".to_string()),
+                    ("transport_dropped", "3".to_string()),
+                    ("bridge_dropped", "2".to_string()),
+                ])
+            ),
+            "缓冲: 100 | 可见: 80 | 面板丢弃: 5 | 传输丢弃: 3 | 桥接丢弃: 2"
+        );
+        assert_eq!(
+            translator.text_args(
+                "logs-transport-warning",
+                HashMap::from([("chunks", "10".to_string()), ("bytes", "4096".to_string()),])
+            ),
+            "GUI 传输已丢弃 10 个数据块 (4096 字节)。运行时日志仍在继续，但 GUI 接收端落后了。"
+        );
+    }
 }

@@ -1,9 +1,11 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::runtime_bridge;
+use crate::settings::current_ui_language;
 use crate::state::{LogsLevelFilterState, LogsPanelState, persistence};
 use egui::Color32;
-use std::collections::VecDeque;
+use klaw_ui_kit::{LocaleDomain, Translator};
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -100,6 +102,10 @@ pub struct LogsPanel {
 }
 
 impl LogsPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_defaults(&mut self) {
         if !self.prefs_loaded {
             self.level_filter =
@@ -247,21 +253,25 @@ impl PanelRenderer for LogsPanel {
         self.ensure_defaults();
         ui.ctx().request_repaint_after(LOG_POLL_INTERVAL);
 
+        let t = Self::translator();
+
         ui.heading(ctx.tab_title);
-        ui.label("Live process logs from tracing output");
+        ui.label(t.text("logs-subtitle"));
         ui.separator();
 
         ui.horizontal_wrapped(|ui| {
-            let trace_label =
-                egui::RichText::new("trace").color(level_color(ParsedLevel::Trace, ui));
-            let debug_label =
-                egui::RichText::new("debug").color(level_color(ParsedLevel::Debug, ui));
-            let info_label = egui::RichText::new("info").color(level_color(ParsedLevel::Info, ui));
-            let warn_label = egui::RichText::new("warn").color(level_color(ParsedLevel::Warn, ui));
-            let error_label =
-                egui::RichText::new("error").color(level_color(ParsedLevel::Error, ui));
-            let unknown_label =
-                egui::RichText::new("unknown").color(level_color(ParsedLevel::Unknown, ui));
+            let trace_label = egui::RichText::new(t.text("logs-level-trace"))
+                .color(level_color(ParsedLevel::Trace, ui));
+            let debug_label = egui::RichText::new(t.text("logs-level-debug"))
+                .color(level_color(ParsedLevel::Debug, ui));
+            let info_label = egui::RichText::new(t.text("logs-level-info"))
+                .color(level_color(ParsedLevel::Info, ui));
+            let warn_label = egui::RichText::new(t.text("logs-level-warn"))
+                .color(level_color(ParsedLevel::Warn, ui));
+            let error_label = egui::RichText::new(t.text("logs-level-error"))
+                .color(level_color(ParsedLevel::Error, ui));
+            let unknown_label = egui::RichText::new(t.text("logs-level-unknown"))
+                .color(level_color(ParsedLevel::Unknown, ui));
             let changed = ui
                 .checkbox(&mut self.level_filter.trace, trace_label)
                 .changed()
@@ -289,37 +299,38 @@ impl PanelRenderer for LogsPanel {
         });
 
         ui.horizontal(|ui| {
-            ui.label("Search");
+            ui.label(t.text("logs-search"));
             let search_response =
                 ui.add(egui::TextEdit::singleline(&mut self.search_text).desired_width(220.0));
             if search_response.changed() {
                 self.visible_cache_dirty = true;
             }
-            ui.checkbox(&mut self.paused, "Pause stream");
-            ui.checkbox(&mut self.auto_scroll, "Auto-scroll");
-            if ui.button("Clear").clicked() {
+            ui.checkbox(&mut self.paused, t.text("logs-pause-stream"));
+            ui.checkbox(&mut self.auto_scroll, t.text("logs-auto-scroll"));
+            if ui.button(t.text("logs-btn-clear")).clicked() {
                 self.clear();
-                notifications.success("Log buffer cleared");
+                notifications.success(t.text("logs-notify-buffer-cleared"));
             }
         });
 
         ui.horizontal(|ui| {
-            ui.label("Max lines");
+            ui.label(t.text("logs-max-lines"));
             ui.add(egui::TextEdit::singleline(&mut self.max_lines_text).desired_width(90.0));
-            if ui.button("Apply").clicked() {
+            if ui.button(t.text("logs-btn-apply")).clicked() {
                 match self.apply_max_lines_from_text() {
-                    Ok(()) => notifications.success("Log capacity updated"),
+                    Ok(()) => notifications.success(t.text("logs-notify-capacity-updated")),
                     Err(err) => notifications.error(err),
                 }
             }
             ui.separator();
-            ui.label("Export path");
+            ui.label(t.text("logs-export-path"));
             ui.add(egui::TextEdit::singleline(&mut self.export_path).desired_width(320.0));
-            if ui.button("Export").clicked() {
+            if ui.button(t.text("logs-btn-export")).clicked() {
                 match self.export_all() {
-                    Ok(path) => {
-                        notifications.success(format!("Logs exported to {}", path.display()))
-                    }
+                    Ok(path) => notifications.success(t.text_args(
+                        "logs-notify-exported",
+                        HashMap::from([("path", path.display().to_string())]),
+                    )),
                     Err(err) => notifications.error(err),
                 }
             }
@@ -327,19 +338,32 @@ impl PanelRenderer for LogsPanel {
 
         self.refresh_visible_cache();
         let transport_stats = runtime_bridge::log_stats_snapshot();
-        ui.label(format!(
-            "Buffered: {} | Visible: {} | Panel dropped: {} | Transport dropped: {} | Bridge dropped: {}",
-            self.entries.len(),
-            self.filtered_indices.len(),
-            self.dropped_lines,
-            transport_stats.transport_dropped_chunks,
-            transport_stats.bridge_dropped_chunks,
+        ui.label(t.text_args(
+            "logs-stats-line",
+            HashMap::from([
+                ("buffered", self.entries.len().to_string()),
+                ("visible", self.filtered_indices.len().to_string()),
+                ("panel_dropped", self.dropped_lines.to_string()),
+                (
+                    "transport_dropped",
+                    transport_stats.transport_dropped_chunks.to_string(),
+                ),
+                (
+                    "bridge_dropped",
+                    transport_stats.bridge_dropped_chunks.to_string(),
+                ),
+            ]),
         ));
         if transport_stats.transport_dropped_chunks > 0 {
-            ui.label(format!(
-                "GUI transport has dropped {} chunks ({} bytes). Runtime logging continued, but the GUI sink fell behind.",
-                transport_stats.transport_dropped_chunks,
-                transport_stats.transport_dropped_bytes
+            ui.label(t.text_args(
+                "logs-transport-warning",
+                HashMap::from([
+                    (
+                        "chunks",
+                        transport_stats.transport_dropped_chunks.to_string(),
+                    ),
+                    ("bytes", transport_stats.transport_dropped_bytes.to_string()),
+                ]),
             ));
         }
         ui.separator();

@@ -2185,3 +2185,25 @@ obs-validation-price-provider-empty = 提供者不能为空
 obs-validation-price-model-empty = 模型不能为空
 obs-validation-price-input-negative = 输入速率不能为负数
 obs-validation-price-output-negative = 输出速率不能为负数
+
+## Logs 日志面板
+logs-subtitle = 来自追踪输出的实时进程日志
+logs-level-trace = 跟踪
+logs-level-debug = 调试
+logs-level-info = 信息
+logs-level-warn = 警告
+logs-level-error = 错误
+logs-level-unknown = 未知
+logs-search = 搜索
+logs-pause-stream = 暂停流
+logs-auto-scroll = 自动滚动
+logs-btn-clear = 清除
+logs-btn-apply = 应用
+logs-btn-export = 导出
+logs-max-lines = 最大行数
+logs-export-path = 导出路径
+logs-notify-buffer-cleared = 日志缓冲已清除
+logs-notify-capacity-updated = 日志容量已更新
+logs-notify-exported = 日志已导出到 { $path }
+logs-stats-line = 缓冲: { $buffered } | 可见: { $visible } | 面板丢弃: { $panel_dropped } | 传输丢弃: { $transport_dropped } | 桥接丢弃: { $bridge_dropped }
+logs-transport-warning = GUI 传输已丢弃 { $chunks } 个数据块 ({ $bytes } 字节)。运行时日志仍在继续，但 GUI 接收端落后了。
