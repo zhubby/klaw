@@ -36,6 +36,7 @@ const PAGING_INPUT_WIDTH: f32 = 50.0;
 const PROMPT_LIST_HEIGHT: f32 = 320.0;
 const PROMPT_TEXT_HEIGHT: f32 = 260.0;
 const SUMMARY_WINDOW_HEIGHT: f32 = 260.0;
+const MAX_SESSION_LABEL_CHARS: usize = 40;
 
 struct PendingWebhookRowsRequest {
     receiver: Receiver<Result<Vec<WebhookListRow>, String>>,
@@ -795,6 +796,9 @@ impl WebhookPanel {
                 .id(egui::Id::new(("webhook-raw-json-popup", &raw_state.title)))
                 .open(&mut keep_open)
                 .resizable(true)
+                .collapsible(false)
+                .default_pos(screen_center(ui.ctx()))
+                .pivot(egui::Align2::CENTER_CENTER)
                 .default_width(720.0)
                 .default_height(480.0)
                 .show(ui.ctx(), |ui| {
@@ -1269,6 +1273,9 @@ impl PanelRenderer for WebhookPanel {
                 )))
                 .open(&mut open)
                 .resizable(true)
+                .collapsible(false)
+                .default_pos(screen_center(ui.ctx()))
+                .pivot(egui::Align2::CENTER_CENTER)
                 .default_width(720.0)
                 .default_height(360.0)
                 .show(ui.ctx(), |ui| {
@@ -1297,6 +1304,9 @@ impl PanelRenderer for WebhookPanel {
                 .id(egui::Id::new("webhook-config-window"))
                 .open(&mut open)
                 .resizable(true)
+                .collapsible(false)
+                .default_pos(screen_center(ui.ctx()))
+                .pivot(egui::Align2::CENTER_CENTER)
                 .default_width(520.0)
                 .show(ui.ctx(), |ui| {
                     egui::Grid::new("webhook-config-grid")
@@ -1408,6 +1418,9 @@ impl PanelRenderer for WebhookPanel {
             .id(egui::Id::new("webhook-create-prompt"))
             .open(&mut open)
             .resizable(true)
+            .collapsible(false)
+            .default_pos(screen_center(ui.ctx()))
+            .pivot(egui::Align2::CENTER_CENTER)
             .default_width(920.0)
             .default_height(620.0)
             .show(ui.ctx(), |ui| {
@@ -1473,6 +1486,9 @@ impl PanelRenderer for WebhookPanel {
                 .id(egui::Id::new("webhook-inspect-prompt"))
                 .open(&mut open)
                 .resizable(true)
+                .collapsible(false)
+                .default_pos(screen_center(ui.ctx()))
+                .pivot(egui::Align2::CENTER_CENTER)
                 .default_width(760.0)
                 .default_height(480.0)
                 .show(ui.ctx(), |ui| {
@@ -1647,6 +1663,9 @@ impl PanelRenderer for WebhookPanel {
             .id(egui::Id::new(("webhook-view-prompt", &view_state.hook_id)))
             .open(&mut open)
             .resizable(true)
+            .collapsible(false)
+            .default_pos(screen_center(ui.ctx()))
+            .pivot(egui::Align2::CENTER_CENTER)
             .default_width(720.0)
             .default_height(620.0)
             .show(ui.ctx(), |ui| {
@@ -1671,8 +1690,9 @@ impl PanelRenderer for WebhookPanel {
             let mut confirmed = false;
             let mut cancelled = false;
             egui::Window::new(t.text("webhook-delete-title"))
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
+                .default_pos(screen_center(ui.ctx()))
+                .pivot(egui::Align2::CENTER_CENTER)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
                     ui.label(
@@ -1728,6 +1748,9 @@ impl PanelRenderer for WebhookPanel {
             )))
             .open(&mut open)
             .resizable(true)
+            .collapsible(false)
+            .default_pos(screen_center(ui.ctx()))
+            .pivot(egui::Align2::CENTER_CENTER)
             .default_width(700.0)
             .default_height(420.0)
             .show(ui.ctx(), |ui| {
@@ -1756,15 +1779,23 @@ impl PanelRenderer for WebhookPanel {
                                 .session_options
                                 .iter()
                                 .find(|item| item.base_session_key == trick_state.base_session_key)
-                                .map(|item| item.label.as_str())
-                                .unwrap_or(&t.text("webhook-trick-select-session")),
+                                .map(|item| truncate_label(&item.label, MAX_SESSION_LABEL_CHARS))
+                                .unwrap_or_else(|| t.text("webhook-trick-select-session")),
                         )
                         .width(420.0)
                         .show_ui(ui, |ui| {
                             for option in &trick_state.session_options {
                                 let selected =
                                     trick_state.base_session_key == option.base_session_key;
-                                if ui.selectable_label(selected, &option.label).clicked() {
+                                let truncated =
+                                    truncate_label(&option.label, MAX_SESSION_LABEL_CHARS);
+                                let label_resp = ui.selectable_label(selected, &truncated);
+                                let label_resp = if truncated.len() < option.label.len() {
+                                    label_resp.on_hover_text(&option.label)
+                                } else {
+                                    label_resp
+                                };
+                                if label_resp.clicked() {
                                     trick_state.base_session_key = option.base_session_key.clone();
                                 }
                             }
@@ -2294,13 +2325,27 @@ where
     }
 }
 
+fn screen_center(ctx: &egui::Context) -> egui::Pos2 {
+    ctx.viewport_rect().center()
+}
+
+fn truncate_label(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        text.to_string()
+    } else {
+        let truncated: String = text.chars().take(max_chars.saturating_sub(3)).collect();
+        truncated + "..."
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        PromptTemplateRecord, TrickPromptState, TrickSessionOption, WebhookPanel, WebhookQueryKind,
-        build_trick_session_options, build_trick_url, default_webhook_model,
-        list_prompt_templates_in_dir, normalize_hook_id, percent_encode_query_value,
-        prompt_templates_dir_from_config, query_mode_primary_label, trick_base_url,
+        MAX_SESSION_LABEL_CHARS, PromptTemplateRecord, TrickPromptState, TrickSessionOption,
+        WebhookPanel, WebhookQueryKind, build_trick_session_options, build_trick_url,
+        default_webhook_model, list_prompt_templates_in_dir, normalize_hook_id,
+        percent_encode_query_value, prompt_templates_dir_from_config, query_mode_primary_label,
+        trick_base_url, truncate_label,
     };
     use crate::GatewayStatusSnapshot;
     use klaw_config::{AppConfig, TailscaleMode};
@@ -2564,5 +2609,32 @@ mod tests {
         fn from(builder: TestSessionIndexBuilder) -> Self {
             builder.0
         }
+    }
+
+    #[test]
+    fn truncate_label_returns_full_text_when_under_limit() {
+        let short = "hello";
+        assert_eq!(truncate_label(short, 10), short.to_string());
+    }
+
+    #[test]
+    fn truncate_label_truncates_with_ellipsis_when_over_limit() {
+        let long = "abcdefghijklmnopqrstuvwxyz";
+        let result = truncate_label(long, 10);
+        assert_eq!(result, "abcdefg...");
+        assert!(result.len() <= 10);
+    }
+
+    #[test]
+    fn truncate_label_handles_cjk_characters() {
+        let cjk = "\u{4f60}\u{597d}\u{4f60}\u{597d}\u{4f60}\u{597d}\u{4f60}\u{597d}\u{4f60}\u{597d}\u{4f60}\u{597d}\u{4f60}\u{597d}";
+        let result = truncate_label(cjk, 5);
+        assert_eq!(result, "\u{4f60}\u{597d}...");
+        assert!(result.chars().count() <= 5);
+    }
+
+    #[test]
+    fn truncate_label_max_session_chars_is_reasonable() {
+        assert!(MAX_SESSION_LABEL_CHARS >= 20 && MAX_SESSION_LABEL_CHARS <= 60);
     }
 }
