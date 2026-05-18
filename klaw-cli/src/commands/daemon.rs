@@ -119,6 +119,7 @@ enum DaemonError {
         stdout: String,
         stderr: String,
     },
+    #[cfg(any(target_os = "macos", test))]
     #[error("failed to inspect launchd status: {0}")]
     LaunchdStatus(String),
 }
@@ -678,10 +679,12 @@ fn systemd_quote(path: &Path) -> String {
     format!("\"{}\"", path.display().to_string().replace('"', "\\\""))
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn xml_escape_path(path: &Path) -> String {
     xml_escape(&path.display().to_string())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")

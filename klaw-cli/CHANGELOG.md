@@ -5,6 +5,7 @@
 ### Fixed
 
 - Linux `.deb` packaging now installs the desktop icon into standard hicolor sizes and refreshes icon/desktop caches on install or removal, so launchers can resolve `Icon=klaw`.
+- CLI daemon macOS launchd helpers are now conditionally compiled only for macOS/tests, removing Linux build warnings.
 
 ## 2026-05-07
 
