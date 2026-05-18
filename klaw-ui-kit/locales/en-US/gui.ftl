@@ -2140,6 +2140,113 @@ obs-validation-price-model-empty = Model must not be empty
 obs-validation-price-input-negative = Input rate must not be negative
 obs-validation-price-output-negative = Output rate must not be negative
 
+## Analyze Dashboard panel
+ad-subtitle = Tool and model analysis from the local observability store
+ad-obs-disabled = Observability is disabled. Enable it in the Observability panel first.
+ad-local-store-disabled = Local analysis store is disabled. Enable it in the Observability panel.
+ad-notify-load-failed = Analyze Dashboard load failed: { $error }
+ad-notify-worker-disconnected = Analyze Dashboard worker disconnected
+ad-resolve-data-dir-failed = Unable to resolve local data directory
+
+## Dashboard controls
+ad-view = View:
+ad-view-tools = Tools
+ad-view-models = Models
+ad-time-range = Time Range:
+ad-granularity = Granularity:
+ad-all-providers = All Providers
+ad-all-models = All Models
+ad-refresh = Refresh
+ad-loading = Loading...
+ad-updated-ago = Updated { $seconds }s ago
+
+## Tool summary cards
+ad-total-calls = Total Calls
+ad-success-rate = Success Rate
+ad-failures = Failures
+ad-avg-duration = Avg Duration
+
+## Model summary cards
+ad-total-requests = Total Requests
+ad-p95-duration = P95 Duration
+ad-total-tokens = Total Tokens
+ad-estimated-cost = Estimated Cost
+ad-tool-call-rate = Tool Call Rate
+ad-turn-completion = Turn Completion
+
+## Tool tables
+ad-top-tools-by-calls = Top Tools by Calls
+ad-top-tools-by-failure-load = Top Tools by Failure Load
+ad-col-tool = Tool
+ad-col-calls = Calls
+ad-col-success = Success
+ad-col-failures = Failures
+ad-no-tool-data = No tool data.
+
+## Model tables
+ad-top-models-by-requests = Top Models by Requests
+ad-top-models-by-tokens = Top Models by Token Usage
+ad-worst-models-by-failures = Worst Models by Failure Load
+ad-highest-p95-models = Highest P95 Latency Models
+ad-highest-cost-models = Highest Cost Models
+ad-col-model = Model
+ad-col-requests = Requests
+ad-col-tokens = Tokens
+ad-col-avg = Avg
+ad-col-timeout = Timeout
+ad-col-p95 = P95
+ad-col-cost = Cost
+ad-col-cost-per-success = Cost/Success
+ad-no-model-data = No model data.
+
+## Tool error breakdown
+ad-error-breakdown = Error Breakdown
+ad-error-breakdown-tool = Error Breakdown: { $tool }
+ad-no-tool-failures = No failures in the selected time range.
+
+## Model error breakdown
+ad-error-breakdown-provider-model = Error Breakdown by Provider/Model
+ad-no-model-failures = No model request failures in the selected time range.
+
+## Tool timeseries
+ad-success-rate-trend = Success Rate Trend ({ $bucket })
+ad-no-samples = No samples in the selected time range.
+
+## Model timeseries
+ad-model-trends = Model Trends ({ $bucket })
+ad-no-model-samples = No model samples in the selected time range.
+
+## Chart legends
+ad-legend-success-rate = Success Rate
+ad-legend-calls = Calls
+ad-legend-tool-call-rate = Tool Call Rate
+ad-legend-tool-success-rate = Tool Success Rate
+ad-legend-avg-duration = Avg Duration
+ad-legend-p95-duration = P95 Duration
+ad-legend-token-usage = Token Usage
+ad-legend-requests-per-turn = Requests/Turn
+ad-legend-tool-iterations-per-turn = Tool Iterations/Turn
+
+## Token composition
+ad-token-composition = Token Composition
+ad-input-tokens = Input Tokens
+ad-output-tokens = Output Tokens
+ad-cached-input-tokens = Cached Input Tokens
+ad-reasoning-tokens = Reasoning Tokens
+
+## Model tool breakdown
+ad-model-tool-breakdown = Selected Model Tool Success Breakdown
+ad-no-model-tool-data = No model-attributed tool data in the selected time range.
+ad-col-approval = Approval
+
+## Empty/no-data states
+ad-no-tool-metrics = No local tool metrics yet.
+ad-no-model-metrics = No local model metrics yet.
+ad-no-model-level-metrics = No model-level metrics yet. New charts populate from new telemetry.
+
+## Misc
+ad-na = N/A
+
 test-english-only = English only
 
 ## Archive panel

@@ -1,5 +1,6 @@
 use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
+use crate::settings::current_ui_language;
 use egui_extras::{Column, TableBuilder};
 use egui_plot::{GridMark, Legend, Line, Plot, PlotPoints};
 use klaw_config::{ConfigStore, ObservabilityConfig};
@@ -8,7 +9,9 @@ use klaw_observability::{
     ModelToolBreakdownRow, PriceEntry, PriceTable, SqliteLocalMetricsStore, ToolDashboardSnapshot,
     ToolSampleBucket, ToolStatsQuery, ToolStatsRow, ToolTimeRange,
 };
+use klaw_ui_kit::{LocaleDomain, Translator};
 use klaw_util::{default_data_dir, observability_db_path};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -52,6 +55,10 @@ pub struct AnalyzeDashboardPanel {
 }
 
 impl AnalyzeDashboardPanel {
+    fn translator() -> Translator {
+        Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
     fn ensure_loaded(&mut self) {
         if self.loaded {
             return;
@@ -132,7 +139,7 @@ impl AnalyzeDashboardPanel {
 
     fn request_load(&mut self) {
         let Some(root) = self.data_root_path() else {
-            self.last_error = Some("Unable to resolve local data directory".to_string());
+            self.last_error = Some(Self::translator().text("ad-resolve-data-dir-failed"));
             return;
         };
         let db_path = observability_db_path(root);
@@ -193,13 +200,16 @@ impl AnalyzeDashboardPanel {
             }
             Ok(Err(err)) => {
                 self.last_error = Some(err.clone());
-                notifications.error(format!("Analyze Dashboard load failed: {err}"));
+                notifications.error(Self::translator().text_args(
+                    "ad-notify-load-failed",
+                    HashMap::from([("error", err.clone())]),
+                ));
                 self.loading = false;
                 self.load_rx = None;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.last_error = Some("Analyze Dashboard worker disconnected".to_string());
+                self.last_error = Some(Self::translator().text("ad-notify-worker-disconnected"));
                 self.loading = false;
                 self.load_rx = None;
             }
@@ -207,25 +217,26 @@ impl AnalyzeDashboardPanel {
     }
 
     fn render_controls(&mut self, ui: &mut egui::Ui) -> bool {
+        let t = Self::translator();
         let mut changed = false;
         ui.horizontal(|ui| {
-            ui.label("View:");
+            ui.label(t.text("ad-view"));
             if ui
-                .selectable_label(self.view == DashboardView::Tools, "Tools")
+                .selectable_label(self.view == DashboardView::Tools, t.text("ad-view-tools"))
                 .clicked()
             {
                 self.view = DashboardView::Tools;
                 changed = true;
             }
             if ui
-                .selectable_label(self.view == DashboardView::Models, "Models")
+                .selectable_label(self.view == DashboardView::Models, t.text("ad-view-models"))
                 .clicked()
             {
                 self.view = DashboardView::Models;
                 changed = true;
             }
             ui.separator();
-            ui.label("Time Range:");
+            ui.label(t.text("ad-time-range"));
             for (label, value) in [
                 ("1h", ToolTimeRange::LastHour),
                 ("24h", ToolTimeRange::Last24Hours),
@@ -247,7 +258,7 @@ impl AnalyzeDashboardPanel {
             }
 
             ui.separator();
-            ui.label("Granularity:");
+            ui.label(t.text("ad-granularity"));
             for (label, value) in [
                 ("1m", ToolSampleBucket::OneMinute),
                 ("1h", ToolSampleBucket::OneHour),
@@ -266,10 +277,17 @@ impl AnalyzeDashboardPanel {
             {
                 ui.separator();
                 egui::ComboBox::from_id_salt("analyze-dashboard-provider")
-                    .selected_text(self.selected_provider.as_deref().unwrap_or("All Providers"))
+                    .selected_text(
+                        self.selected_provider
+                            .as_deref()
+                            .unwrap_or(&t.text("ad-all-providers")),
+                    )
                     .show_ui(ui, |ui| {
                         if ui
-                            .selectable_label(self.selected_provider.is_none(), "All Providers")
+                            .selectable_label(
+                                self.selected_provider.is_none(),
+                                t.text("ad-all-providers"),
+                            )
                             .clicked()
                         {
                             self.selected_provider = None;
@@ -292,10 +310,17 @@ impl AnalyzeDashboardPanel {
                     });
 
                 egui::ComboBox::from_id_salt("analyze-dashboard-model")
-                    .selected_text(self.selected_model.as_deref().unwrap_or("All Models"))
+                    .selected_text(
+                        self.selected_model
+                            .as_deref()
+                            .unwrap_or(&t.text("ad-all-models")),
+                    )
                     .show_ui(ui, |ui| {
                         if ui
-                            .selectable_label(self.selected_model.is_none(), "All Models")
+                            .selectable_label(
+                                self.selected_model.is_none(),
+                                t.text("ad-all-models"),
+                            )
                             .clicked()
                         {
                             self.selected_model = None;
@@ -317,15 +342,15 @@ impl AnalyzeDashboardPanel {
             }
 
             ui.separator();
-            if ui.button("Refresh").clicked() {
+            if ui.button(t.text("ad-refresh")).clicked() {
                 changed = true;
             }
             if self.loading {
-                ui.label("Loading...");
+                ui.label(t.text("ad-loading"));
             } else if let Some(last_loaded_at) = self.last_loaded_at {
-                ui.label(format!(
-                    "Updated {}s ago",
-                    last_loaded_at.elapsed().as_secs()
+                ui.label(t.text_args(
+                    "ad-updated-ago",
+                    HashMap::from([("seconds", last_loaded_at.elapsed().as_secs().to_string())]),
                 ));
             }
         });
@@ -333,50 +358,52 @@ impl AnalyzeDashboardPanel {
     }
 
     fn render_tool_summary(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
+        let t = Self::translator();
         ui.columns(4, |cols| {
             summary_card(
                 &mut cols[0],
-                "Total Calls",
+                t.text("ad-total-calls"),
                 snapshot.summary.total_calls.to_string(),
             );
             summary_card(
                 &mut cols[1],
-                "Success Rate",
+                t.text("ad-success-rate"),
                 format_percent(snapshot.summary.success_rate),
             );
             summary_card(
                 &mut cols[2],
-                "Failures",
+                t.text("ad-failures"),
                 snapshot.summary.failures.to_string(),
             );
             summary_card(
                 &mut cols[3],
-                "Avg Duration",
+                t.text("ad-avg-duration"),
                 format!("{:.1} ms", snapshot.summary.avg_duration_ms),
             );
         });
     }
 
     fn render_model_summary(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        let t = Self::translator();
         ui.columns(4, |cols| {
             summary_card(
                 &mut cols[0],
-                "Total Requests",
+                t.text("ad-total-requests"),
                 snapshot.summary.total_requests.to_string(),
             );
             summary_card(
                 &mut cols[1],
-                "Success Rate",
+                t.text("ad-success-rate"),
                 format_percent(snapshot.summary.request_success_rate),
             );
             summary_card(
                 &mut cols[2],
-                "Avg Duration",
+                t.text("ad-avg-duration"),
                 format!("{:.1} ms", snapshot.summary.avg_duration_ms),
             );
             summary_card(
                 &mut cols[3],
-                "P95 Duration",
+                t.text("ad-p95-duration"),
                 format!("{:.1} ms", snapshot.latency_percentiles.p95_duration_ms),
             );
         });
@@ -384,41 +411,43 @@ impl AnalyzeDashboardPanel {
         ui.columns(4, |cols| {
             summary_card(
                 &mut cols[0],
-                "Total Tokens",
+                t.text("ad-total-tokens"),
                 snapshot.summary.total_tokens.to_string(),
             );
             summary_card(
                 &mut cols[1],
-                "Estimated Cost",
-                format_optional_cost(snapshot.summary.estimated_cost_usd),
+                t.text("ad-estimated-cost"),
+                format_optional_cost(snapshot.summary.estimated_cost_usd, &t),
             );
             summary_card(
                 &mut cols[2],
-                "Tool Call Rate",
+                t.text("ad-tool-call-rate"),
                 format_percent(snapshot.summary.tool_call_rate),
             );
             summary_card(
                 &mut cols[3],
-                "Turn Completion",
+                t.text("ad-turn-completion"),
                 format_percent(snapshot.summary.turn_completion_rate),
             );
         });
     }
 
     fn render_top_tools(&mut self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) -> bool {
+        let t = Self::translator();
         let mut changed = false;
         ui.columns(2, |cols| {
             cols[0].group(|ui| {
                 let selected_tool = self.selected_tool.clone();
                 changed |= render_top_tool_table(
                     ui,
-                    "Top Tools by Calls",
+                    &t,
+                    t.text("ad-top-tools-by-calls"),
                     &snapshot.top_by_calls,
                     selected_tool.as_deref(),
                     |row| row.calls.to_string(),
                     |row| format_percent(row.success_rate),
-                    "Calls",
-                    "Success",
+                    t.text("ad-col-calls"),
+                    t.text("ad-col-success"),
                     &mut self.selected_tool,
                 );
             });
@@ -427,13 +456,14 @@ impl AnalyzeDashboardPanel {
                 let selected_tool = self.selected_tool.clone();
                 changed |= render_top_tool_table(
                     ui,
-                    "Top Tools by Failure Load",
+                    &t,
+                    t.text("ad-top-tools-by-failure-load"),
                     &snapshot.top_by_failure_rate,
                     selected_tool.as_deref(),
                     |row| row.failures.to_string(),
                     |row| row.calls.to_string(),
-                    "Failures",
-                    "Calls",
+                    t.text("ad-col-failures"),
+                    t.text("ad-col-calls"),
                     &mut self.selected_tool,
                 );
             });
@@ -442,6 +472,7 @@ impl AnalyzeDashboardPanel {
     }
 
     fn render_model_rankings(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        let t = Self::translator();
         let mut by_tokens = snapshot.model_rows.clone();
         by_tokens.sort_by(|left, right| {
             right
@@ -471,65 +502,73 @@ impl AnalyzeDashboardPanel {
         ui.columns(2, |cols| {
             render_model_stats_table(
                 &mut cols[0],
-                "Top Models by Requests",
+                &t,
+                t.text("ad-top-models-by-requests"),
                 &snapshot.model_rows,
                 |row| row.requests.to_string(),
                 |row| format_percent(row.request_success_rate),
-                "Requests",
-                "Success",
+                t.text("ad-col-requests"),
+                t.text("ad-col-success"),
             );
             render_model_stats_table(
                 &mut cols[1],
-                "Top Models by Token Usage",
+                &t,
+                t.text("ad-top-models-by-tokens"),
                 &by_tokens,
                 |row| row.total_tokens.to_string(),
                 |row| format!("{:.1}", row.avg_total_tokens),
-                "Tokens",
-                "Avg",
+                t.text("ad-col-tokens"),
+                t.text("ad-col-avg"),
             );
         });
         ui.add_space(8.0);
         ui.columns(2, |cols| {
             render_model_stats_table(
                 &mut cols[0],
-                "Worst Models by Failure Load",
+                &t,
+                t.text("ad-worst-models-by-failures"),
                 &by_failures,
                 |row| row.failures.to_string(),
                 |row| format_percent(row.timeout_rate),
-                "Failures",
-                "Timeout",
+                t.text("ad-col-failures"),
+                t.text("ad-col-timeout"),
             );
             render_model_stats_table(
                 &mut cols[1],
-                "Highest P95 Latency Models",
+                &t,
+                t.text("ad-highest-p95-models"),
                 &by_p95,
                 |row| format!("{:.1} ms", row.p95_duration_ms),
                 |row| format!("{:.1} ms", row.avg_duration_ms),
-                "P95",
-                "Avg",
+                t.text("ad-col-p95"),
+                t.text("ad-col-avg"),
             );
         });
         ui.add_space(8.0);
         render_model_stats_table(
             &mut *ui,
-            "Highest Cost Models",
+            &t,
+            t.text("ad-highest-cost-models"),
             &by_cost,
-            |row| format_optional_cost(row.estimated_cost_usd),
-            |row| format_optional_cost(row.cost_per_successful_turn),
-            "Cost",
-            "Cost/Success",
+            |row| format_optional_cost(row.estimated_cost_usd, &t),
+            |row| format_optional_cost(row.cost_per_successful_turn, &t),
+            t.text("ad-col-cost"),
+            t.text("ad-col-cost-per-success"),
         );
     }
 
     fn render_tool_error_breakdown(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
         ui.group(|ui| {
             ui.strong(match self.selected_tool.as_deref() {
-                Some(tool_name) => format!("Error Breakdown: {tool_name}"),
-                None => "Error Breakdown".to_string(),
+                Some(tool_name) => Self::translator().text_args(
+                    "ad-error-breakdown-tool",
+                    HashMap::from([("tool", tool_name.to_string())]),
+                ),
+                None => Self::translator().text("ad-error-breakdown"),
             });
             ui.separator();
             if snapshot.error_breakdown.is_empty() {
-                ui.label("No failures in the selected time range.");
+                ui.label(Self::translator().text("ad-no-tool-failures"));
                 return;
             }
 
@@ -553,10 +592,10 @@ impl AnalyzeDashboardPanel {
 
     fn render_model_error_breakdown(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
         ui.group(|ui| {
-            ui.strong("Error Breakdown by Provider/Model");
+            ui.strong(Self::translator().text("ad-error-breakdown-provider-model"));
             ui.separator();
             if snapshot.error_breakdown.is_empty() {
-                ui.label("No model request failures in the selected time range.");
+                ui.label(Self::translator().text("ad-no-model-failures"));
                 return;
             }
             let max_failures = snapshot
@@ -583,14 +622,15 @@ impl AnalyzeDashboardPanel {
     }
 
     fn render_tool_timeseries(&self, ui: &mut egui::Ui, snapshot: &ToolDashboardSnapshot) {
+        let t = Self::translator();
         ui.group(|ui| {
-            ui.strong(format!(
-                "Success Rate Trend ({})",
-                self.tool_query.bucket_width.label()
+            ui.strong(t.text_args(
+                "ad-success-rate-trend",
+                HashMap::from([("bucket", self.tool_query.bucket_width.label().to_string())]),
             ));
             ui.separator();
             if snapshot.timeseries.is_empty() {
-                ui.label("No samples in the selected time range.");
+                ui.label(t.text("ad-no-samples"));
                 return;
             }
 
@@ -615,8 +655,18 @@ impl AnalyzeDashboardPanel {
                 ui,
                 "tool_success_rate_trend",
                 &[
-                    ("Success Rate", success_rate_points, rgb(100, 200, 100), 2.0),
-                    ("Calls", calls_points, rgb(100, 150, 250), 1.5),
+                    (
+                        t.text("ad-legend-success-rate"),
+                        success_rate_points,
+                        rgb(100, 200, 100),
+                        2.0,
+                    ),
+                    (
+                        t.text("ad-legend-calls"),
+                        calls_points,
+                        rgb(100, 150, 250),
+                        1.5,
+                    ),
                 ],
                 true,
             );
@@ -624,14 +674,15 @@ impl AnalyzeDashboardPanel {
     }
 
     fn render_model_timeseries(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        let t = Self::translator();
         ui.group(|ui| {
-            ui.strong(format!(
-                "Model Trends ({})",
-                self.tool_query.bucket_width.label()
+            ui.strong(t.text_args(
+                "ad-model-trends",
+                HashMap::from([("bucket", self.tool_query.bucket_width.label().to_string())]),
             ));
             ui.separator();
             if snapshot.timeseries.is_empty() {
-                ui.label("No model samples in the selected time range.");
+                ui.label(t.text("ad-no-model-samples"));
                 return;
             }
 
@@ -705,10 +756,20 @@ impl AnalyzeDashboardPanel {
                 ui,
                 "model_stability_trend",
                 &[
-                    ("Success Rate", success_rate, rgb(80, 180, 120), 2.0),
-                    ("Tool Call Rate", tool_call_rate, rgb(220, 170, 70), 1.5),
                     (
-                        "Tool Success Rate",
+                        t.text("ad-legend-success-rate"),
+                        success_rate,
+                        rgb(80, 180, 120),
+                        2.0,
+                    ),
+                    (
+                        t.text("ad-legend-tool-call-rate"),
+                        tool_call_rate,
+                        rgb(220, 170, 70),
+                        1.5,
+                    ),
+                    (
+                        t.text("ad-legend-tool-success-rate"),
                         tool_success_rate,
                         rgb(100, 140, 230),
                         1.5,
@@ -721,8 +782,18 @@ impl AnalyzeDashboardPanel {
                 ui,
                 "model_latency_trend",
                 &[
-                    ("Avg Duration", avg_duration, rgb(180, 80, 120), 2.0),
-                    ("P95 Duration", p95_duration, rgb(220, 80, 80), 1.5),
+                    (
+                        t.text("ad-legend-avg-duration"),
+                        avg_duration,
+                        rgb(180, 80, 120),
+                        2.0,
+                    ),
+                    (
+                        t.text("ad-legend-p95-duration"),
+                        p95_duration,
+                        rgb(220, 80, 80),
+                        1.5,
+                    ),
                 ],
                 false,
             );
@@ -731,10 +802,20 @@ impl AnalyzeDashboardPanel {
                 ui,
                 "model_efficiency_trend",
                 &[
-                    ("Token Usage", tokens, rgb(100, 170, 250), 2.0),
-                    ("Requests/Turn", requests_per_turn, rgb(110, 210, 180), 1.5),
                     (
-                        "Tool Iterations/Turn",
+                        t.text("ad-legend-token-usage"),
+                        tokens,
+                        rgb(100, 170, 250),
+                        2.0,
+                    ),
+                    (
+                        t.text("ad-legend-requests-per-turn"),
+                        requests_per_turn,
+                        rgb(110, 210, 180),
+                        1.5,
+                    ),
+                    (
+                        t.text("ad-legend-tool-iterations-per-turn"),
                         tool_iterations_per_turn,
                         rgb(210, 120, 200),
                         1.5,
@@ -746,22 +827,29 @@ impl AnalyzeDashboardPanel {
     }
 
     fn render_model_token_composition(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        let t = Self::translator();
         ui.group(|ui| {
-            ui.strong("Token Composition");
+            ui.strong(t.text("ad-token-composition"));
             ui.separator();
             let total = snapshot.summary.total_tokens.max(1);
             render_progress_grid(
                 ui,
                 "model_token_composition_grid",
                 [
-                    ("Input Tokens", snapshot.token_composition.input_tokens),
-                    ("Output Tokens", snapshot.token_composition.output_tokens),
                     (
-                        "Cached Input Tokens",
+                        t.text("ad-input-tokens"),
+                        snapshot.token_composition.input_tokens,
+                    ),
+                    (
+                        t.text("ad-output-tokens"),
+                        snapshot.token_composition.output_tokens,
+                    ),
+                    (
+                        t.text("ad-cached-input-tokens"),
                         snapshot.token_composition.cached_input_tokens,
                     ),
                     (
-                        "Reasoning Tokens",
+                        t.text("ad-reasoning-tokens"),
                         snapshot.token_composition.reasoning_tokens,
                     ),
                 ]
@@ -779,14 +867,15 @@ impl AnalyzeDashboardPanel {
     }
 
     fn render_model_tool_breakdown(&self, ui: &mut egui::Ui, snapshot: &ModelDashboardSnapshot) {
+        let t = Self::translator();
         ui.group(|ui| {
-            ui.strong("Selected Model Tool Success Breakdown");
+            ui.strong(t.text("ad-model-tool-breakdown"));
             ui.separator();
             if snapshot.tool_breakdown.is_empty() {
-                ui.label("No model-attributed tool data in the selected time range.");
+                ui.label(t.text("ad-no-model-tool-data"));
                 return;
             }
-            render_model_tool_breakdown_table(ui, &snapshot.tool_breakdown);
+            render_model_tool_breakdown_table(ui, &t, &snapshot.tool_breakdown);
         });
     }
 
@@ -849,21 +938,20 @@ impl PanelRenderer for AnalyzeDashboardPanel {
         self.ensure_loaded();
         self.sync_config();
         self.poll_load(notifications);
+        let t = Self::translator();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.heading(ctx.tab_title);
-                ui.label("Tool and model analysis from the local observability store");
+                ui.label(t.text("ad-subtitle"));
                 ui.separator();
 
                 if !self.observability.enabled {
-                    ui.label(
-                        "Observability is disabled. Enable it in the Observability panel first.",
-                    );
+                    ui.label(t.text("ad-obs-disabled"));
                     return;
                 }
                 if !self.observability.local_store.enabled {
-                    ui.label("Local analysis store is disabled. Enable it in the Observability panel.");
+                    ui.label(t.text("ad-local-store-disabled"));
                     return;
                 }
 
@@ -886,7 +974,7 @@ impl PanelRenderer for AnalyzeDashboardPanel {
                 match self.view {
                     DashboardView::Tools => {
                         let Some(snapshot) = self.tool_snapshot.clone() else {
-                            ui.label("No local tool metrics yet.");
+                            ui.label(t.text("ad-no-tool-metrics"));
                             return;
                         };
                         let tool_changed = self.render_tools_view(ui, &snapshot);
@@ -896,13 +984,11 @@ impl PanelRenderer for AnalyzeDashboardPanel {
                     }
                     DashboardView::Models => {
                         let Some(snapshot) = self.model_snapshot.clone() else {
-                            ui.label("No local model metrics yet.");
+                            ui.label(t.text("ad-no-model-metrics"));
                             return;
                         };
                         if snapshot.summary.total_requests == 0 {
-                            ui.label(
-                                "No model-level metrics yet. New charts populate from new telemetry.",
-                            );
+                            ui.label(t.text("ad-no-model-level-metrics"));
                             return;
                         }
                         self.render_models_view(ui, &snapshot);
@@ -912,7 +998,7 @@ impl PanelRenderer for AnalyzeDashboardPanel {
     }
 }
 
-fn summary_card(ui: &mut egui::Ui, title: &str, value: String) {
+fn summary_card(ui: &mut egui::Ui, title: String, value: String) {
     ui.group(|ui| {
         ui.strong(title);
         ui.add_space(4.0);
@@ -922,29 +1008,30 @@ fn summary_card(ui: &mut egui::Ui, title: &str, value: String) {
 
 fn render_model_stats_table<FPrimary, FSecondary>(
     ui: &mut egui::Ui,
-    title: &str,
+    t: &Translator,
+    title: String,
     rows: &[ModelStatsRow],
     primary_value: FPrimary,
     secondary_value: FSecondary,
-    primary_label: &str,
-    secondary_label: &str,
+    primary_label: String,
+    secondary_label: String,
 ) where
     FPrimary: Fn(&ModelStatsRow) -> String,
     FSecondary: Fn(&ModelStatsRow) -> String,
 {
     ui.group(|ui| {
-        ui.strong(title);
+        ui.strong(&title);
         ui.separator();
 
         if rows.is_empty() {
             ui.add_sized(
                 [ui.available_width(), MODEL_RANKING_TABLE_HEIGHT],
-                egui::Label::new("No model data."),
+                egui::Label::new(t.text("ad-no-model-data")),
             );
             return;
         }
 
-        ui.push_id(title, |ui| {
+        ui.push_id(&title, |ui| {
             TableBuilder::new(ui)
                 .striped(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -955,7 +1042,7 @@ fn render_model_stats_table<FPrimary, FSecondary>(
                 .max_scroll_height(MODEL_RANKING_TABLE_HEIGHT)
                 .header(22.0, |mut header| {
                     header.col(|ui| {
-                        ui.strong("Model");
+                        ui.strong(t.text("ad-col-model"));
                     });
                     header.col(|ui| {
                         ui.strong(primary_label);
@@ -982,7 +1069,11 @@ fn render_model_stats_table<FPrimary, FSecondary>(
     });
 }
 
-fn render_model_tool_breakdown_table(ui: &mut egui::Ui, rows: &[ModelToolBreakdownRow]) {
+fn render_model_tool_breakdown_table(
+    ui: &mut egui::Ui,
+    t: &Translator,
+    rows: &[ModelToolBreakdownRow],
+) {
     ui.push_id("selected-model-tool-breakdown", |ui| {
         TableBuilder::new(ui)
             .striped(true)
@@ -996,19 +1087,19 @@ fn render_model_tool_breakdown_table(ui: &mut egui::Ui, rows: &[ModelToolBreakdo
             .max_scroll_height(MODEL_TOOL_BREAKDOWN_TABLE_HEIGHT)
             .header(22.0, |mut header| {
                 header.col(|ui| {
-                    ui.strong("Tool");
+                    ui.strong(t.text("ad-col-tool"));
                 });
                 header.col(|ui| {
-                    ui.strong("Calls");
+                    ui.strong(t.text("ad-col-calls"));
                 });
                 header.col(|ui| {
-                    ui.strong("Success");
+                    ui.strong(t.text("ad-col-success"));
                 });
                 header.col(|ui| {
-                    ui.strong("Approval");
+                    ui.strong(t.text("ad-col-approval"));
                 });
                 header.col(|ui| {
-                    ui.strong("Avg");
+                    ui.strong(t.text("ad-col-avg"));
                 });
             })
             .body(|body| {
@@ -1037,32 +1128,33 @@ fn render_model_tool_breakdown_table(ui: &mut egui::Ui, rows: &[ModelToolBreakdo
 #[allow(clippy::too_many_arguments)]
 fn render_top_tool_table<FPrimary, FSecondary>(
     ui: &mut egui::Ui,
-    title: &str,
+    t: &Translator,
+    title: String,
     rows: &[ToolStatsRow],
     selected_tool: Option<&str>,
     primary_value: FPrimary,
     secondary_value: FSecondary,
-    primary_label: &str,
-    secondary_label: &str,
+    primary_label: String,
+    secondary_label: String,
     selected_tool_state: &mut Option<String>,
 ) -> bool
 where
     FPrimary: Fn(&ToolStatsRow) -> String,
     FSecondary: Fn(&ToolStatsRow) -> String,
 {
-    ui.strong(title);
+    ui.strong(&title);
     ui.separator();
 
     if rows.is_empty() {
         ui.add_sized(
             [ui.available_width(), TOP_TOOLS_TABLE_HEIGHT],
-            egui::Label::new("No tool data."),
+            egui::Label::new(t.text("ad-no-tool-data")),
         );
         return false;
     }
 
     let mut changed = false;
-    ui.push_id(title, |ui| {
+    ui.push_id(&title, |ui| {
         TableBuilder::new(ui)
             .striped(true)
             .sense(egui::Sense::click())
@@ -1074,7 +1166,7 @@ where
             .max_scroll_height(TOP_TOOLS_TABLE_HEIGHT)
             .header(22.0, |mut header| {
                 header.col(|ui| {
-                    ui.strong("Tool");
+                    ui.strong(t.text("ad-col-tool"));
                 });
                 header.col(|ui| {
                     ui.strong(primary_label);
@@ -1118,10 +1210,10 @@ fn format_percent(value: f64) -> String {
     format!("{:.1}%", value * 100.0)
 }
 
-fn format_optional_cost(value: Option<f64>) -> String {
+fn format_optional_cost(value: Option<f64>, t: &Translator) -> String {
     value
         .map(|cost| format!("${cost:.4}"))
-        .unwrap_or_else(|| "N/A".to_string())
+        .unwrap_or_else(|| t.text("ad-na"))
 }
 
 fn max_tool_failures(snapshot: &ToolDashboardSnapshot) -> u64 {
@@ -1151,7 +1243,7 @@ fn format_time_label(unix_ms: i64) -> String {
 fn show_plot(
     ui: &mut egui::Ui,
     id: &str,
-    lines: &[(&str, PlotPoints<'_>, egui::Color32, f32)],
+    lines: &[(String, PlotPoints<'_>, egui::Color32, f32)],
     percent_axis: bool,
 ) {
     let first_ts = lines
@@ -1191,7 +1283,7 @@ fn show_plot(
         .show(ui, |plot_ui| {
             for (name, points, color, width) in lines {
                 plot_ui.line(
-                    Line::new(*name, smooth_plot_points(points))
+                    Line::new(name.clone(), smooth_plot_points(points))
                         .color(*color)
                         .width(*width),
                 );

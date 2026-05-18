@@ -6949,4 +6949,410 @@ mod tests {
             "GUI 传输已丢弃 10 个数据块 (4096 字节)。运行时日志仍在继续，但 GUI 接收端落后了。"
         );
     }
+
+    #[test]
+    fn gui_analyze_dashboard_translates_labels_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        // Panel header
+        assert_eq!(
+            translator.text("ad-subtitle"),
+            "Tool and model analysis from the local observability store"
+        );
+        assert_eq!(
+            translator.text("ad-obs-disabled"),
+            "Observability is disabled. Enable it in the Observability panel first."
+        );
+        assert_eq!(
+            translator.text("ad-local-store-disabled"),
+            "Local analysis store is disabled. Enable it in the Observability panel."
+        );
+        assert_eq!(
+            translator.text("ad-notify-worker-disconnected"),
+            "Analyze Dashboard worker disconnected"
+        );
+        assert_eq!(
+            translator.text("ad-resolve-data-dir-failed"),
+            "Unable to resolve local data directory"
+        );
+        // Controls
+        assert_eq!(translator.text("ad-view"), "View:");
+        assert_eq!(translator.text("ad-view-tools"), "Tools");
+        assert_eq!(translator.text("ad-view-models"), "Models");
+        assert_eq!(translator.text("ad-time-range"), "Time Range:");
+        assert_eq!(translator.text("ad-granularity"), "Granularity:");
+        assert_eq!(translator.text("ad-all-providers"), "All Providers");
+        assert_eq!(translator.text("ad-all-models"), "All Models");
+        assert_eq!(translator.text("ad-refresh"), "Refresh");
+        assert_eq!(translator.text("ad-loading"), "Loading...");
+        // Summary cards
+        assert_eq!(translator.text("ad-total-calls"), "Total Calls");
+        assert_eq!(translator.text("ad-success-rate"), "Success Rate");
+        assert_eq!(translator.text("ad-failures"), "Failures");
+        assert_eq!(translator.text("ad-avg-duration"), "Avg Duration");
+        assert_eq!(translator.text("ad-total-requests"), "Total Requests");
+        assert_eq!(translator.text("ad-p95-duration"), "P95 Duration");
+        assert_eq!(translator.text("ad-total-tokens"), "Total Tokens");
+        assert_eq!(translator.text("ad-estimated-cost"), "Estimated Cost");
+        assert_eq!(translator.text("ad-tool-call-rate"), "Tool Call Rate");
+        assert_eq!(translator.text("ad-turn-completion"), "Turn Completion");
+        // Table titles
+        assert_eq!(
+            translator.text("ad-top-tools-by-calls"),
+            "Top Tools by Calls"
+        );
+        assert_eq!(
+            translator.text("ad-top-tools-by-failure-load"),
+            "Top Tools by Failure Load"
+        );
+        assert_eq!(
+            translator.text("ad-top-models-by-requests"),
+            "Top Models by Requests"
+        );
+        assert_eq!(
+            translator.text("ad-top-models-by-tokens"),
+            "Top Models by Token Usage"
+        );
+        assert_eq!(
+            translator.text("ad-worst-models-by-failures"),
+            "Worst Models by Failure Load"
+        );
+        assert_eq!(
+            translator.text("ad-highest-p95-models"),
+            "Highest P95 Latency Models"
+        );
+        assert_eq!(
+            translator.text("ad-highest-cost-models"),
+            "Highest Cost Models"
+        );
+        // Column headers
+        assert_eq!(translator.text("ad-col-tool"), "Tool");
+        assert_eq!(translator.text("ad-col-calls"), "Calls");
+        assert_eq!(translator.text("ad-col-success"), "Success");
+        assert_eq!(translator.text("ad-col-failures"), "Failures");
+        assert_eq!(translator.text("ad-col-model"), "Model");
+        assert_eq!(translator.text("ad-col-requests"), "Requests");
+        assert_eq!(translator.text("ad-col-tokens"), "Tokens");
+        assert_eq!(translator.text("ad-col-avg"), "Avg");
+        assert_eq!(translator.text("ad-col-timeout"), "Timeout");
+        assert_eq!(translator.text("ad-col-p95"), "P95");
+        assert_eq!(translator.text("ad-col-cost"), "Cost");
+        assert_eq!(translator.text("ad-col-cost-per-success"), "Cost/Success");
+        assert_eq!(translator.text("ad-col-approval"), "Approval");
+        // Error breakdown
+        assert_eq!(translator.text("ad-error-breakdown"), "Error Breakdown");
+        assert_eq!(
+            translator.text("ad-error-breakdown-provider-model"),
+            "Error Breakdown by Provider/Model"
+        );
+        assert_eq!(
+            translator.text("ad-no-tool-failures"),
+            "No failures in the selected time range."
+        );
+        assert_eq!(
+            translator.text("ad-no-model-failures"),
+            "No model request failures in the selected time range."
+        );
+        // Timeseries
+        assert_eq!(
+            translator.text("ad-no-samples"),
+            "No samples in the selected time range."
+        );
+        assert_eq!(
+            translator.text("ad-no-model-samples"),
+            "No model samples in the selected time range."
+        );
+        // Token composition
+        assert_eq!(translator.text("ad-token-composition"), "Token Composition");
+        assert_eq!(translator.text("ad-input-tokens"), "Input Tokens");
+        assert_eq!(translator.text("ad-output-tokens"), "Output Tokens");
+        assert_eq!(
+            translator.text("ad-cached-input-tokens"),
+            "Cached Input Tokens"
+        );
+        assert_eq!(translator.text("ad-reasoning-tokens"), "Reasoning Tokens");
+        // Model tool breakdown
+        assert_eq!(
+            translator.text("ad-model-tool-breakdown"),
+            "Selected Model Tool Success Breakdown"
+        );
+        assert_eq!(
+            translator.text("ad-no-model-tool-data"),
+            "No model-attributed tool data in the selected time range."
+        );
+        // Empty states
+        assert_eq!(
+            translator.text("ad-no-tool-metrics"),
+            "No local tool metrics yet."
+        );
+        assert_eq!(
+            translator.text("ad-no-model-metrics"),
+            "No local model metrics yet."
+        );
+        assert_eq!(
+            translator.text("ad-no-model-level-metrics"),
+            "No model-level metrics yet. New charts populate from new telemetry."
+        );
+        assert_eq!(translator.text("ad-no-tool-data"), "No tool data.");
+        assert_eq!(translator.text("ad-no-model-data"), "No model data.");
+        assert_eq!(translator.text("ad-na"), "N/A");
+        // Legends
+        assert_eq!(translator.text("ad-legend-success-rate"), "Success Rate");
+        assert_eq!(translator.text("ad-legend-calls"), "Calls");
+        assert_eq!(
+            translator.text("ad-legend-tool-call-rate"),
+            "Tool Call Rate"
+        );
+        assert_eq!(
+            translator.text("ad-legend-tool-success-rate"),
+            "Tool Success Rate"
+        );
+        assert_eq!(translator.text("ad-legend-avg-duration"), "Avg Duration");
+        assert_eq!(translator.text("ad-legend-p95-duration"), "P95 Duration");
+        assert_eq!(translator.text("ad-legend-token-usage"), "Token Usage");
+        assert_eq!(
+            translator.text("ad-legend-requests-per-turn"),
+            "Requests/Turn"
+        );
+        assert_eq!(
+            translator.text("ad-legend-tool-iterations-per-turn"),
+            "Tool Iterations/Turn"
+        );
+    }
+
+    #[test]
+    fn gui_analyze_dashboard_translates_labels_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        // Panel header
+        assert_eq!(
+            translator.text("ad-subtitle"),
+            "从本地可观测性存储进行工具与模型分析"
+        );
+        assert_eq!(
+            translator.text("ad-obs-disabled"),
+            "可观测性已禁用。请先在可观测性面板中启用。"
+        );
+        assert_eq!(
+            translator.text("ad-local-store-disabled"),
+            "本地分析存储已禁用。请先在可观测性面板中启用。"
+        );
+        assert_eq!(
+            translator.text("ad-notify-worker-disconnected"),
+            "分析仪表盘工作线程已断开"
+        );
+        assert_eq!(
+            translator.text("ad-resolve-data-dir-failed"),
+            "无法解析本地数据目录"
+        );
+        // Controls
+        assert_eq!(translator.text("ad-view"), "视图:");
+        assert_eq!(translator.text("ad-view-tools"), "工具");
+        assert_eq!(translator.text("ad-view-models"), "模型");
+        assert_eq!(translator.text("ad-time-range"), "时间范围:");
+        assert_eq!(translator.text("ad-granularity"), "粒度:");
+        assert_eq!(translator.text("ad-all-providers"), "全部提供商");
+        assert_eq!(translator.text("ad-all-models"), "全部模型");
+        assert_eq!(translator.text("ad-refresh"), "刷新");
+        assert_eq!(translator.text("ad-loading"), "加载中...");
+        // Summary cards
+        assert_eq!(translator.text("ad-total-calls"), "总调用次数");
+        assert_eq!(translator.text("ad-success-rate"), "成功率");
+        assert_eq!(translator.text("ad-failures"), "失败次数");
+        assert_eq!(translator.text("ad-avg-duration"), "平均耗时");
+        assert_eq!(translator.text("ad-total-requests"), "总请求数");
+        assert_eq!(translator.text("ad-p95-duration"), "P95 耗时");
+        assert_eq!(translator.text("ad-total-tokens"), "总 Token 数");
+        assert_eq!(translator.text("ad-estimated-cost"), "预估费用");
+        assert_eq!(translator.text("ad-tool-call-rate"), "工具调用率");
+        assert_eq!(translator.text("ad-turn-completion"), "回合完成率");
+        // Table titles
+        assert_eq!(
+            translator.text("ad-top-tools-by-calls"),
+            "按调用次数排行工具"
+        );
+        assert_eq!(
+            translator.text("ad-top-tools-by-failure-load"),
+            "按失败负载排行工具"
+        );
+        assert_eq!(
+            translator.text("ad-top-models-by-requests"),
+            "按请求数排行模型"
+        );
+        assert_eq!(
+            translator.text("ad-top-models-by-tokens"),
+            "按 Token 用量排行模型"
+        );
+        assert_eq!(
+            translator.text("ad-worst-models-by-failures"),
+            "按失败负载排行模型"
+        );
+        assert_eq!(
+            translator.text("ad-highest-p95-models"),
+            "最高 P95 延迟模型"
+        );
+        assert_eq!(translator.text("ad-highest-cost-models"), "最高费用模型");
+        // Column headers
+        assert_eq!(translator.text("ad-col-tool"), "工具");
+        assert_eq!(translator.text("ad-col-calls"), "调用");
+        assert_eq!(translator.text("ad-col-success"), "成功");
+        assert_eq!(translator.text("ad-col-failures"), "失败");
+        assert_eq!(translator.text("ad-col-model"), "模型");
+        assert_eq!(translator.text("ad-col-requests"), "请求数");
+        assert_eq!(translator.text("ad-col-tokens"), "Token 数");
+        assert_eq!(translator.text("ad-col-avg"), "平均");
+        assert_eq!(translator.text("ad-col-timeout"), "超时");
+        assert_eq!(translator.text("ad-col-p95"), "P95");
+        assert_eq!(translator.text("ad-col-cost"), "费用");
+        assert_eq!(translator.text("ad-col-cost-per-success"), "费用/成功");
+        assert_eq!(translator.text("ad-col-approval"), "审批");
+        // Error breakdown
+        assert_eq!(translator.text("ad-error-breakdown"), "错误分布");
+        assert_eq!(
+            translator.text("ad-error-breakdown-provider-model"),
+            "按提供商/模型的错误分布"
+        );
+        assert_eq!(
+            translator.text("ad-no-tool-failures"),
+            "所选时间范围内无失败记录。"
+        );
+        assert_eq!(
+            translator.text("ad-no-model-failures"),
+            "所选时间范围内无模型请求失败。"
+        );
+        // Timeseries
+        assert_eq!(
+            translator.text("ad-no-samples"),
+            "所选时间范围内无样本数据。"
+        );
+        assert_eq!(
+            translator.text("ad-no-model-samples"),
+            "所选时间范围内无模型样本数据。"
+        );
+        // Token composition
+        assert_eq!(translator.text("ad-token-composition"), "Token 构成");
+        assert_eq!(translator.text("ad-input-tokens"), "输入 Token");
+        assert_eq!(translator.text("ad-output-tokens"), "输出 Token");
+        assert_eq!(translator.text("ad-cached-input-tokens"), "缓存输入 Token");
+        assert_eq!(translator.text("ad-reasoning-tokens"), "推理 Token");
+        // Model tool breakdown
+        assert_eq!(
+            translator.text("ad-model-tool-breakdown"),
+            "所选模型的工具成功分布"
+        );
+        assert_eq!(
+            translator.text("ad-no-model-tool-data"),
+            "所选时间范围内无模型关联的工具数据。"
+        );
+        // Empty states
+        assert_eq!(
+            translator.text("ad-no-tool-metrics"),
+            "暂无本地工具指标数据。"
+        );
+        assert_eq!(
+            translator.text("ad-no-model-metrics"),
+            "暂无本地模型指标数据。"
+        );
+        assert_eq!(
+            translator.text("ad-no-model-level-metrics"),
+            "暂无模型级指标数据。新图表将从新遥测数据中填充。"
+        );
+        assert_eq!(translator.text("ad-no-tool-data"), "无工具数据。");
+        assert_eq!(translator.text("ad-no-model-data"), "无模型数据。");
+        assert_eq!(translator.text("ad-na"), "无数据");
+        // Legends
+        assert_eq!(translator.text("ad-legend-success-rate"), "成功率");
+        assert_eq!(translator.text("ad-legend-calls"), "调用");
+        assert_eq!(translator.text("ad-legend-tool-call-rate"), "工具调用率");
+        assert_eq!(translator.text("ad-legend-tool-success-rate"), "工具成功率");
+        assert_eq!(translator.text("ad-legend-avg-duration"), "平均耗时");
+        assert_eq!(translator.text("ad-legend-p95-duration"), "P95 耗时");
+        assert_eq!(translator.text("ad-legend-token-usage"), "Token 用量");
+        assert_eq!(
+            translator.text("ad-legend-requests-per-turn"),
+            "请求数/回合"
+        );
+        assert_eq!(
+            translator.text("ad-legend-tool-iterations-per-turn"),
+            "工具迭代/回合"
+        );
+    }
+
+    #[test]
+    fn gui_analyze_dashboard_translates_parameterized_keys_in_english() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+        assert_eq!(
+            translator.text_args(
+                "ad-notify-load-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "Analyze Dashboard load failed: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-error-breakdown-tool",
+                HashMap::from([("tool", "file_read".to_string())])
+            ),
+            "Error Breakdown: file_read"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-success-rate-trend",
+                HashMap::from([("bucket", "1h".to_string())])
+            ),
+            "Success Rate Trend (1h)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-model-trends",
+                HashMap::from([("bucket", "1h".to_string())])
+            ),
+            "Model Trends (1h)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-updated-ago",
+                HashMap::from([("seconds", "5".to_string())])
+            ),
+            "Updated 5s ago"
+        );
+    }
+
+    #[test]
+    fn gui_analyze_dashboard_translates_parameterized_keys_in_chinese() {
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::SimplifiedChinese);
+        assert_eq!(
+            translator.text_args(
+                "ad-notify-load-failed",
+                HashMap::from([("error", "timeout".to_string())])
+            ),
+            "分析仪表盘加载失败: timeout"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-error-breakdown-tool",
+                HashMap::from([("tool", "file_read".to_string())])
+            ),
+            "错误分布: file_read"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-success-rate-trend",
+                HashMap::from([("bucket", "1h".to_string())])
+            ),
+            "成功率趋势 (1h)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-model-trends",
+                HashMap::from([("bucket", "1h".to_string())])
+            ),
+            "模型趋势 (1h)"
+        );
+        assert_eq!(
+            translator.text_args(
+                "ad-updated-ago",
+                HashMap::from([("seconds", "5".to_string())])
+            ),
+            "更新于 5秒前"
+        );
+    }
 }

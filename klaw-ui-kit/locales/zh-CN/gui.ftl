@@ -2186,6 +2186,113 @@ obs-validation-price-model-empty = 模型不能为空
 obs-validation-price-input-negative = 输入速率不能为负数
 obs-validation-price-output-negative = 输出速率不能为负数
 
+## Analyze Dashboard 分析仪表盘面板
+ad-subtitle = 从本地可观测性存储进行工具与模型分析
+ad-obs-disabled = 可观测性已禁用。请先在可观测性面板中启用。
+ad-local-store-disabled = 本地分析存储已禁用。请先在可观测性面板中启用。
+ad-notify-load-failed = 分析仪表盘加载失败: { $error }
+ad-notify-worker-disconnected = 分析仪表盘工作线程已断开
+ad-resolve-data-dir-failed = 无法解析本地数据目录
+
+## Dashboard controls 仪表盘控件
+ad-view = 视图:
+ad-view-tools = 工具
+ad-view-models = 模型
+ad-time-range = 时间范围:
+ad-granularity = 粒度:
+ad-all-providers = 全部提供商
+ad-all-models = 全部模型
+ad-refresh = 刷新
+ad-loading = 加载中...
+ad-updated-ago = 更新于 { $seconds }秒前
+
+## Tool summary cards 工具概览卡片
+ad-total-calls = 总调用次数
+ad-success-rate = 成功率
+ad-failures = 失败次数
+ad-avg-duration = 平均耗时
+
+## Model summary cards 模型概览卡片
+ad-total-requests = 总请求数
+ad-p95-duration = P95 耗时
+ad-total-tokens = 总 Token 数
+ad-estimated-cost = 预估费用
+ad-tool-call-rate = 工具调用率
+ad-turn-completion = 回合完成率
+
+## Tool tables 工具表格
+ad-top-tools-by-calls = 按调用次数排行工具
+ad-top-tools-by-failure-load = 按失败负载排行工具
+ad-col-tool = 工具
+ad-col-calls = 调用
+ad-col-success = 成功
+ad-col-failures = 失败
+ad-no-tool-data = 无工具数据。
+
+## Model tables 模型表格
+ad-top-models-by-requests = 按请求数排行模型
+ad-top-models-by-tokens = 按 Token 用量排行模型
+ad-worst-models-by-failures = 按失败负载排行模型
+ad-highest-p95-models = 最高 P95 延迟模型
+ad-highest-cost-models = 最高费用模型
+ad-col-model = 模型
+ad-col-requests = 请求数
+ad-col-tokens = Token 数
+ad-col-avg = 平均
+ad-col-timeout = 超时
+ad-col-p95 = P95
+ad-col-cost = 费用
+ad-col-cost-per-success = 费用/成功
+ad-no-model-data = 无模型数据。
+
+## Tool error breakdown 工具错误分布
+ad-error-breakdown = 错误分布
+ad-error-breakdown-tool = 错误分布: { $tool }
+ad-no-tool-failures = 所选时间范围内无失败记录。
+
+## Model error breakdown 模型错误分布
+ad-error-breakdown-provider-model = 按提供商/模型的错误分布
+ad-no-model-failures = 所选时间范围内无模型请求失败。
+
+## Tool timeseries 工具时间序列
+ad-success-rate-trend = 成功率趋势 ({ $bucket })
+ad-no-samples = 所选时间范围内无样本数据。
+
+## Model timeseries 模型时间序列
+ad-model-trends = 模型趋势 ({ $bucket })
+ad-no-model-samples = 所选时间范围内无模型样本数据。
+
+## Chart legends 图表图例
+ad-legend-success-rate = 成功率
+ad-legend-calls = 调用
+ad-legend-tool-call-rate = 工具调用率
+ad-legend-tool-success-rate = 工具成功率
+ad-legend-avg-duration = 平均耗时
+ad-legend-p95-duration = P95 耗时
+ad-legend-token-usage = Token 用量
+ad-legend-requests-per-turn = 请求数/回合
+ad-legend-tool-iterations-per-turn = 工具迭代/回合
+
+## Token composition Token 构成
+ad-token-composition = Token 构成
+ad-input-tokens = 输入 Token
+ad-output-tokens = 输出 Token
+ad-cached-input-tokens = 缓存输入 Token
+ad-reasoning-tokens = 推理 Token
+
+## Model tool breakdown 模型工具成功分布
+ad-model-tool-breakdown = 所选模型的工具成功分布
+ad-no-model-tool-data = 所选时间范围内无模型关联的工具数据。
+ad-col-approval = 审批
+
+## Empty/no-data states 空/无数据状态
+ad-no-tool-metrics = 暂无本地工具指标数据。
+ad-no-model-metrics = 暂无本地模型指标数据。
+ad-no-model-level-metrics = 暂无模型级指标数据。新图表将从新遥测数据中填充。
+
+## Misc 其他
+ad-na = 无数据
+
 ## Logs 日志面板
 logs-subtitle = 来自追踪输出的实时进程日志
 logs-level-trace = 跟踪
