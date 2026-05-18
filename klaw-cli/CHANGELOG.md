@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-18
+
+### Fixed
+
+- Linux `.deb` packaging now installs the desktop icon into standard hicolor sizes and refreshes icon/desktop caches on install or removal, so launchers can resolve `Icon=klaw`.
+
 ## 2026-05-07
 
 ### Fixed

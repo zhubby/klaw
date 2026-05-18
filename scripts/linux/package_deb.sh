@@ -77,6 +77,7 @@ fi
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 icon_path="$repo_root/klaw-gui/assets/icons/Icon-macOS-Default-1024x1024@1x.png"
+icon_sizes=(512 256 128 64 48 32)
 
 if [[ ! -f "$icon_path" ]]; then
     echo "expected icon at $icon_path" >&2
@@ -121,13 +122,23 @@ package_root="$staging_dir/${package_name}_${version}_${deb_arch}"
 debian_dir="$package_root/DEBIAN"
 bin_dir="$package_root/usr/bin"
 desktop_dir="$package_root/usr/share/applications"
-icon_dir="$package_root/usr/share/icons/hicolor/1024x1024/apps"
 doc_dir="$package_root/usr/share/doc/$package_name"
 
-mkdir -p "$debian_dir" "$bin_dir" "$desktop_dir" "$icon_dir" "$doc_dir"
+mkdir -p "$debian_dir" "$bin_dir" "$desktop_dir" "$doc_dir"
 
 install -m 755 "$binary_path" "$bin_dir/klaw"
-install -m 644 "$icon_path" "$icon_dir/klaw.png"
+
+for size in "${icon_sizes[@]}"; do
+    icon_dir="$package_root/usr/share/icons/hicolor/${size}x${size}/apps"
+    mkdir -p "$icon_dir"
+
+    if command -v convert >/dev/null 2>&1; then
+        convert "$icon_path" -resize "${size}x${size}" "$icon_dir/klaw.png"
+        chmod 644 "$icon_dir/klaw.png"
+    else
+        install -m 644 "$icon_path" "$icon_dir/klaw.png"
+    fi
+done
 
 cat > "$desktop_dir/io.klaw.Klaw.desktop" <<'EOF'
 [Desktop Entry]
@@ -145,6 +156,36 @@ cat > "$doc_dir/copyright" <<'EOF'
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: klaw
 License: MIT
+EOF
+
+cat > "$debian_dir/postinst" <<'EOF'
+#!/bin/sh
+set -e
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+fi
+
+exit 0
+EOF
+
+cat > "$debian_dir/postrm" <<'EOF'
+#!/bin/sh
+set -e
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+fi
+
+exit 0
 EOF
 
 installed_size="$(du -sk "$package_root/usr" | awk '{print $1}')"
@@ -169,6 +210,7 @@ EOF
     find . -type d -exec chmod 755 {} +
     find usr -type f -exec chmod 644 {} +
     chmod 755 usr/bin/klaw
+    chmod 755 DEBIAN/postinst DEBIAN/postrm
     find usr -type f -print0 | sort -z | xargs -0 md5sum > DEBIAN/md5sums
 )
 
