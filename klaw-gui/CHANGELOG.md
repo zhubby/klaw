@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-05-25
+
+### Added
+
+- Skills Registry 面板新增全部同步按钮，可一次同步所有 registry 并刷新同步状态。
+
+### Fixed
+
+- Skills Registry 行右键同步现在只同步当前 registry，不再复用全量同步语义。
+
 ## 2026-05-18
 
 ### Changed

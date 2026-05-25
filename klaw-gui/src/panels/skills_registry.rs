@@ -21,6 +21,19 @@ use tokio::runtime::Builder;
 
 const SYNC_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SkillSyncTarget {
+    All,
+    Registry(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SkillSyncRequest {
+    target: SkillSyncTarget,
+    sources: Vec<RegistrySource>,
+    installed: Vec<InstalledSkill>,
+}
+
 #[derive(Debug, Clone)]
 struct SkillsRegistryForm {
     original_name: Option<String>,
@@ -76,8 +89,8 @@ pub struct SkillsRegistryPanel {
     form: Option<SkillsRegistryForm>,
     config_window_open: bool,
     sync_timeout_text: String,
-    syncing_registry: Option<String>,
-    sync_result_rx: Option<Receiver<(String, Result<RegistrySyncReport, String>)>>,
+    sync_target: Option<SkillSyncTarget>,
+    sync_result_rx: Option<Receiver<(SkillSyncTarget, Result<RegistrySyncReport, String>)>>,
     selected_registry: Option<String>,
     delete_confirm_id: Option<String>,
     registry_statuses: Vec<RegistrySyncStatus>,
@@ -267,20 +280,61 @@ impl SkillsRegistryPanel {
         }
     }
 
-    fn sync_registry(&mut self, registry_name: &str, notifications: &mut NotificationCenter) {
-        if self.syncing_registry.is_some() {
+    fn build_sync_request(
+        config: &AppConfig,
+        target: SkillSyncTarget,
+    ) -> Result<SkillSyncRequest, String> {
+        let registry_names = match &target {
+            SkillSyncTarget::All => config
+                .skills
+                .registries
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            SkillSyncTarget::Registry(registry_name) => {
+                if !config.skills.registries.contains_key(registry_name) {
+                    return Err(Self::translator().text_args(
+                        "skills-reg-notify-registry-not-found",
+                        HashMap::from([("registry_name", registry_name.clone())]),
+                    ));
+                }
+                vec![registry_name.clone()]
+            }
+        };
+
+        let mut sources = Vec::with_capacity(registry_names.len());
+        let mut installed = Vec::new();
+        for registry_name in registry_names {
+            let Some(registry) = config.skills.registries.get(&registry_name) else {
+                continue;
+            };
+            sources.push(RegistrySource {
+                name: registry_name.clone(),
+                address: registry.address.clone(),
+            });
+            installed.extend(registry.installed.iter().map(|skill_name| InstalledSkill {
+                registry: registry_name.clone(),
+                name: skill_name.clone(),
+            }));
+        }
+
+        Ok(SkillSyncRequest {
+            target,
+            sources,
+            installed,
+        })
+    }
+
+    fn sync_target(
+        &mut self,
+        target: SkillSyncTarget,
+        notifications: &mut NotificationCenter,
+    ) {
+        if self.sync_target.is_some() {
             notifications
                 .warning(Self::translator().text("skills-reg-notify-sync-already-running"));
             return;
         }
-
-        let Some(registry) = self.config.skills.registries.get(registry_name) else {
-            notifications.error(Self::translator().text_args(
-                "skills-reg-notify-registry-not-found",
-                HashMap::from([("registry_name", registry_name.to_string())]),
-            ));
-            return;
-        };
 
         let timeout = match self.sync_timeout_text.trim().parse::<u64>() {
             Ok(value) => value,
@@ -291,32 +345,35 @@ impl SkillsRegistryPanel {
             }
         };
 
-        let source = RegistrySource {
-            name: registry_name.to_string(),
-            address: registry.address.clone(),
+        let request = match Self::build_sync_request(&self.config, target) {
+            Ok(request) => request,
+            Err(err) => {
+                notifications.error(err);
+                return;
+            }
         };
-        let installed = registry
-            .installed
-            .iter()
-            .map(|skill_name| InstalledSkill {
-                registry: registry_name.to_string(),
-                name: skill_name.clone(),
-            })
-            .collect::<Vec<_>>();
 
-        let registry_name = registry_name.to_string();
-        let status_registry_name = registry_name.clone();
+        let target = request.target.clone();
         let (tx, rx) = mpsc::channel();
-        self.syncing_registry = Some(registry_name.clone());
+        self.sync_target = Some(target.clone());
         self.sync_result_rx = Some(rx);
         thread::spawn(move || {
-            let result = run_skill_sync_task(source, installed, timeout);
-            let _ = tx.send((registry_name, result));
+            let result = run_skill_sync_task(request.sources, request.installed, timeout);
+            let _ = tx.send((target, result));
         });
-        notifications.info(Self::translator().text_args(
-            "skills-reg-notify-sync-started",
-            HashMap::from([("registry_name", status_registry_name)]),
-        ));
+
+        match self.sync_target.as_ref() {
+            Some(SkillSyncTarget::All) => {
+                notifications.info(Self::translator().text("skills-reg-notify-sync-all-started"));
+            }
+            Some(SkillSyncTarget::Registry(registry_name)) => {
+                notifications.info(Self::translator().text_args(
+                    "skills-reg-notify-sync-started",
+                    HashMap::from([("registry_name", registry_name.clone())]),
+                ));
+            }
+            None => {}
+        }
     }
 
     fn poll_sync_result(&mut self, notifications: &mut NotificationCenter) {
@@ -325,39 +382,66 @@ impl SkillsRegistryPanel {
         };
 
         match rx.try_recv() {
-            Ok((registry_name, result)) => {
+            Ok((target, result)) => {
                 self.sync_result_rx = None;
-                self.syncing_registry = None;
+                self.sync_target = None;
                 match result {
                     Ok(report) => {
                         if let Err(err) = self.reload_snapshot_silently() {
                             notifications.warning(err);
                         }
                         Self::request_runtime_skills_reload(notifications);
-                        notifications.success(Self::translator().text_args(
-                            "skills-reg-notify-sync-success",
-                            HashMap::from([
-                                ("registry_name", registry_name.clone()),
-                                ("added", report.installed_skills.len().to_string()),
-                                ("removed", report.removed_skills.len().to_string()),
-                            ]),
-                        ));
+                        match target {
+                            SkillSyncTarget::All => {
+                                notifications.success(Self::translator().text_args(
+                                    "skills-reg-notify-sync-all-success",
+                                    HashMap::from([
+                                        (
+                                            "registries",
+                                            report.synced_registries.len().to_string(),
+                                        ),
+                                        ("added", report.installed_skills.len().to_string()),
+                                        ("removed", report.removed_skills.len().to_string()),
+                                    ]),
+                                ));
+                            }
+                            SkillSyncTarget::Registry(registry_name) => {
+                                notifications.success(Self::translator().text_args(
+                                    "skills-reg-notify-sync-success",
+                                    HashMap::from([
+                                        ("registry_name", registry_name),
+                                        ("added", report.installed_skills.len().to_string()),
+                                        ("removed", report.removed_skills.len().to_string()),
+                                    ]),
+                                ));
+                            }
+                        }
                     }
                     Err(err) => {
-                        notifications.error(Self::translator().text_args(
-                            "skills-reg-notify-sync-failed",
-                            HashMap::from([
-                                ("registry_name", registry_name.clone()),
-                                ("error", err.to_string()),
-                            ]),
-                        ));
+                        match target {
+                            SkillSyncTarget::All => {
+                                notifications.error(Self::translator().text_args(
+                                    "skills-reg-notify-sync-all-failed",
+                                    HashMap::from([("error", err.to_string())]),
+                                ));
+                            }
+                            SkillSyncTarget::Registry(registry_name) => {
+                                notifications.error(Self::translator().text_args(
+                                    "skills-reg-notify-sync-failed",
+                                    HashMap::from([
+                                        ("registry_name", registry_name),
+                                        ("error", err.to_string()),
+                                    ]),
+                                ));
+                            }
+                        }
                     }
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.sync_result_rx = None;
-                self.syncing_registry = None;
+                self.sync_target = None;
                 notifications.error(Self::translator().text("skills-reg-notify-sync-disconnected"));
             }
         }
@@ -623,6 +707,18 @@ impl PanelRenderer for SkillsRegistryPanel {
                 self.reload(notifications);
             }
             if ui
+                .add_enabled(
+                    self.sync_target.is_none() && !self.config.skills.registries.is_empty(),
+                    egui::Button::new(t.text_args(
+                        "skills-reg-btn-sync-all",
+                        HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                    )),
+                )
+                .clicked()
+            {
+                self.sync_target(SkillSyncTarget::All, notifications);
+            }
+            if ui
                 .button(t.text_args(
                     "skills-reg-btn-add",
                     HashMap::from([("icon", regular::PLUS.to_string())]),
@@ -690,7 +786,14 @@ impl PanelRenderer for SkillsRegistryPanel {
                         let is_selected = self.selected_registry.as_deref() == Some(name);
                         row.set_selected(is_selected);
 
-                        let is_syncing = self.syncing_registry.as_deref() == Some(name.as_str());
+                        let is_syncing = match self.sync_target.as_ref() {
+                            Some(SkillSyncTarget::All) => true,
+                            Some(SkillSyncTarget::Registry(registry_name)) => {
+                                registry_name == name
+                            }
+                            None => false,
+                        };
+                        let is_any_syncing = self.sync_target.is_some();
 
                         let status = self
                             .registry_statuses
@@ -762,7 +865,7 @@ impl PanelRenderer for SkillsRegistryPanel {
                         response.context_menu(|ui| {
                             if ui
                                 .add_enabled(
-                                    !is_syncing,
+                                    !is_any_syncing,
                                     egui::Button::new(t.text_args(
                                         "skills-reg-ctx-sync",
                                         HashMap::from([(
@@ -821,7 +924,7 @@ impl PanelRenderer for SkillsRegistryPanel {
                 self.open_edit_registry(&name);
             }
             if let Some(name) = sync_registry_name {
-                self.sync_registry(&name, notifications);
+                self.sync_target(SkillSyncTarget::Registry(name), notifications);
             }
             if let Some(name) = delete_registry_name {
                 self.delete_confirm_id = Some(name);
@@ -835,13 +938,13 @@ impl PanelRenderer for SkillsRegistryPanel {
 }
 
 fn run_skill_sync_task(
-    source: RegistrySource,
+    sources: Vec<RegistrySource>,
     installed: Vec<InstalledSkill>,
     timeout: u64,
 ) -> Result<klaw_skill::RegistrySyncReport, String> {
     run_skill_task(move |store| async move {
         store
-            .sync_registry_installed_skills(&[source], &installed, timeout)
+            .sync_registry_installed_skills(&sources, &installed, timeout)
             .await
     })
 }
@@ -927,6 +1030,107 @@ mod tests {
         assert_eq!(
             updated.skills.registries["private"].address,
             "https://example.com/v2"
+        );
+    }
+
+    #[test]
+    fn build_sync_request_for_registry_scopes_sources_and_installed_skills() {
+        let mut config = AppConfig::default();
+        config.skills.registries.clear();
+        config.skills.registries.insert(
+            "alpha".to_string(),
+            SkillsRegistryConfig {
+                address: "https://example.com/alpha".to_string(),
+                installed: vec!["one".to_string(), "two".to_string()],
+            },
+        );
+        config.skills.registries.insert(
+            "beta".to_string(),
+            SkillsRegistryConfig {
+                address: "https://example.com/beta".to_string(),
+                installed: vec!["three".to_string()],
+            },
+        );
+
+        let request = SkillsRegistryPanel::build_sync_request(
+            &config,
+            SkillSyncTarget::Registry("alpha".to_string()),
+        )
+        .expect("request should build");
+
+        assert_eq!(
+            request.sources,
+            vec![RegistrySource {
+                name: "alpha".to_string(),
+                address: "https://example.com/alpha".to_string(),
+            }]
+        );
+        assert_eq!(
+            request.installed,
+            vec![
+                InstalledSkill {
+                    registry: "alpha".to_string(),
+                    name: "one".to_string(),
+                },
+                InstalledSkill {
+                    registry: "alpha".to_string(),
+                    name: "two".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn build_sync_request_for_all_includes_every_registry_and_installed_skill() {
+        let mut config = AppConfig::default();
+        config.skills.registries.clear();
+        config.skills.registries.insert(
+            "alpha".to_string(),
+            SkillsRegistryConfig {
+                address: "https://example.com/alpha".to_string(),
+                installed: vec!["one".to_string()],
+            },
+        );
+        config.skills.registries.insert(
+            "beta".to_string(),
+            SkillsRegistryConfig {
+                address: "https://example.com/beta".to_string(),
+                installed: vec!["two".to_string(), "three".to_string()],
+            },
+        );
+
+        let request = SkillsRegistryPanel::build_sync_request(&config, SkillSyncTarget::All)
+            .expect("request should build");
+
+        assert_eq!(
+            request.sources,
+            vec![
+                RegistrySource {
+                    name: "alpha".to_string(),
+                    address: "https://example.com/alpha".to_string(),
+                },
+                RegistrySource {
+                    name: "beta".to_string(),
+                    address: "https://example.com/beta".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            request.installed,
+            vec![
+                InstalledSkill {
+                    registry: "alpha".to_string(),
+                    name: "one".to_string(),
+                },
+                InstalledSkill {
+                    registry: "beta".to_string(),
+                    name: "two".to_string(),
+                },
+                InstalledSkill {
+                    registry: "beta".to_string(),
+                    name: "three".to_string(),
+                },
+            ]
         );
     }
 }

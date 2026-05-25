@@ -920,6 +920,7 @@ skills-reg-subtitle = 管理技能仓库并从远程仓库同步技能。
 skills-reg-label-registries-count = 注册源: { $count }
 skills-reg-btn-config = { $icon } 配置
 skills-reg-btn-reload = { $icon } 刷新
+skills-reg-btn-sync-all = { $icon } 全部同步
 skills-reg-btn-add = { $icon } 添加技能注册源
 skills-reg-no-registries = 未配置技能注册源。
 
@@ -973,6 +974,9 @@ skills-reg-notify-sync-timeout-saved = skills.sync_timeout 已保存
 skills-reg-notify-sync-started = 开始同步注册源 `{ $registry_name }`
 skills-reg-notify-sync-success = 注册源 `{ $registry_name }` 已同步: 新增 { $added }, 移除 { $removed }
 skills-reg-notify-sync-failed = 同步注册源 `{ $registry_name }` 失败: { $error }
+skills-reg-notify-sync-all-started = 开始同步全部技能注册源
+skills-reg-notify-sync-all-success = 已同步 { $registries } 个注册源: 新增 { $added }, 移除 { $removed }
+skills-reg-notify-sync-all-failed = 同步全部技能注册源失败: { $error }
 skills-reg-notify-sync-disconnected = 技能注册源同步工作器已断开
 skills-reg-notify-registry-deleted = 技能注册源 `{ $registry_name }` 已删除
 skills-reg-notify-cleaned-skills = 已清理 { $count } 个已安装技能

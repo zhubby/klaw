@@ -920,6 +920,7 @@ skills-reg-subtitle = Manage skill registries and sync skills from remote reposi
 skills-reg-label-registries-count = Registries: { $count }
 skills-reg-btn-config = { $icon } Config
 skills-reg-btn-reload = { $icon } Reload
+skills-reg-btn-sync-all = { $icon } Sync All
 skills-reg-btn-add = { $icon } Add Skills Registry
 skills-reg-no-registries = No skill registries configured.
 
@@ -973,6 +974,9 @@ skills-reg-notify-sync-timeout-saved = skills.sync_timeout saved
 skills-reg-notify-sync-started = Started syncing registry `{ $registry_name }`
 skills-reg-notify-sync-success = Registry `{ $registry_name }` synced: added { $added }, removed { $removed }
 skills-reg-notify-sync-failed = Failed to sync registry `{ $registry_name }`: { $error }
+skills-reg-notify-sync-all-started = Started syncing all skill registries
+skills-reg-notify-sync-all-success = Synced { $registries } registries: added { $added }, removed { $removed }
+skills-reg-notify-sync-all-failed = Failed to sync all skill registries: { $error }
 skills-reg-notify-sync-disconnected = Skill registry sync worker disconnected
 skills-reg-notify-registry-deleted = Skills registry `{ $registry_name }` deleted
 skills-reg-notify-cleaned-skills = Cleaned { $count } installed skills from manifest
