@@ -3,6 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::settings::current_ui_language;
 use crate::voice_test::{RecordingCapture, RecordingHandle};
 use egui::{Color32, RichText};
+use egui_dock::{AllowedSplits, DockArea, DockState, NodeIndex, Style, SurfaceIndex, TabIndex};
 use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, AssemblyAiVoiceConfig, ConfigError, ConfigSnapshot, ConfigStore,
@@ -186,12 +187,30 @@ impl VoiceConfigTab {
         Self::Elevenlabs,
     ];
 
-    fn label(self, t: &Translator) -> String {
+    fn title_key(self) -> &'static str {
         match self {
-            Self::General => t.text("voice-config-tab-general"),
-            Self::Deepgram => t.text("voice-config-tab-deepgram"),
-            Self::Assemblyai => t.text("voice-config-tab-assemblyai"),
-            Self::Elevenlabs => t.text("voice-config-tab-elevenlabs"),
+            Self::General => "voice-config-tab-general",
+            Self::Deepgram => "voice-config-tab-deepgram",
+            Self::Assemblyai => "voice-config-tab-assemblyai",
+            Self::Elevenlabs => "voice-config-tab-elevenlabs",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::General => regular::GEAR_SIX,
+            Self::Deepgram => regular::MICROPHONE,
+            Self::Assemblyai => regular::WAVEFORM,
+            Self::Elevenlabs => regular::SPEAKER_HIGH,
+        }
+    }
+
+    fn tab_id(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Deepgram => "deepgram",
+            Self::Assemblyai => "assemblyai",
+            Self::Elevenlabs => "elevenlabs",
         }
     }
 }
@@ -279,6 +298,7 @@ pub struct VoicePanel {
     config_form: VoiceConfigForm,
     config_window_open: bool,
     config_tab: VoiceConfigTab,
+    config_dock_state: DockState<VoiceConfigTab>,
     test_mode: VoiceTestMode,
     recording: Option<RecordingHandle>,
     stt_state: SttTestState,
@@ -298,6 +318,7 @@ impl Default for VoicePanel {
             config_form: VoiceConfigForm::default(),
             config_window_open: false,
             config_tab: VoiceConfigTab::default(),
+            config_dock_state: Self::config_dock_state(VoiceConfigTab::default()),
             test_mode: VoiceTestMode::Stt,
             recording: None,
             stt_state: SttTestState::Idle,
@@ -314,6 +335,20 @@ impl Default for VoicePanel {
 impl VoicePanel {
     fn translator() -> Translator {
         Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
+    fn config_dock_state(active_tab: VoiceConfigTab) -> DockState<VoiceConfigTab> {
+        let mut dock_state = DockState::new(VoiceConfigTab::ALL.to_vec());
+        let active_index = VoiceConfigTab::ALL
+            .iter()
+            .position(|tab| *tab == active_tab)
+            .unwrap_or_default();
+        dock_state.set_active_tab((
+            SurfaceIndex::main(),
+            NodeIndex::root(),
+            TabIndex(active_index),
+        ));
+        dock_state
     }
 
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
@@ -338,6 +373,7 @@ impl VoicePanel {
     fn open_config_window(&mut self) {
         self.config_form = VoiceConfigForm::from_config(&self.config.voice);
         self.config_tab = VoiceConfigTab::General;
+        self.config_dock_state = Self::config_dock_state(self.config_tab);
         self.config_window_open = true;
     }
 
@@ -633,11 +669,7 @@ impl VoicePanel {
                 ui.label(t.text("voice-config-subtitle"));
                 ui.separator();
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.render_config_tabs(ui);
-                    ui.add_space(10.0);
-                    self.render_selected_config_tab(ui);
-                });
+                self.render_config_dock(ui);
 
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -664,23 +696,40 @@ impl VoicePanel {
         self.config_window_open = open;
     }
 
-    fn render_config_tabs(&mut self, ui: &mut egui::Ui) {
+    fn render_config_dock(&mut self, ui: &mut egui::Ui) {
         let t = Self::translator();
-        ui.horizontal_wrapped(|ui| {
-            for tab in VoiceConfigTab::ALL {
-                if ui
-                    .selectable_label(self.config_tab == tab, tab.label(&t))
-                    .clicked()
-                {
-                    self.config_tab = tab;
-                }
-            }
-        });
+        let mut dock_state = std::mem::replace(
+            &mut self.config_dock_state,
+            Self::config_dock_state(self.config_tab),
+        );
+        let mut style = Style::from_egui(ui.style().as_ref());
+        style.tab_bar.show_scroll_bar_on_overflow = false;
+
+        ui.set_min_height(380.0);
+        DockArea::new(&mut dock_state)
+            .id(egui::Id::new("voice-config-dock"))
+            .style(style)
+            .show_add_buttons(false)
+            .show_close_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .tab_context_menus(false)
+            .draggable_tabs(false)
+            .allowed_splits(AllowedSplits::None)
+            .show_inside(
+                ui,
+                &mut VoiceConfigTabViewer {
+                    panel: self,
+                    translator: &t,
+                },
+            );
+
+        self.config_dock_state = dock_state;
     }
 
-    fn render_selected_config_tab(&mut self, ui: &mut egui::Ui) {
+    fn render_config_tab_content(&mut self, ui: &mut egui::Ui, tab: VoiceConfigTab) {
         let t = Self::translator();
-        match self.config_tab {
+        match tab {
             VoiceConfigTab::General => self.render_general_config_tab(ui),
             VoiceConfigTab::Deepgram => {
                 ui.strong(t.text("voice-config-tab-deepgram"));
@@ -1130,6 +1179,51 @@ impl VoicePanel {
                 ui.colored_label(ui.visuals().error_fg_color, err);
             }
         }
+    }
+}
+
+struct VoiceConfigTabViewer<'a> {
+    panel: &'a mut VoicePanel,
+    translator: &'a Translator,
+}
+
+impl egui_dock::TabViewer for VoiceConfigTabViewer<'_> {
+    type Tab = VoiceConfigTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        format!("{} {}", tab.icon(), self.translator.text(tab.title_key())).into()
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("voice-config-tab", tab.tab_id()))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        self.panel.config_tab = *tab;
+        egui::ScrollArea::vertical()
+            .id_salt(("voice-config-tab-scroll", tab.tab_id()))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                self.panel.render_config_tab_content(ui, *tab);
+            });
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        if response.clicked() {
+            self.panel.config_tab = *tab;
+        }
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
+        false
+    }
+
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false]
     }
 }
 

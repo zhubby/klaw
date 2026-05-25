@@ -3,6 +3,7 @@ use crate::panels::{PanelRenderer, RenderCtx};
 use crate::settings::current_ui_language;
 use crate::{RuntimeRequestHandle, begin_env_check_request};
 use egui::RichText;
+use egui_dock::{AllowedSplits, DockArea, DockState, NodeIndex, Style, SurfaceIndex, TabIndex};
 use egui_phosphor::regular;
 use klaw_config::ConfigStore;
 use klaw_storage::StoragePaths;
@@ -283,6 +284,38 @@ enum SystemView {
     Environment,
 }
 
+impl SystemView {
+    const ALL: [Self; 3] = [
+        Self::HostInformation,
+        Self::ProgramDiskUsage,
+        Self::Environment,
+    ];
+
+    fn title_key(self) -> &'static str {
+        match self {
+            Self::HostInformation => "system-view-host-information",
+            Self::ProgramDiskUsage => "system-view-program-disk-usage",
+            Self::Environment => "system-view-environment",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::HostInformation => regular::DESKTOP_TOWER,
+            Self::ProgramDiskUsage => regular::HARD_DRIVES,
+            Self::Environment => regular::TERMINAL_WINDOW,
+        }
+    }
+
+    fn tab_id(self) -> &'static str {
+        match self {
+            Self::HostInformation => "host-information",
+            Self::ProgramDiskUsage => "program-disk-usage",
+            Self::Environment => "environment",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirKind {
     Tmp,
@@ -364,7 +397,6 @@ impl DirState {
     }
 }
 
-#[derive(Default)]
 pub struct SystemPanel {
     paths: Option<StoragePaths>,
     dirs: [DirState; 8],
@@ -373,12 +405,44 @@ pub struct SystemPanel {
     env_check_loaded: bool,
     env_check_request: Option<RuntimeRequestHandle<EnvironmentCheckReport>>,
     current_view: SystemView,
+    view_dock_state: DockState<SystemView>,
     host_info: HostInfoData,
+}
+
+impl Default for SystemPanel {
+    fn default() -> Self {
+        let current_view = SystemView::HostInformation;
+        Self {
+            paths: None,
+            dirs: std::array::from_fn(|_| DirState::default()),
+            clear_confirm: None,
+            env_check: None,
+            env_check_loaded: false,
+            env_check_request: None,
+            current_view,
+            view_dock_state: Self::view_dock_state(current_view),
+            host_info: HostInfoData::default(),
+        }
+    }
 }
 
 impl SystemPanel {
     fn translator() -> Translator {
         Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
+    fn view_dock_state(current_view: SystemView) -> DockState<SystemView> {
+        let mut dock_state = DockState::new(SystemView::ALL.to_vec());
+        let active_index = SystemView::ALL
+            .iter()
+            .position(|view| *view == current_view)
+            .unwrap_or_default();
+        dock_state.set_active_tab((
+            SurfaceIndex::main(),
+            NodeIndex::root(),
+            TabIndex(active_index),
+        ));
+        dock_state
     }
 
     fn dir_index(kind: DirKind) -> usize {
@@ -1018,6 +1082,121 @@ impl SystemPanel {
             .small(),
         );
     }
+
+    fn render_program_disk_usage(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        t: &Translator,
+    ) {
+        ui.label(t.text("system-disk-usage-description"));
+        ui.add_space(8.0);
+        self.render_section(ui, DirKind::Tmp, notifications);
+        ui.separator();
+        self.render_section(ui, DirKind::Workspace, notifications);
+        ui.separator();
+        self.render_section(ui, DirKind::Sessions, notifications);
+        ui.separator();
+        self.render_section(ui, DirKind::Archives, notifications);
+        ui.separator();
+        self.render_section(ui, DirKind::Logs, notifications);
+        ui.separator();
+        self.render_section(ui, DirKind::Skills, notifications);
+        ui.separator();
+        self.render_section(ui, DirKind::SkillsRegistry, notifications);
+        ui.separator();
+        self.render_section(ui, DirKind::Models, notifications);
+    }
+
+    fn render_view_dock(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        t: &Translator,
+    ) {
+        let mut dock_state = std::mem::replace(
+            &mut self.view_dock_state,
+            Self::view_dock_state(self.current_view),
+        );
+        let mut style = Style::from_egui(ui.style().as_ref());
+        style.tab_bar.show_scroll_bar_on_overflow = false;
+
+        DockArea::new(&mut dock_state)
+            .id(egui::Id::new("system-view-dock"))
+            .style(style)
+            .show_add_buttons(false)
+            .show_close_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .tab_context_menus(false)
+            .draggable_tabs(false)
+            .allowed_splits(AllowedSplits::None)
+            .show_inside(
+                ui,
+                &mut SystemViewTabViewer {
+                    panel: self,
+                    notifications,
+                    translator: t,
+                },
+            );
+
+        self.view_dock_state = dock_state;
+    }
+}
+
+struct SystemViewTabViewer<'a> {
+    panel: &'a mut SystemPanel,
+    notifications: &'a mut NotificationCenter,
+    translator: &'a Translator,
+}
+
+impl egui_dock::TabViewer for SystemViewTabViewer<'_> {
+    type Tab = SystemView;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        format!("{} {}", tab.icon(), self.translator.text(tab.title_key())).into()
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("system-view-tab", tab.tab_id()))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        self.panel.current_view = *tab;
+        egui::ScrollArea::vertical()
+            .id_salt(("system-view-scroll", tab.tab_id()))
+            .auto_shrink([false, false])
+            .show(ui, |ui| match *tab {
+                SystemView::HostInformation => {
+                    self.panel.render_host_information(ui);
+                }
+                SystemView::ProgramDiskUsage => {
+                    self.panel
+                        .render_program_disk_usage(ui, self.notifications, self.translator);
+                }
+                SystemView::Environment => {
+                    self.panel.render_env_check_section(ui);
+                }
+            });
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        if response.clicked() {
+            self.panel.current_view = *tab;
+        }
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
+        false
+    }
+
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false]
+    }
 }
 
 impl PanelRenderer for SystemPanel {
@@ -1043,63 +1222,9 @@ impl PanelRenderer for SystemPanel {
 
         let t = Self::translator();
         ui.heading(ctx.tab_title);
-
-        ui.horizontal(|ui| {
-            let host_selected = self.current_view == SystemView::HostInformation;
-            let disk_selected = self.current_view == SystemView::ProgramDiskUsage;
-            let env_selected = self.current_view == SystemView::Environment;
-
-            if ui
-                .selectable_label(host_selected, t.text("system-view-host-information"))
-                .clicked()
-            {
-                self.current_view = SystemView::HostInformation;
-            }
-            if ui
-                .selectable_label(disk_selected, t.text("system-view-program-disk-usage"))
-                .clicked()
-            {
-                self.current_view = SystemView::ProgramDiskUsage;
-            }
-            if ui
-                .selectable_label(env_selected, t.text("system-view-environment"))
-                .clicked()
-            {
-                self.current_view = SystemView::Environment;
-            }
-        });
         ui.separator();
 
-        egui::ScrollArea::vertical()
-            .id_salt("system-panel-scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| match self.current_view {
-                SystemView::HostInformation => {
-                    self.render_host_information(ui);
-                }
-                SystemView::ProgramDiskUsage => {
-                    ui.label(t.text("system-disk-usage-description"));
-                    ui.add_space(8.0);
-                    self.render_section(ui, DirKind::Tmp, notifications);
-                    ui.separator();
-                    self.render_section(ui, DirKind::Workspace, notifications);
-                    ui.separator();
-                    self.render_section(ui, DirKind::Sessions, notifications);
-                    ui.separator();
-                    self.render_section(ui, DirKind::Archives, notifications);
-                    ui.separator();
-                    self.render_section(ui, DirKind::Logs, notifications);
-                    ui.separator();
-                    self.render_section(ui, DirKind::Skills, notifications);
-                    ui.separator();
-                    self.render_section(ui, DirKind::SkillsRegistry, notifications);
-                    ui.separator();
-                    self.render_section(ui, DirKind::Models, notifications);
-                }
-                SystemView::Environment => {
-                    self.render_env_check_section(ui);
-                }
-            });
+        self.render_view_dock(ui, notifications, &t);
 
         self.render_clear_confirm_dialog(ui.ctx(), notifications);
     }
