@@ -29,7 +29,7 @@
 - Sidebar group headings for `WORKSPACE`, `AI & CAPABILITY`, `RUNTIME & ACCESS`, `AUTOMATION & OPERATIONS`, `DATA & HISTORY`, and `OBSERVABILITY`
 - Single-tab-per-menu behavior (click to open or activate)
 - Workbench panel renderers for:
-  - profile (workspace markdown doc cards + editor window + runtime system prompt preview)
+  - profile (workspace markdown docs and runtime system prompt preview in fixed `egui_dock` tabs, plus editor window)
   - configuration
   - terminal (embedded `egui_term` PTY views in `egui_dock` tabs, default workspace working directory, per-tab session cleanup, and tab-bar session creation)
   - model provider (config-bound list + add/edit window)
@@ -61,6 +61,7 @@
   - dirty-state warning before reset/migrate overwrite
   - global toast notifications for operation feedback
 - Profile Prompt panel features:
+  - split role prompt docs and system prompt preview into icon-labeled fixed `egui_dock` tabs
   - read markdown files directly under `~/.klaw/workspace`
   - show workspace docs in a table with file summary, modified time, and path
   - render a read-only runtime system prompt preview that loads asynchronously and fills the remaining panel height

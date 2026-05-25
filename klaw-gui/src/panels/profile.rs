@@ -4,6 +4,7 @@ use crate::settings::current_ui_language;
 use crate::time_format::format_timestamp_seconds;
 use crate::widgets::markdown;
 use egui::{Color32, RichText};
+use egui_dock::{AllowedSplits, DockArea, DockState, NodeIndex, Style, SurfaceIndex, TabIndex};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_core::{SkillPromptEntry, build_runtime_system_prompt};
@@ -20,10 +21,39 @@ use tokio::runtime::Builder;
 
 const MIN_EDITOR_HEIGHT: f32 = 320.0;
 const FOOTER_HEIGHT: f32 = 48.0;
-const DOCS_SECTION_MIN_HEIGHT: f32 = 180.0;
-const SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT: f32 = 260.0;
 const PREVIEW_POLL_INTERVAL: Duration = Duration::from_millis(150);
 const RESET_BUTTON_COLOR: Color32 = Color32::from_rgb(255, 149, 0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileSection {
+    RolePrompt,
+    Preview,
+}
+
+impl ProfileSection {
+    const ALL: [Self; 2] = [Self::RolePrompt, Self::Preview];
+
+    fn title_key(self) -> &'static str {
+        match self {
+            Self::RolePrompt => "profile-workspace-markdown-files",
+            Self::Preview => "profile-system-prompt-preview",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::RolePrompt => regular::USER_FOCUS,
+            Self::Preview => regular::EYE,
+        }
+    }
+
+    fn tab_id(self) -> &'static str {
+        match self {
+            Self::RolePrompt => "role-prompt",
+            Self::Preview => "preview",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkspaceMarkdownDoc {
@@ -70,11 +100,12 @@ struct PendingDefaultReset {
     target: DefaultResetTarget,
 }
 
-#[derive(Default)]
 pub struct ProfilePanel {
     workspace_dir: Option<PathBuf>,
     docs: Vec<WorkspaceMarkdownDoc>,
     selected_doc: Option<String>,
+    active_section: ProfileSection,
+    section_dock_state: DockState<ProfileSection>,
     system_prompt_preview: String,
     system_prompt_preview_cache: markdown::MarkdownCache,
     system_prompt_preview_loading: bool,
@@ -88,9 +119,47 @@ pub struct ProfilePanel {
     pending_delete_doc: Option<WorkspaceMarkdownDoc>,
 }
 
+impl Default for ProfilePanel {
+    fn default() -> Self {
+        let active_section = ProfileSection::RolePrompt;
+        Self {
+            workspace_dir: None,
+            docs: Vec::new(),
+            selected_doc: None,
+            active_section,
+            section_dock_state: Self::section_dock_state(active_section),
+            system_prompt_preview: String::new(),
+            system_prompt_preview_cache: markdown::MarkdownCache::default(),
+            system_prompt_preview_loading: false,
+            system_prompt_preview_rx: None,
+            editor: None,
+            preview: None,
+            preview_cache: markdown::MarkdownCache::default(),
+            create_form: WorkspaceFileCreateForm::default(),
+            loaded: false,
+            pending_default_confirm: None,
+            pending_delete_doc: None,
+        }
+    }
+}
+
 impl ProfilePanel {
     fn translator() -> Translator {
         Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
+    fn section_dock_state(active_section: ProfileSection) -> DockState<ProfileSection> {
+        let mut dock_state = DockState::new(ProfileSection::ALL.to_vec());
+        let active_index = ProfileSection::ALL
+            .iter()
+            .position(|section| *section == active_section)
+            .unwrap_or_default();
+        dock_state.set_active_tab((
+            SurfaceIndex::main(),
+            NodeIndex::root(),
+            TabIndex(active_index),
+        ));
+        dock_state
     }
 
     fn subtitle(t: &Translator) -> String {
@@ -171,12 +240,6 @@ impl ProfilePanel {
                 notifications.warning(t.text("profile-notify-preview-disconnected"));
             }
         }
-    }
-
-    fn docs_section_height(available_height: f32) -> f32 {
-        let max_docs_height =
-            (available_height - SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT).max(DOCS_SECTION_MIN_HEIGHT);
-        (available_height * 0.38).clamp(DOCS_SECTION_MIN_HEIGHT, max_docs_height)
     }
 
     #[cfg(test)]
@@ -419,6 +482,41 @@ impl ProfilePanel {
                     &self.system_prompt_preview,
                 );
             });
+    }
+
+    fn render_section_dock(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        t: &Translator,
+    ) {
+        let mut dock_state = std::mem::replace(
+            &mut self.section_dock_state,
+            Self::section_dock_state(self.active_section),
+        );
+        let mut style = Style::from_egui(ui.style().as_ref());
+        style.tab_bar.show_scroll_bar_on_overflow = false;
+
+        DockArea::new(&mut dock_state)
+            .id(egui::Id::new("profile-section-dock"))
+            .style(style)
+            .show_add_buttons(false)
+            .show_close_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .tab_context_menus(false)
+            .draggable_tabs(false)
+            .allowed_splits(AllowedSplits::None)
+            .show_inside(
+                ui,
+                &mut ProfileSectionTabViewer {
+                    panel: self,
+                    notifications,
+                    translator: t,
+                },
+            );
+
+        self.section_dock_state = dock_state;
     }
 
     fn render_editor_window(
@@ -921,6 +1019,40 @@ impl ProfilePanel {
     }
 }
 
+struct ProfileSectionTabViewer<'a> {
+    panel: &'a mut ProfilePanel,
+    notifications: &'a mut NotificationCenter,
+    translator: &'a Translator,
+}
+
+impl egui_dock::TabViewer for ProfileSectionTabViewer<'_> {
+    type Tab = ProfileSection;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        format!("{} {}", tab.icon(), self.translator.text(tab.title_key())).into()
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("profile-section-tab", tab.tab_id()))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        self.panel.active_section = *tab;
+        match *tab {
+            ProfileSection::RolePrompt => {
+                self.panel.render_docs_section(ui, self.notifications);
+            }
+            ProfileSection::Preview => {
+                self.panel.render_system_prompt_preview(ui);
+            }
+        }
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+}
+
 impl PanelRenderer for ProfilePanel {
     fn render(
         &mut self,
@@ -969,21 +1101,7 @@ impl PanelRenderer for ProfilePanel {
             ));
         });
         ui.separator();
-        let docs_height = Self::docs_section_height(ui.available_height());
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_min_height(ui.available_height());
-            StripBuilder::new(ui)
-                .size(Size::exact(docs_height))
-                .size(Size::exact(1.0)) // separator
-                .size(Size::remainder().at_least(SYSTEM_PROMPT_PREVIEW_MIN_HEIGHT))
-                .vertical(|mut strip| {
-                    strip.cell(|ui| self.render_docs_section(ui, notifications));
-                    strip.cell(|ui| {
-                        ui.separator();
-                    });
-                    strip.cell(|ui| self.render_system_prompt_preview(ui));
-                });
-        });
+        self.render_section_dock(ui, notifications, &t);
 
         self.render_editor_window(ui.ctx(), notifications);
         self.render_default_confirm_dialog(ui.ctx(), notifications);
@@ -1435,13 +1553,28 @@ mod tests {
     }
 
     #[test]
-    fn docs_section_height_preserves_preview_space_and_grows_with_window() {
+    fn profile_section_metadata_matches_expected_tabs() {
         assert_eq!(
-            ProfilePanel::docs_section_height(360.0),
-            DOCS_SECTION_MIN_HEIGHT
+            ProfileSection::ALL,
+            [ProfileSection::RolePrompt, ProfileSection::Preview]
         );
-        assert!(ProfilePanel::docs_section_height(1200.0) > 320.0);
-        assert!(ProfilePanel::docs_section_height(520.0) <= 260.0);
+        assert_eq!(
+            ProfileSection::RolePrompt.title_key(),
+            "profile-workspace-markdown-files"
+        );
+        assert_eq!(
+            ProfileSection::Preview.title_key(),
+            "profile-system-prompt-preview"
+        );
+        assert_eq!(ProfileSection::RolePrompt.tab_id(), "role-prompt");
+        assert_eq!(ProfileSection::Preview.tab_id(), "preview");
+    }
+
+    #[test]
+    fn profile_panel_defaults_to_role_prompt_tab() {
+        let panel = ProfilePanel::default();
+
+        assert_eq!(panel.active_section, ProfileSection::RolePrompt);
     }
 
     #[test]
