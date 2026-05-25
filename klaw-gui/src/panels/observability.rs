@@ -2,6 +2,7 @@ use crate::notifications::NotificationCenter;
 use crate::panels::{PanelRenderer, RenderCtx};
 use crate::settings::current_ui_language;
 use egui::{Color32, RichText};
+use egui_dock::{AllowedSplits, DockArea, DockState, NodeIndex, Style, SurfaceIndex, TabIndex};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{ConfigStore, ObservabilityConfig, PriceEntry, PriceTable};
@@ -10,6 +11,57 @@ use std::collections::HashMap;
 
 const PRICE_TABLE_HEIGHT: f32 = 280.0;
 const PRICE_ROW_HEIGHT: f32 = 24.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObservabilitySection {
+    General,
+    Metrics,
+    Traces,
+    Otlp,
+    Prometheus,
+    Audit,
+    LocalStore,
+    Pricing,
+}
+
+impl ObservabilitySection {
+    const ALL: [Self; 8] = [
+        Self::General,
+        Self::Metrics,
+        Self::Traces,
+        Self::Otlp,
+        Self::Prometheus,
+        Self::Audit,
+        Self::LocalStore,
+        Self::Pricing,
+    ];
+
+    fn title_key(self) -> &'static str {
+        match self {
+            Self::General => "obs-section-general",
+            Self::Metrics => "obs-section-metrics",
+            Self::Traces => "obs-section-traces",
+            Self::Otlp => "obs-section-otlp",
+            Self::Prometheus => "obs-section-prometheus",
+            Self::Audit => "obs-section-audit",
+            Self::LocalStore => "obs-section-local-store",
+            Self::Pricing => "obs-section-pricing",
+        }
+    }
+
+    fn tab_id(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Metrics => "metrics",
+            Self::Traces => "traces",
+            Self::Otlp => "otlp",
+            Self::Prometheus => "prometheus",
+            Self::Audit => "audit",
+            Self::LocalStore => "local-store",
+            Self::Pricing => "pricing",
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct PriceForm {
@@ -78,10 +130,11 @@ impl PriceForm {
     }
 }
 
-#[derive(Default)]
 pub struct ObservabilityPanel {
     store: Option<ConfigStore>,
     config: ObservabilityConfig,
+    active_section: ObservabilitySection,
+    section_dock_state: DockState<ObservabilitySection>,
     loaded: bool,
     dirty: bool,
     endpoint_buffer: String,
@@ -99,9 +152,50 @@ pub struct ObservabilityPanel {
     selected_price_row: Option<(String, String)>,
 }
 
+impl Default for ObservabilityPanel {
+    fn default() -> Self {
+        let active_section = ObservabilitySection::General;
+        Self {
+            store: None,
+            config: ObservabilityConfig::default(),
+            active_section,
+            section_dock_state: Self::section_dock_state(active_section),
+            loaded: false,
+            dirty: false,
+            endpoint_buffer: String::new(),
+            service_name_buffer: String::new(),
+            service_version_buffer: String::new(),
+            prometheus_port_buffer: String::new(),
+            prometheus_path_buffer: String::new(),
+            audit_output_path_buffer: String::new(),
+            sample_rate_buffer: String::new(),
+            export_interval_buffer: String::new(),
+            local_store_retention_days_buffer: String::new(),
+            local_store_flush_interval_buffer: String::new(),
+            price_form: None,
+            price_delete_confirm: None,
+            selected_price_row: None,
+        }
+    }
+}
+
 impl ObservabilityPanel {
     fn translator() -> Translator {
         Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
+    fn section_dock_state(active_section: ObservabilitySection) -> DockState<ObservabilitySection> {
+        let mut dock_state = DockState::new(ObservabilitySection::ALL.to_vec());
+        let active_index = ObservabilitySection::ALL
+            .iter()
+            .position(|section| *section == active_section)
+            .unwrap_or_default();
+        dock_state.set_active_tab((
+            SurfaceIndex::main(),
+            NodeIndex::root(),
+            TabIndex(active_index),
+        ));
+        dock_state
     }
 
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
@@ -356,124 +450,353 @@ impl ObservabilityPanel {
         providers
     }
 
-    fn render_price_section(&mut self, ui: &mut egui::Ui) {
-        let t = Self::translator();
+    fn render_general_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-enabled"),
+                &t.text("obs-field-enabled-hint"),
+            );
+            if ui.add(toggle(&mut self.config.enabled)).changed() {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-service-name"),
+                &t.text("obs-field-service-name-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.service_name_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-service-version"),
+                &t.text("obs-field-service-version-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.service_version_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+    }
+
+    fn render_metrics_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-enabled"),
+                &t.text("obs-field-enabled-hint"),
+            );
+            if ui.add(toggle(&mut self.config.metrics.enabled)).changed() {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-export-interval"),
+                &t.text("obs-field-export-interval-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.export_interval_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+    }
+
+    fn render_traces_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-enabled"),
+                &t.text("obs-field-enabled-hint"),
+            );
+            if ui.add(toggle(&mut self.config.traces.enabled)).changed() {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-sample-rate"),
+                &t.text("obs-field-sample-rate-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.sample_rate_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+    }
+
+    fn render_otlp_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-enabled"),
+                &t.text("obs-field-enabled-hint"),
+            );
+            if ui.add(toggle(&mut self.config.otlp.enabled)).changed() {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-endpoint"),
+                &t.text("obs-field-endpoint-hint"),
+            );
+            if ui.text_edit_singleline(&mut self.endpoint_buffer).changed() {
+                self.mark_dirty();
+            }
+        });
+        ui.label(t.text("obs-field-headers"));
+        if self.config.otlp.headers.is_empty() {
+            ui.label(t.text("obs-field-headers-none"));
+        } else {
+            for (key, value) in &self.config.otlp.headers {
+                ui.label(format!("  {key}: {value}"));
+            }
+        }
+    }
+
+    fn render_prometheus_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-enabled"),
+                &t.text("obs-field-enabled-hint"),
+            );
+            if ui
+                .add(toggle(&mut self.config.prometheus.enabled))
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-listen-port"),
+                &t.text("obs-field-listen-port-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.prometheus_port_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-path"),
+                &t.text("obs-field-path-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.prometheus_path_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+    }
+
+    fn render_audit_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-enabled"),
+                &t.text("obs-field-enabled-hint"),
+            );
+            if ui.add(toggle(&mut self.config.audit.enabled)).changed() {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-output-path"),
+                &t.text("obs-field-output-path-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.audit_output_path_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+    }
+
+    fn render_local_store_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-enabled"),
+                &t.text("obs-field-enabled-hint"),
+            );
+            if ui
+                .add(toggle(&mut self.config.local_store.enabled))
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-retention-days"),
+                &t.text("obs-field-retention-days-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.local_store_retention_days_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            label_with_hint(
+                ui,
+                &t.text("obs-field-flush-interval"),
+                &t.text("obs-field-flush-interval-hint"),
+            );
+            if ui
+                .text_edit_singleline(&mut self.local_store_flush_interval_buffer)
+                .changed()
+            {
+                self.mark_dirty();
+            }
+        });
+    }
+
+    fn render_price_section(&mut self, ui: &mut egui::Ui, t: &Translator) {
         let mut edit_provider = None;
         let mut edit_model = None;
         let mut delete_provider = None;
         let mut delete_model = None;
 
-        ui.collapsing(t.text("obs-section-pricing"), |ui| {
-            ui.horizontal(|ui| {
-                if ui
-                    .add(egui::Button::new(t.text_args(
-                        "obs-price-btn-add",
-                        HashMap::from([("icon", regular::PLUS_CIRCLE.to_string())]),
-                    )))
-                    .clicked()
-                {
-                    self.price_form = Some(PriceForm::new());
-                }
-                ui.label(t.text("obs-price-rates-note"));
-            });
-            ui.add_space(4.0);
-
-            let rows = Self::flattened_price_rows(&self.config.price);
-
-            if rows.is_empty() {
-                ui.label(t.text("obs-price-no-entries"));
-                return;
+        ui.horizontal(|ui| {
+            if ui
+                .add(egui::Button::new(t.text_args(
+                    "obs-price-btn-add",
+                    HashMap::from([("icon", regular::PLUS_CIRCLE.to_string())]),
+                )))
+                .clicked()
+            {
+                self.price_form = Some(PriceForm::new());
             }
+            ui.label(t.text("obs-price-rates-note"));
+        });
+        ui.add_space(4.0);
 
-            let selected_row = self.selected_price_row.clone();
+        let rows = Self::flattened_price_rows(&self.config.price);
 
-            TableBuilder::new(ui)
-                .striped(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::auto().at_least(100.0))
-                .column(Column::auto().at_least(140.0))
-                .column(Column::auto().at_least(96.0))
-                .column(Column::auto().at_least(96.0))
-                .min_scrolled_height(PRICE_TABLE_HEIGHT)
-                .max_scroll_height(PRICE_TABLE_HEIGHT)
-                .sense(egui::Sense::click())
-                .header(PRICE_ROW_HEIGHT, |mut header| {
-                    header.col(|ui| {
-                        ui.strong(t.text("obs-price-col-provider"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(t.text("obs-price-col-model"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(t.text("obs-price-col-input-rate"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(t.text("obs-price-col-output-rate"));
-                    });
-                })
-                .body(|body| {
-                    body.rows(PRICE_ROW_HEIGHT, rows.len(), |mut row| {
-                        let idx = row.index();
-                        let (provider, model, entry) = &rows[idx];
-                        let is_selected =
-                            selected_row.as_ref() == Some(&(provider.clone(), model.clone()));
+        if rows.is_empty() {
+            ui.label(t.text("obs-price-no-entries"));
+            return;
+        }
 
-                        row.set_selected(is_selected);
-                        row.col(|ui| {
-                            ui.label(provider);
-                        });
-                        row.col(|ui| {
-                            ui.label(model);
-                        });
-                        row.col(|ui| {
-                            ui.label(format!("${:.2}", entry.input_rate));
-                        });
-                        row.col(|ui| {
-                            ui.label(format!("${:.2}", entry.output_rate));
-                        });
+        let selected_row = self.selected_price_row.clone();
 
-                        let response = row.response();
-                        if response.clicked() {
-                            self.selected_price_row = if is_selected {
-                                None
-                            } else {
-                                Some((provider.clone(), model.clone()))
-                            };
+        TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto().at_least(100.0))
+            .column(Column::auto().at_least(140.0))
+            .column(Column::auto().at_least(96.0))
+            .column(Column::auto().at_least(96.0))
+            .min_scrolled_height(PRICE_TABLE_HEIGHT)
+            .max_scroll_height(PRICE_TABLE_HEIGHT)
+            .sense(egui::Sense::click())
+            .header(PRICE_ROW_HEIGHT, |mut header| {
+                header.col(|ui| {
+                    ui.strong(t.text("obs-price-col-provider"));
+                });
+                header.col(|ui| {
+                    ui.strong(t.text("obs-price-col-model"));
+                });
+                header.col(|ui| {
+                    ui.strong(t.text("obs-price-col-input-rate"));
+                });
+                header.col(|ui| {
+                    ui.strong(t.text("obs-price-col-output-rate"));
+                });
+            })
+            .body(|body| {
+                body.rows(PRICE_ROW_HEIGHT, rows.len(), |mut row| {
+                    let idx = row.index();
+                    let (provider, model, entry) = &rows[idx];
+                    let is_selected =
+                        selected_row.as_ref() == Some(&(provider.clone(), model.clone()));
+
+                    row.set_selected(is_selected);
+                    row.col(|ui| {
+                        ui.label(provider);
+                    });
+                    row.col(|ui| {
+                        ui.label(model);
+                    });
+                    row.col(|ui| {
+                        ui.label(format!("${:.2}", entry.input_rate));
+                    });
+                    row.col(|ui| {
+                        ui.label(format!("${:.2}", entry.output_rate));
+                    });
+
+                    let response = row.response();
+                    if response.clicked() {
+                        self.selected_price_row = if is_selected {
+                            None
+                        } else {
+                            Some((provider.clone(), model.clone()))
+                        };
+                    }
+
+                    let p = provider.clone();
+                    let m = model.clone();
+                    response.context_menu(|ui: &mut egui::Ui| {
+                        if ui
+                            .button(t.text_args(
+                                "obs-price-ctx-edit",
+                                HashMap::from([("icon", regular::PENCIL_SIMPLE.to_string())]),
+                            ))
+                            .clicked()
+                        {
+                            edit_provider = Some(p.clone());
+                            edit_model = Some(m.clone());
+                            ui.close();
                         }
-
-                        let p = provider.clone();
-                        let m = model.clone();
-                        response.context_menu(|ui: &mut egui::Ui| {
-                            if ui
-                                .button(t.text_args(
-                                    "obs-price-ctx-edit",
-                                    HashMap::from([("icon", regular::PENCIL_SIMPLE.to_string())]),
+                        ui.separator();
+                        if ui
+                            .add(egui::Button::new(
+                                RichText::new(t.text_args(
+                                    "obs-price-ctx-delete",
+                                    HashMap::from([("icon", regular::TRASH.to_string())]),
                                 ))
-                                .clicked()
-                            {
-                                edit_provider = Some(p.clone());
-                                edit_model = Some(m.clone());
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui
-                                .add(egui::Button::new(
-                                    RichText::new(t.text_args(
-                                        "obs-price-ctx-delete",
-                                        HashMap::from([("icon", regular::TRASH.to_string())]),
-                                    ))
-                                    .color(ui.visuals().warn_fg_color),
-                                ))
-                                .clicked()
-                            {
-                                delete_provider = Some(p.clone());
-                                delete_model = Some(m.clone());
-                                ui.close();
-                            }
-                        });
+                                .color(ui.visuals().warn_fg_color),
+                            ))
+                            .clicked()
+                        {
+                            delete_provider = Some(p.clone());
+                            delete_model = Some(m.clone());
+                            ui.close();
+                        }
                     });
                 });
-        });
+            });
 
         if let (Some(provider), Some(model)) = (edit_provider, edit_model)
             && let Some(entry) = self
@@ -634,6 +957,99 @@ impl ObservabilityPanel {
             self.price_delete_confirm = None;
         }
     }
+
+    fn render_section_dock(&mut self, ui: &mut egui::Ui, t: &Translator) {
+        let mut dock_state = std::mem::replace(
+            &mut self.section_dock_state,
+            Self::section_dock_state(self.active_section),
+        );
+        let mut style = Style::from_egui(ui.style().as_ref());
+        style.tab_bar.show_scroll_bar_on_overflow = false;
+
+        DockArea::new(&mut dock_state)
+            .id(egui::Id::new("observability-section-dock"))
+            .style(style)
+            .show_add_buttons(false)
+            .show_close_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .tab_context_menus(false)
+            .draggable_tabs(false)
+            .allowed_splits(AllowedSplits::None)
+            .show_inside(
+                ui,
+                &mut ObservabilitySectionTabViewer {
+                    panel: self,
+                    translator: t,
+                },
+            );
+
+        self.section_dock_state = dock_state;
+    }
+}
+
+struct ObservabilitySectionTabViewer<'a> {
+    panel: &'a mut ObservabilityPanel,
+    translator: &'a Translator,
+}
+
+impl egui_dock::TabViewer for ObservabilitySectionTabViewer<'_> {
+    type Tab = ObservabilitySection;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        self.translator.text(tab.title_key()).into()
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("observability-section-tab", tab.tab_id()))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        self.panel.active_section = *tab;
+        egui::ScrollArea::vertical()
+            .id_salt(("observability-section-scroll", tab.tab_id()))
+            .auto_shrink([false, false])
+            .show(ui, |ui| match *tab {
+                ObservabilitySection::General => {
+                    self.panel.render_general_section(ui, self.translator)
+                }
+                ObservabilitySection::Metrics => {
+                    self.panel.render_metrics_section(ui, self.translator)
+                }
+                ObservabilitySection::Traces => {
+                    self.panel.render_traces_section(ui, self.translator)
+                }
+                ObservabilitySection::Otlp => self.panel.render_otlp_section(ui, self.translator),
+                ObservabilitySection::Prometheus => {
+                    self.panel.render_prometheus_section(ui, self.translator)
+                }
+                ObservabilitySection::Audit => self.panel.render_audit_section(ui, self.translator),
+                ObservabilitySection::LocalStore => {
+                    self.panel.render_local_store_section(ui, self.translator)
+                }
+                ObservabilitySection::Pricing => {
+                    self.panel.render_price_section(ui, self.translator)
+                }
+            });
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        if response.clicked() {
+            self.panel.active_section = *tab;
+        }
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
+        false
+    }
+
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false]
+    }
 }
 
 impl PanelRenderer for ObservabilityPanel {
@@ -687,272 +1103,7 @@ impl PanelRenderer for ObservabilityPanel {
                 .size(Size::remainder().at_least(200.0))
                 .vertical(|mut strip| {
                     strip.cell(|ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("observability-scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.collapsing(t.text("obs-section-general"), |ui| {
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-enabled"),
-                                            &t.text("obs-field-enabled-hint"),
-                                        );
-                                        if ui.add(toggle(&mut this.config.enabled)).changed() {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-service-name"),
-                                            &t.text("obs-field-service-name-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(&mut this.service_name_buffer)
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-service-version"),
-                                            &t.text("obs-field-service-version-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(&mut this.service_version_buffer)
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                });
-
-                                ui.separator();
-
-                                ui.collapsing(t.text("obs-section-metrics"), |ui| {
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-enabled"),
-                                            &t.text("obs-field-enabled-hint"),
-                                        );
-                                        if ui
-                                            .add(toggle(&mut this.config.metrics.enabled))
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-export-interval"),
-                                            &t.text("obs-field-export-interval-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(&mut this.export_interval_buffer)
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                });
-
-                                ui.separator();
-
-                                ui.collapsing(t.text("obs-section-traces"), |ui| {
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-enabled"),
-                                            &t.text("obs-field-enabled-hint"),
-                                        );
-                                        if ui.add(toggle(&mut this.config.traces.enabled)).changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-sample-rate"),
-                                            &t.text("obs-field-sample-rate-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(&mut this.sample_rate_buffer)
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                });
-
-                                ui.separator();
-
-                                ui.collapsing(t.text("obs-section-otlp"), |ui| {
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-enabled"),
-                                            &t.text("obs-field-enabled-hint"),
-                                        );
-                                        if ui.add(toggle(&mut this.config.otlp.enabled)).changed() {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-endpoint"),
-                                            &t.text("obs-field-endpoint-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(&mut this.endpoint_buffer)
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.label(t.text("obs-field-headers"));
-                                    if this.config.otlp.headers.is_empty() {
-                                        ui.label(t.text("obs-field-headers-none"));
-                                    } else {
-                                        for (key, value) in &this.config.otlp.headers {
-                                            ui.label(format!("  {key}: {value}"));
-                                        }
-                                    }
-                                });
-
-                                ui.separator();
-
-                                ui.collapsing(t.text("obs-section-prometheus"), |ui| {
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-enabled"),
-                                            &t.text("obs-field-enabled-hint"),
-                                        );
-                                        if ui
-                                            .add(toggle(&mut this.config.prometheus.enabled))
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-listen-port"),
-                                            &t.text("obs-field-listen-port-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(&mut this.prometheus_port_buffer)
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-path"),
-                                            &t.text("obs-field-path-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(&mut this.prometheus_path_buffer)
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                });
-
-                                ui.separator();
-
-                                ui.collapsing(t.text("obs-section-audit"), |ui| {
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-enabled"),
-                                            &t.text("obs-field-enabled-hint"),
-                                        );
-                                        if ui.add(toggle(&mut this.config.audit.enabled)).changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-output-path"),
-                                            &t.text("obs-field-output-path-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(
-                                                &mut this.audit_output_path_buffer,
-                                            )
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                });
-
-                                ui.separator();
-
-                                ui.collapsing(t.text("obs-section-local-store"), |ui| {
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-enabled"),
-                                            &t.text("obs-field-enabled-hint"),
-                                        );
-                                        if ui
-                                            .add(toggle(&mut this.config.local_store.enabled))
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-retention-days"),
-                                            &t.text("obs-field-retention-days-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(
-                                                &mut this.local_store_retention_days_buffer,
-                                            )
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                    ui.horizontal(|ui| {
-                                        label_with_hint(
-                                            ui,
-                                            &t.text("obs-field-flush-interval"),
-                                            &t.text("obs-field-flush-interval-hint"),
-                                        );
-                                        if ui
-                                            .text_edit_singleline(
-                                                &mut this.local_store_flush_interval_buffer,
-                                            )
-                                            .changed()
-                                        {
-                                            this.mark_dirty();
-                                        }
-                                    });
-                                });
-
-                                ui.separator();
-
-                                this.render_price_section(ui);
-                            });
+                        this.render_section_dock(ui, &t);
                     });
                 });
         };
