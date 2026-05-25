@@ -1087,22 +1087,31 @@ impl SystemPanel {
         notifications: &mut NotificationCenter,
         t: &Translator,
     ) {
+        let column_height = ui.available_height();
         ui.columns(2, |cols| {
-            cols[0].vertical(|ui| {
-                ui.label(t.text("system-disk-usage-description"));
-                ui.add_space(8.0);
+            egui::ScrollArea::vertical()
+                .id_salt("system-disk-usage-list-scroll")
+                .auto_shrink([false, false])
+                .max_height(column_height)
+                .show(&mut cols[0], |ui| {
+                    ui.label(t.text("system-disk-usage-description"));
+                    ui.add_space(8.0);
 
-                for (index, kind) in DISK_USAGE_DIRS.into_iter().enumerate() {
-                    if index > 0 {
-                        ui.separator();
+                    for (index, kind) in DISK_USAGE_DIRS.into_iter().enumerate() {
+                        if index > 0 {
+                            ui.separator();
+                        }
+                        self.render_section(ui, kind, notifications);
                     }
-                    self.render_section(ui, kind, notifications);
-                }
-            });
+                });
 
-            cols[1].vertical(|ui| {
-                self.render_disk_usage_chart(ui, t);
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("system-disk-usage-chart-scroll")
+                .auto_shrink([false, false])
+                .max_height(column_height)
+                .show(&mut cols[1], |ui| {
+                    self.render_disk_usage_chart(ui, t);
+                });
         });
     }
 
@@ -1153,13 +1162,16 @@ impl SystemPanel {
 
         let slices = self.disk_usage_pie_slices(t);
         let chart_side = ui.available_width().min(320.0).max(160.0);
-        ui.add(
-            PieChart::new(&slices)
-                .palette(PieChartPalette::Tableau)
-                .show_labels(true)
-                .show_separators(true)
-                .desired_size(egui::vec2(chart_side, chart_side)),
-        );
+        ui.horizontal(|ui| {
+            ui.add_space(((ui.available_width() - chart_side) / 2.0).max(0.0));
+            ui.add(
+                PieChart::new(&slices)
+                    .palette(PieChartPalette::Tableau)
+                    .show_labels(true)
+                    .show_separators(true)
+                    .desired_size(egui::vec2(chart_side, chart_side)),
+            );
+        });
         ui.add_space(8.0);
         ui.label(RichText::new(t.text_args(
             "system-disk-usage-chart-total",
@@ -1244,21 +1256,28 @@ impl egui_dock::TabViewer for SystemViewTabViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         self.panel.current_view = *tab;
-        egui::ScrollArea::vertical()
-            .id_salt(("system-view-scroll", tab.tab_id()))
-            .auto_shrink([false, false])
-            .show(ui, |ui| match *tab {
-                SystemView::HostInformation => {
-                    self.panel.render_host_information(ui);
-                }
-                SystemView::ProgramDiskUsage => {
-                    self.panel
-                        .render_program_disk_usage(ui, self.notifications, self.translator);
-                }
-                SystemView::Environment => {
-                    self.panel.render_env_check_section(ui);
-                }
-            });
+        match *tab {
+            SystemView::HostInformation => {
+                egui::ScrollArea::vertical()
+                    .id_salt(("system-view-scroll", tab.tab_id()))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.panel.render_host_information(ui);
+                    });
+            }
+            SystemView::ProgramDiskUsage => {
+                self.panel
+                    .render_program_disk_usage(ui, self.notifications, self.translator);
+            }
+            SystemView::Environment => {
+                egui::ScrollArea::vertical()
+                    .id_salt(("system-view-scroll", tab.tab_id()))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.panel.render_env_check_section(ui);
+                    });
+            }
+        }
     }
 
     fn is_closeable(&self, _tab: &Self::Tab) -> bool {
