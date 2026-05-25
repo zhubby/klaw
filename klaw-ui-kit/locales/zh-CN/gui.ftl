@@ -949,7 +949,9 @@ skills-reg-config-cancel = 取消
 skills-reg-form-title-edit = 编辑技能注册源
 skills-reg-form-title-add = 添加技能注册源
 skills-reg-form-label-name = 名称
+skills-reg-form-name-hint = 配置和技能元数据中使用的唯一注册源 ID。建议使用小写字母、数字、连字符或下划线，例如 "team-skills" 或 "private"。
 skills-reg-form-label-address = 地址
+skills-reg-form-address-hint = 技能注册源的 Git 仓库 URL。例如 "https://github.com/anthropics/skills" 或 "git@github.com:acme/skills.git"。
 skills-reg-form-btn-save = 保存
 skills-reg-form-btn-cancel = 取消
 

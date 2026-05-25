@@ -2077,7 +2077,7 @@ pub async fn build_runtime_bundle(config: &AppConfig) -> Result<RuntimeBundle, B
     let acp_init = spawn_acp_init(&tools, &config.acp);
 
     ensure_workspace_prompt_templates_if_possible().await;
-    let loaded_skills = load_skills_system_prompt(config).await;
+    let loaded_skills = load_skills_system_prompt(config, true).await;
     let skill_names = loaded_skills.skill_names.clone();
     let base_system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
     let system_prompt = compose_system_prompt(
@@ -2312,7 +2312,7 @@ pub async fn reload_runtime_skills_prompt(
     let store = ConfigStore::open(None)?;
     let snapshot = store.snapshot();
     ensure_workspace_prompt_templates_if_possible().await;
-    let loaded_skills = load_skills_system_prompt(&snapshot.config).await;
+    let loaded_skills = load_skills_system_prompt(&snapshot.config, false).await;
     let skill_names = loaded_skills.skill_names.clone();
     let base_system_prompt = build_runtime_system_prompt(loaded_skills.skill_entries);
     {
@@ -2385,7 +2385,10 @@ struct LoadedSkillsPrompt {
     skill_names: Vec<String>,
 }
 
-async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
+async fn load_skills_system_prompt(
+    config: &AppConfig,
+    sync_registries: bool,
+) -> LoadedSkillsPrompt {
     info!("loading local skills for system prompt");
     let store = match open_default_skills_manager() {
         Ok(store) => store,
@@ -2395,40 +2398,42 @@ async fn load_skills_system_prompt(config: &AppConfig) -> LoadedSkillsPrompt {
         }
     };
 
-    let sources: Vec<RegistrySource> = config
-        .skills
-        .registries
-        .iter()
-        .map(|(name, registry)| RegistrySource {
-            name: name.clone(),
-            address: registry.address.clone(),
-        })
-        .collect();
-    let installed: Vec<InstalledSkill> = config
-        .skills
-        .registries
-        .iter()
-        .flat_map(|(registry_name, registry)| {
-            registry.installed.iter().map(|skill_name| InstalledSkill {
-                registry: registry_name.clone(),
-                name: skill_name.clone(),
+    if sync_registries {
+        let sources: Vec<RegistrySource> = config
+            .skills
+            .registries
+            .iter()
+            .map(|(name, registry)| RegistrySource {
+                name: name.clone(),
+                address: registry.address.clone(),
             })
-        })
-        .collect();
-    match store
-        .sync_registry_installed_skills(&sources, &installed, config.skills.sync_timeout)
-        .await
-    {
-        Ok(report) => {
-            info!(
-                synced_registries = ?report.synced_registries,
-                installed_skills = ?report.installed_skills,
-                removed_skills = ?report.removed_skills,
-                "registry skills sync completed"
-            );
-        }
-        Err(err) => {
-            warn!("failed to sync registry-installed skills: {err}");
+            .collect();
+        let installed: Vec<InstalledSkill> = config
+            .skills
+            .registries
+            .iter()
+            .flat_map(|(registry_name, registry)| {
+                registry.installed.iter().map(|skill_name| InstalledSkill {
+                    registry: registry_name.clone(),
+                    name: skill_name.clone(),
+                })
+            })
+            .collect();
+        match store
+            .sync_registry_installed_skills(&sources, &installed, config.skills.sync_timeout)
+            .await
+        {
+            Ok(report) => {
+                info!(
+                    synced_registries = ?report.synced_registries,
+                    installed_skills = ?report.installed_skills,
+                    removed_skills = ?report.removed_skills,
+                    "registry skills sync completed"
+                );
+            }
+            Err(err) => {
+                warn!("failed to sync registry-installed skills: {err}");
+            }
         }
     }
 

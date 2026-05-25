@@ -11,7 +11,7 @@ use klaw_skill::{
     FileSystemSkillStore, InstalledSkill, RegistrySource, open_default_skills_manager,
 };
 use klaw_skill::{RegistrySyncReport, RegistrySyncStatus};
-use klaw_ui_kit::{LocaleDomain, Translator};
+use klaw_ui_kit::{LocaleDomain, Translator, label_with_hint};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::mpsc::{self, Receiver};
@@ -285,12 +285,7 @@ impl SkillsRegistryPanel {
         target: SkillSyncTarget,
     ) -> Result<SkillSyncRequest, String> {
         let registry_names = match &target {
-            SkillSyncTarget::All => config
-                .skills
-                .registries
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>(),
+            SkillSyncTarget::All => config.skills.registries.keys().cloned().collect::<Vec<_>>(),
             SkillSyncTarget::Registry(registry_name) => {
                 if !config.skills.registries.contains_key(registry_name) {
                     return Err(Self::translator().text_args(
@@ -325,11 +320,7 @@ impl SkillsRegistryPanel {
         })
     }
 
-    fn sync_target(
-        &mut self,
-        target: SkillSyncTarget,
-        notifications: &mut NotificationCenter,
-    ) {
+    fn sync_target(&mut self, target: SkillSyncTarget, notifications: &mut NotificationCenter) {
         if self.sync_target.is_some() {
             notifications
                 .warning(Self::translator().text("skills-reg-notify-sync-already-running"));
@@ -396,10 +387,7 @@ impl SkillsRegistryPanel {
                                 notifications.success(Self::translator().text_args(
                                     "skills-reg-notify-sync-all-success",
                                     HashMap::from([
-                                        (
-                                            "registries",
-                                            report.synced_registries.len().to_string(),
-                                        ),
+                                        ("registries", report.synced_registries.len().to_string()),
                                         ("added", report.installed_skills.len().to_string()),
                                         ("removed", report.removed_skills.len().to_string()),
                                     ]),
@@ -417,25 +405,23 @@ impl SkillsRegistryPanel {
                             }
                         }
                     }
-                    Err(err) => {
-                        match target {
-                            SkillSyncTarget::All => {
-                                notifications.error(Self::translator().text_args(
-                                    "skills-reg-notify-sync-all-failed",
-                                    HashMap::from([("error", err.to_string())]),
-                                ));
-                            }
-                            SkillSyncTarget::Registry(registry_name) => {
-                                notifications.error(Self::translator().text_args(
-                                    "skills-reg-notify-sync-failed",
-                                    HashMap::from([
-                                        ("registry_name", registry_name),
-                                        ("error", err.to_string()),
-                                    ]),
-                                ));
-                            }
+                    Err(err) => match target {
+                        SkillSyncTarget::All => {
+                            notifications.error(Self::translator().text_args(
+                                "skills-reg-notify-sync-all-failed",
+                                HashMap::from([("error", err.to_string())]),
+                            ));
                         }
-                    }
+                        SkillSyncTarget::Registry(registry_name) => {
+                            notifications.error(Self::translator().text_args(
+                                "skills-reg-notify-sync-failed",
+                                HashMap::from([
+                                    ("registry_name", registry_name),
+                                    ("error", err.to_string()),
+                                ]),
+                            ));
+                        }
+                    },
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {}
@@ -578,11 +564,19 @@ impl SkillsRegistryPanel {
                     .num_columns(2)
                     .spacing([12.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label(t.text("skills-reg-form-label-name"));
+                        label_with_hint(
+                            ui,
+                            &t.text("skills-reg-form-label-name"),
+                            &t.text("skills-reg-form-name-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.name);
                         ui.end_row();
 
-                        ui.label(t.text("skills-reg-form-label-address"));
+                        label_with_hint(
+                            ui,
+                            &t.text("skills-reg-form-label-address"),
+                            &t.text("skills-reg-form-address-hint"),
+                        );
                         ui.text_edit_singleline(&mut form.address);
                         ui.end_row();
                     });
@@ -788,9 +782,7 @@ impl PanelRenderer for SkillsRegistryPanel {
 
                         let is_syncing = match self.sync_target.as_ref() {
                             Some(SkillSyncTarget::All) => true,
-                            Some(SkillSyncTarget::Registry(registry_name)) => {
-                                registry_name == name
-                            }
+                            Some(SkillSyncTarget::Registry(registry_name)) => registry_name == name,
                             None => false,
                         };
                         let is_any_syncing = self.sync_target.is_some();

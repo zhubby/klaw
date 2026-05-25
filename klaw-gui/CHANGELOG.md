@@ -5,6 +5,7 @@
 ### Added
 
 - Skills Registry 面板新增全部同步按钮，可一次同步所有 registry 并刷新同步状态。
+- Skills Registry 添加/编辑表单现在为名称和地址字段显示说明与示例。
 
 ### Fixed
 

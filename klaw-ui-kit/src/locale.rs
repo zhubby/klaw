@@ -121,5 +121,3 @@ fn load_translator(domain: LocaleDomain, language: UiLanguage) -> FluentLanguage
     loader.set_use_isolating(false);
     loader
 }
-
-

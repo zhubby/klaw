@@ -949,7 +949,9 @@ skills-reg-config-cancel = Cancel
 skills-reg-form-title-edit = Edit Skills Registry
 skills-reg-form-title-add = Add Skills Registry
 skills-reg-form-label-name = Name
+skills-reg-form-name-hint = Unique registry ID used in config and skill metadata. Use lowercase letters, numbers, hyphens, or underscores, e.g. "team-skills" or "private".
 skills-reg-form-label-address = Address
+skills-reg-form-address-hint = Git repository URL for the skills registry. Examples: "https://github.com/anthropics/skills" or "git@github.com:acme/skills.git".
 skills-reg-form-btn-save = Save
 skills-reg-form-btn-cancel = Cancel
 

@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage};
-
+use std::collections::HashMap;
 
 #[test]
 fn ui_language_defaults_to_english_and_exposes_labels() {
