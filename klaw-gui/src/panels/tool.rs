@@ -8,7 +8,7 @@ use crate::time_format::format_timestamp_millis;
 use crate::widgets::{ArrayEditor, show_json_tree_with_id};
 use chrono::{Datelike, Local, NaiveDate};
 use egui::{Color32, FontId, TextFormat, text::LayoutJob};
-use egui_extras::{Column, DatePickerButton, Size, StripBuilder, TableBuilder};
+use egui_extras::{Column, DatePickerButton, TableBuilder};
 use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ApplyPatchConfig, ChannelAttachmentToolConfig, ConfigError, ConfigSnapshot,
@@ -219,8 +219,9 @@ const INSPECT_WINDOW_WIDTH: f32 = 760.0;
 const INSPECT_WINDOW_MAX_HEIGHT: f32 = 760.0;
 const INSPECT_WINDOW_CHROME_HEIGHT: f32 = 56.0;
 const INSPECT_SECTION_CHROME_HEIGHT: f32 = 28.0;
-const INSPECT_DESCRIPTION_HEIGHT: f32 = 120.0;
-const INSPECT_SCHEMA_HEIGHT: f32 = 260.0;
+const INSPECT_DESCRIPTION_MIN_HEIGHT: f32 = 48.0;
+const INSPECT_SCHEMA_MIN_HEIGHT: f32 = 260.0;
+const INSPECT_SCHEMA_TARGET_HEIGHT: f32 = 520.0;
 const LOGS_WINDOW_VIEWPORT_RATIO: f32 = 2.0 / 3.0;
 const LOGS_SUMMARY_WINDOW_WIDTH: f32 = 860.0;
 const LOGS_SUMMARY_WINDOW_HEIGHT: f32 = 720.0;
@@ -1321,7 +1322,7 @@ impl ToolPanel {
             preferred_window_height.min(INSPECT_WINDOW_MAX_HEIGHT),
         );
         let inspect_body_height =
-            (window_size.y - INSPECT_WINDOW_CHROME_HEIGHT).max(INSPECT_SCHEMA_HEIGHT);
+            (window_size.y - INSPECT_WINDOW_CHROME_HEIGHT).max(INSPECT_SCHEMA_MIN_HEIGHT);
 
         let mut open = true;
         egui::Window::new(Self::translator().text_args(
@@ -1341,75 +1342,60 @@ impl ToolPanel {
         .max_height(window_size.y)
         .show(ui.ctx(), |ui| {
             let description = self.tool_description(&tool);
-            egui::ScrollArea::vertical()
-                .id_salt(("tool-inspect-body", tool.config_key))
-                .max_height(inspect_body_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    StripBuilder::new(ui)
-                        .size(Size::exact(
-                            INSPECT_DESCRIPTION_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
-                        ))
-                        .size(Size::exact(
-                            INSPECT_SCHEMA_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT,
-                        ))
-                        .vertical(|mut strip| {
-                            strip.cell(|ui| {
-                                ui.strong(t.text("tool-inspect-description"));
-                                ui.add_space(6.0);
-                                egui::Frame::group(ui.style()).show(ui, |ui| {
-                                    ui.set_min_height(INSPECT_DESCRIPTION_HEIGHT);
-                                    ui.set_max_height(INSPECT_DESCRIPTION_HEIGHT);
-                                    egui::ScrollArea::vertical()
-                                        .id_salt(("tool-inspect-description", tool.config_key))
-                                        .max_height(INSPECT_DESCRIPTION_HEIGHT)
-                                        .auto_shrink([false, false])
-                                        .show(ui, |ui| {
-                                            ui.label(description);
-                                        });
-                                });
-                            });
+            let body_size = egui::vec2(ui.available_width(), inspect_body_height);
+            ui.allocate_ui_with_layout(body_size, egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.strong(t.text("tool-inspect-description"));
+                ui.add_space(6.0);
+                ui.label(description);
+                ui.add_space(8.0);
 
-                            strip.cell(|ui| {
-                                ui.separator();
-                                ui.strong(t.text("tool-inspect-schema"));
-                                ui.add_space(6.0);
-                                egui::Frame::group(ui.style()).show(ui, |ui| {
-                                    ui.set_min_height(INSPECT_SCHEMA_HEIGHT);
-                                    ui.set_max_height(INSPECT_SCHEMA_HEIGHT);
-                                    if definition.is_none() {
-                                        egui::ScrollArea::vertical()
-                                            .id_salt(("tool-inspect-schema-empty", tool.config_key))
-                                            .max_height(INSPECT_SCHEMA_HEIGHT)
-                                            .auto_shrink([false, false])
-                                            .show(ui, |ui| {
-                                                ui.label(
-                                                    t.text("tool-inspect-metadata-unavailable"),
-                                                );
-                                            });
-                                        return;
-                                    }
+                let schema_block_height = ui
+                    .available_height()
+                    .max(INSPECT_SCHEMA_MIN_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT);
+                egui::ScrollArea::vertical()
+                    .id_salt(("tool-inspect-body", tool.config_key))
+                    .max_height(schema_block_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.separator();
+                        ui.strong(t.text("tool-inspect-schema"));
+                        ui.add_space(6.0);
+                        let schema_height =
+                            (schema_block_height - INSPECT_SECTION_CHROME_HEIGHT)
+                                .max(INSPECT_SCHEMA_MIN_HEIGHT);
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.set_min_height(schema_height);
+                            ui.set_max_height(schema_height);
+                            if definition.is_none() {
+                                egui::ScrollArea::vertical()
+                                    .id_salt(("tool-inspect-schema-empty", tool.config_key))
+                                    .max_height(schema_height)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.label(t.text("tool-inspect-metadata-unavailable"));
+                                    });
+                                return;
+                            }
 
-                                    egui::ScrollArea::both()
-                                        .id_salt(("tool-inspect-schema", tool.config_key))
-                                        .max_height(INSPECT_SCHEMA_HEIGHT)
-                                        .auto_shrink([false, false])
-                                        .show(ui, |ui| {
-                                            let editor_width = ui.available_width().max(1.0);
-                                            ui.add_sized(
-                                                [editor_width, INSPECT_SCHEMA_HEIGHT],
-                                                egui::TextEdit::multiline(&mut schema_json)
-                                                    .desired_width(f32::INFINITY)
-                                                    .font(egui::TextStyle::Monospace)
-                                                    .code_editor()
-                                                    .layouter(&mut json_layouter)
-                                                    .interactive(false),
-                                            );
-                                        });
+                            egui::ScrollArea::both()
+                                .id_salt(("tool-inspect-schema", tool.config_key))
+                                .max_height(schema_height)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    let editor_width = ui.available_width().max(1.0);
+                                    ui.add_sized(
+                                        [editor_width, schema_height],
+                                        egui::TextEdit::multiline(&mut schema_json)
+                                            .desired_width(f32::INFINITY)
+                                            .font(egui::TextStyle::Monospace)
+                                            .code_editor()
+                                            .layouter(&mut json_layouter)
+                                            .interactive(false),
+                                    );
                                 });
-                            });
                         });
-                });
+                    });
+            });
         });
 
         if !open {
@@ -2265,8 +2251,8 @@ fn render_optional_json_section(
 
 fn preferred_inspect_window_height() -> f32 {
     INSPECT_WINDOW_CHROME_HEIGHT
-        + INSPECT_DESCRIPTION_HEIGHT
-        + INSPECT_SCHEMA_HEIGHT
+        + INSPECT_DESCRIPTION_MIN_HEIGHT
+        + INSPECT_SCHEMA_TARGET_HEIGHT
         + INSPECT_SECTION_CHROME_HEIGHT * 2.0
 }
 
