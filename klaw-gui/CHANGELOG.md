@@ -6,6 +6,7 @@
 
 - Skills Registry 面板新增全部同步按钮，可一次同步所有 registry 并刷新同步状态。
 - Skills Registry 添加/编辑表单现在为名称和地址字段显示说明与示例。
+- System 面板的程序磁盘使用视图新增右侧饼图，占比展示各 Klaw 数据目录的已计算用量。
 
 ### Changed
 

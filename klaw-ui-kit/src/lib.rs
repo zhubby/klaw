@@ -3,6 +3,7 @@ pub mod foundation;
 pub mod label;
 pub mod locale;
 pub mod notifications;
+pub mod pie_chart;
 pub mod text_animator;
 pub mod theme;
 pub mod toggle;
@@ -15,4 +16,5 @@ pub use foundation::{
 pub use label::label_with_hint;
 pub use locale::{LocaleDomain, Translator, UiLanguage};
 pub use notifications::NotificationCenter;
+pub use pie_chart::{PieChart, PieChartPalette, PieSlice, equal_pie_slices};
 pub use theme::{DarkThemePreset, LightThemePreset, apply_theme, dark_visuals, light_visuals};

@@ -7,7 +7,7 @@ use egui_dock::{AllowedSplits, DockArea, DockState, NodeIndex, Style, SurfaceInd
 use egui_phosphor::regular;
 use klaw_config::ConfigStore;
 use klaw_storage::StoragePaths;
-use klaw_ui_kit::{LocaleDomain, Translator};
+use klaw_ui_kit::{LocaleDomain, PieChart, PieChartPalette, PieSlice, Translator};
 use klaw_util::{DependencyCategory, EnvironmentCheckReport, KLAW_DIR_NAME, default_data_dir};
 use std::collections::HashMap;
 use std::fs;
@@ -20,6 +20,16 @@ use sysinfo::{CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, Refresh
 
 const TASK_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const HOST_INFO_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const DISK_USAGE_DIRS: [DirKind; 8] = [
+    DirKind::Tmp,
+    DirKind::Workspace,
+    DirKind::Sessions,
+    DirKind::Archives,
+    DirKind::Logs,
+    DirKind::Skills,
+    DirKind::SkillsRegistry,
+    DirKind::Models,
+];
 
 struct HostInfoData {
     system: System,
@@ -397,6 +407,12 @@ impl DirState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct DiskUsageChartEntry {
+    label: String,
+    bytes: u64,
+}
+
 pub struct SystemPanel {
     paths: Option<StoragePaths>,
     dirs: [DirState; 8],
@@ -523,16 +539,7 @@ impl SystemPanel {
     }
 
     fn ensure_initial_usage_loaded(&mut self) {
-        for kind in [
-            DirKind::Tmp,
-            DirKind::Workspace,
-            DirKind::Sessions,
-            DirKind::Archives,
-            DirKind::Logs,
-            DirKind::Skills,
-            DirKind::SkillsRegistry,
-            DirKind::Models,
-        ] {
+        for kind in DISK_USAGE_DIRS {
             let dir = self.get_dir(kind);
             if dir.usage_bytes.is_none() && dir.usage_rx.is_none() {
                 self.refresh_usage(kind);
@@ -889,16 +896,7 @@ impl SystemPanel {
 
     fn poll_tasks(&mut self, notifications: &mut NotificationCenter) {
         let t = Self::translator();
-        for kind in [
-            DirKind::Tmp,
-            DirKind::Workspace,
-            DirKind::Sessions,
-            DirKind::Archives,
-            DirKind::Logs,
-            DirKind::Skills,
-            DirKind::SkillsRegistry,
-            DirKind::Models,
-        ] {
+        for kind in DISK_USAGE_DIRS {
             let dir = self.get_dir_mut(kind);
             let title = kind.title_with_translator(&t);
 
@@ -1089,23 +1087,106 @@ impl SystemPanel {
         notifications: &mut NotificationCenter,
         t: &Translator,
     ) {
-        ui.label(t.text("system-disk-usage-description"));
+        ui.columns(2, |cols| {
+            cols[0].vertical(|ui| {
+                ui.label(t.text("system-disk-usage-description"));
+                ui.add_space(8.0);
+
+                for (index, kind) in DISK_USAGE_DIRS.into_iter().enumerate() {
+                    if index > 0 {
+                        ui.separator();
+                    }
+                    self.render_section(ui, kind, notifications);
+                }
+            });
+
+            cols[1].vertical(|ui| {
+                self.render_disk_usage_chart(ui, t);
+            });
+        });
+    }
+
+    fn disk_usage_chart_entries(&self, t: &Translator) -> Vec<DiskUsageChartEntry> {
+        DISK_USAGE_DIRS
+            .into_iter()
+            .filter_map(|kind| {
+                let bytes = self.get_dir(kind).usage_bytes?;
+                (bytes > 0).then(|| DiskUsageChartEntry {
+                    label: kind.title_with_translator(t),
+                    bytes,
+                })
+            })
+            .collect()
+    }
+
+    fn disk_usage_pie_slices(&self, t: &Translator) -> Vec<PieSlice> {
+        self.disk_usage_chart_entries(t)
+            .into_iter()
+            .map(|entry| PieSlice::new(entry.label, entry.bytes as f32))
+            .collect()
+    }
+
+    fn disk_usage_chart_total_bytes(&self) -> u64 {
+        DISK_USAGE_DIRS
+            .into_iter()
+            .filter_map(|kind| self.get_dir(kind).usage_bytes)
+            .filter(|bytes| *bytes > 0)
+            .fold(0_u64, u64::saturating_add)
+    }
+
+    fn render_disk_usage_chart(&self, ui: &mut egui::Ui, t: &Translator) {
+        ui.strong(t.text("system-disk-usage-chart-title"));
         ui.add_space(8.0);
-        self.render_section(ui, DirKind::Tmp, notifications);
-        ui.separator();
-        self.render_section(ui, DirKind::Workspace, notifications);
-        ui.separator();
-        self.render_section(ui, DirKind::Sessions, notifications);
-        ui.separator();
-        self.render_section(ui, DirKind::Archives, notifications);
-        ui.separator();
-        self.render_section(ui, DirKind::Logs, notifications);
-        ui.separator();
-        self.render_section(ui, DirKind::Skills, notifications);
-        ui.separator();
-        self.render_section(ui, DirKind::SkillsRegistry, notifications);
-        ui.separator();
-        self.render_section(ui, DirKind::Models, notifications);
+
+        let entries = self.disk_usage_chart_entries(t);
+        let total_bytes = self.disk_usage_chart_total_bytes();
+
+        if entries.is_empty() {
+            let message = if self.dirs.iter().any(|dir| dir.usage_rx.is_some()) {
+                t.text("system-disk-usage-chart-loading")
+            } else {
+                t.text("system-disk-usage-chart-empty")
+            };
+            ui.label(RichText::new(message).weak());
+            return;
+        }
+
+        let slices = self.disk_usage_pie_slices(t);
+        let chart_side = ui.available_width().min(320.0).max(160.0);
+        ui.add(
+            PieChart::new(&slices)
+                .palette(PieChartPalette::Tableau)
+                .show_labels(true)
+                .show_separators(true)
+                .desired_size(egui::vec2(chart_side, chart_side)),
+        );
+        ui.add_space(8.0);
+        ui.label(RichText::new(t.text_args(
+            "system-disk-usage-chart-total",
+            HashMap::from([("total", format_bytes(total_bytes))]),
+        )));
+        ui.add_space(8.0);
+
+        for (index, entry) in entries.iter().enumerate() {
+            let color = PieChartPalette::Tableau.slice_color(index, entries.len());
+            let percentage = if total_bytes == 0 {
+                0.0
+            } else {
+                (entry.bytes as f64 / total_bytes as f64) * 100.0
+            };
+
+            ui.horizontal(|ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, color);
+                ui.label(&entry.label);
+                ui.label(
+                    RichText::new(format!("{} ({percentage:.1}%)", format_bytes(entry.bytes)))
+                        .monospace()
+                        .weak(),
+                );
+            });
+        }
     }
 
     fn render_view_dock(
@@ -1346,7 +1427,8 @@ fn format_bytes(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_directory, collect_dir_usage};
+    use super::{DirKind, SystemPanel, clear_directory, collect_dir_usage};
+    use klaw_ui_kit::{LocaleDomain, Translator, UiLanguage};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1389,5 +1471,51 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn disk_usage_pie_slices_filter_missing_and_zero_usage() {
+        let mut panel = SystemPanel::default();
+        panel.dirs[SystemPanel::dir_index(DirKind::Tmp)].usage_bytes = Some(0);
+        panel.dirs[SystemPanel::dir_index(DirKind::Workspace)].usage_bytes = Some(128);
+        panel.dirs[SystemPanel::dir_index(DirKind::Sessions)].usage_bytes = None;
+        panel.dirs[SystemPanel::dir_index(DirKind::Logs)].usage_bytes = Some(256);
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+
+        let slices = panel.disk_usage_pie_slices(&translator);
+
+        assert_eq!(slices.len(), 2);
+        assert_eq!(slices[0].label, "Workspace");
+        assert_eq!(slices[0].value, 128.0);
+        assert_eq!(slices[1].label, "Logs");
+        assert_eq!(slices[1].value, 256.0);
+    }
+
+    #[test]
+    fn disk_usage_pie_slices_keep_directory_display_order() {
+        let mut panel = SystemPanel::default();
+        panel.dirs[SystemPanel::dir_index(DirKind::Models)].usage_bytes = Some(1);
+        panel.dirs[SystemPanel::dir_index(DirKind::Tmp)].usage_bytes = Some(2);
+        panel.dirs[SystemPanel::dir_index(DirKind::Archives)].usage_bytes = Some(3);
+        let translator = Translator::new(LocaleDomain::Gui, UiLanguage::English);
+
+        let labels = panel
+            .disk_usage_pie_slices(&translator)
+            .into_iter()
+            .map(|slice| slice.label)
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, vec!["Temporary", "Archives", "Models"]);
+    }
+
+    #[test]
+    fn disk_usage_chart_total_bytes_counts_only_positive_usage() {
+        let mut panel = SystemPanel::default();
+        panel.dirs[SystemPanel::dir_index(DirKind::Tmp)].usage_bytes = Some(0);
+        panel.dirs[SystemPanel::dir_index(DirKind::Workspace)].usage_bytes = Some(10);
+        panel.dirs[SystemPanel::dir_index(DirKind::Sessions)].usage_bytes = None;
+        panel.dirs[SystemPanel::dir_index(DirKind::Archives)].usage_bytes = Some(20);
+
+        assert_eq!(panel.disk_usage_chart_total_bytes(), 30);
     }
 }

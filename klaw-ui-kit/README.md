@@ -9,7 +9,37 @@
 - Shared font installation and embedded font assets used by both frontends
 - Platform-agnostic display copy helpers
 - Shared i18n primitives, language selection types, and embedded Fluent resources for frontend-specific domains
-- Lightweight `egui` wrappers used by both frontends
+- Lightweight `egui` wrappers used by both frontends, including shared controls and simple chart widgets
+
+## Shared widgets
+
+`klaw-ui-kit` provides platform-agnostic `egui` widgets that can be used from both desktop and web frontends.
+
+### Pie chart
+
+Use `PieChart` with `PieSlice` data for small categorical charts:
+
+```rust
+let slices = vec![
+    PieSlice::new("Open", 42.0),
+    PieSlice::new("Closed", 18.0).color(egui::Color32::from_rgb(214, 39, 40)),
+];
+
+ui.add(
+    PieChart::new(&slices)
+        .palette(PieChartPalette::Tableau)
+        .show_labels(true)
+        .show_separators(true)
+        .desired_size(egui::vec2(220.0, 220.0)),
+);
+```
+
+For equal fractional slices, use `equal_pie_slices(count)`:
+
+```rust
+let slices = equal_pie_slices(6);
+ui.add(PieChart::new(&slices));
+```
 
 ## Font features
 

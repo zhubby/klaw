@@ -651,6 +651,10 @@ system-host-na = N/A
 system-host-loading = Loading...
 
 system-disk-usage-description = Inspect and clear data under the Klaw data directory.
+system-disk-usage-chart-title = Usage Breakdown
+system-disk-usage-chart-total = Total tracked usage: { $total }
+system-disk-usage-chart-loading = Calculating usage...
+system-disk-usage-chart-empty = No tracked usage to chart yet.
 system-dir-path = Path: { $path }
 system-dir-path-unavailable = Path unavailable.
 system-dir-clearing-hint = Clearing removes files inside `{ $dir }`; the directory itself is kept.

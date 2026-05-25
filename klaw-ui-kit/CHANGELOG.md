@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-25
+
+### Added
+
+- 新增共享 `PieChart`、`PieSlice`、`PieChartPalette` 与 `equal_pie_slices()`，将 `pie_egui` 的饼图绘制逻辑适配为兼容 `egui 0.33.3` 的平台无关 ui-kit 组件。
+- 新增 System 面板磁盘使用饼图所需的 GUI i18n 文案与测试覆盖。
+
 ## 2026-05-15
 
 ### Added

@@ -651,6 +651,10 @@ system-host-na = 无
 system-host-loading = 加载中...
 
 system-disk-usage-description = 检查和清理 Klaw 数据目录下的数据。
+system-disk-usage-chart-title = 使用占比
+system-disk-usage-chart-total = 已跟踪总用量: { $total }
+system-disk-usage-chart-loading = 正在计算用量...
+system-disk-usage-chart-empty = 暂无可展示的已跟踪用量。
 system-dir-path = 路径: { $path }
 system-dir-path-unavailable = 路径不可用。
 system-dir-clearing-hint = 清除操作将删除 `{ $dir }` 内的文件；目录本身将被保留。

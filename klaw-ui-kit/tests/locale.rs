@@ -1092,6 +1092,25 @@ fn gui_system_panel_translates_parameterized_keys_in_english() {
         ),
         "Logs directory cleared"
     );
+    assert_eq!(
+        translator.text("system-disk-usage-chart-title"),
+        "Usage Breakdown"
+    );
+    assert_eq!(
+        translator.text_args(
+            "system-disk-usage-chart-total",
+            HashMap::from([("total", "3.00 KB".to_string())])
+        ),
+        "Total tracked usage: 3.00 KB"
+    );
+    assert_eq!(
+        translator.text("system-disk-usage-chart-loading"),
+        "Calculating usage..."
+    );
+    assert_eq!(
+        translator.text("system-disk-usage-chart-empty"),
+        "No tracked usage to chart yet."
+    );
 }
 
 #[test]
@@ -1124,6 +1143,22 @@ fn gui_system_panel_translates_parameterized_keys_in_chinese() {
             HashMap::from([("title", "日志".to_string())])
         ),
         "日志 目录已清除"
+    );
+    assert_eq!(translator.text("system-disk-usage-chart-title"), "使用占比");
+    assert_eq!(
+        translator.text_args(
+            "system-disk-usage-chart-total",
+            HashMap::from([("total", "3.00 KB".to_string())])
+        ),
+        "已跟踪总用量: 3.00 KB"
+    );
+    assert_eq!(
+        translator.text("system-disk-usage-chart-loading"),
+        "正在计算用量..."
+    );
+    assert_eq!(
+        translator.text("system-disk-usage-chart-empty"),
+        "暂无可展示的已跟踪用量。"
     );
 }
 

@@ -1343,8 +1343,7 @@ impl ToolPanel {
                 ui.strong(t.text("tool-inspect-schema"));
                 ui.add_space(6.0);
 
-                let schema_height =
-                    (ui.available_height() - ui.spacing().item_spacing.y).max(1.0);
+                let schema_height = (ui.available_height() - ui.spacing().item_spacing.y).max(1.0);
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.set_min_height(schema_height);
                     ui.set_max_height(schema_height);
