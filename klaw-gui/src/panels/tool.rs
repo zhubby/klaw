@@ -20,7 +20,7 @@ use klaw_session::{
     SessionManager, SqliteSessionManager, ToolAuditFilterOptionsQuery, ToolAuditQuery,
     ToolAuditRecord, ToolAuditSortOrder,
 };
-use klaw_ui_kit::{LocaleDomain, Translator};
+use klaw_ui_kit::{LocaleDomain, Translator, toggle::toggle};
 use std::collections::HashMap;
 use std::future::Future;
 use std::thread;
@@ -671,6 +671,12 @@ impl ToolPanel {
         Translator::new(LocaleDomain::Gui, current_ui_language())
     }
 
+    fn render_enabled_toggle_row(ui: &mut egui::Ui, t: &Translator, enabled: &mut bool) {
+        ui.label(t.text("tool-form-enabled"));
+        ui.add(toggle(enabled));
+        ui.end_row();
+    }
+
     fn ensure_store_loaded(&mut self, notifications: &mut NotificationCenter) {
         if self.store.is_some() {
             return;
@@ -1008,9 +1014,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-workspace"));
                                 ui.text_edit_singleline(&mut form.workspace);
@@ -1028,9 +1032,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-workspace"));
                                 ui.text_edit_singleline(&mut form.workspace);
@@ -1057,7 +1059,7 @@ impl ToolPanel {
                     ToolForm::Toggle(_, form) => {
                         ui.horizontal(|ui| {
                             ui.label(t.text("tool-form-enabled"));
-                            ui.checkbox(&mut form.enabled, "");
+                            ui.add(toggle(&mut form.enabled));
                         });
                     }
                     ToolForm::ChannelAttachment(form) => {
@@ -1065,9 +1067,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-max-bytes"));
                                 ui.text_edit_singleline(&mut form.max_bytes);
@@ -1081,9 +1081,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-search-limit"));
                                 ui.text_edit_singleline(&mut form.search_limit);
@@ -1107,9 +1105,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-search-limit"));
                                 ui.text_edit_singleline(&mut form.search_limit);
@@ -1129,9 +1125,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-max-chars"));
                                 ui.text_edit_singleline(&mut form.max_chars);
@@ -1161,9 +1155,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-provider"));
                                 ui.text_edit_singleline(&mut form.provider);
@@ -1257,9 +1249,7 @@ impl ToolPanel {
                             .num_columns(2)
                             .spacing([12.0, 8.0])
                             .show(ui, |ui| {
-                                ui.label(t.text("tool-form-enabled"));
-                                ui.checkbox(&mut form.enabled, "");
-                                ui.end_row();
+                                Self::render_enabled_toggle_row(ui, &t, &mut form.enabled);
 
                                 ui.label(t.text("tool-form-max-iterations"));
                                 ui.text_edit_singleline(&mut form.max_iterations);
@@ -1349,52 +1339,43 @@ impl ToolPanel {
                 ui.label(description);
                 ui.add_space(8.0);
 
-                let schema_block_height = ui
-                    .available_height()
-                    .max(INSPECT_SCHEMA_MIN_HEIGHT + INSPECT_SECTION_CHROME_HEIGHT);
-                egui::ScrollArea::vertical()
-                    .id_salt(("tool-inspect-body", tool.config_key))
-                    .max_height(schema_block_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.separator();
-                        ui.strong(t.text("tool-inspect-schema"));
-                        ui.add_space(6.0);
-                        let schema_height =
-                            (schema_block_height - INSPECT_SECTION_CHROME_HEIGHT)
-                                .max(INSPECT_SCHEMA_MIN_HEIGHT);
-                        egui::Frame::group(ui.style()).show(ui, |ui| {
-                            ui.set_min_height(schema_height);
-                            ui.set_max_height(schema_height);
-                            if definition.is_none() {
-                                egui::ScrollArea::vertical()
-                                    .id_salt(("tool-inspect-schema-empty", tool.config_key))
-                                    .max_height(schema_height)
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        ui.label(t.text("tool-inspect-metadata-unavailable"));
-                                    });
-                                return;
-                            }
+                ui.separator();
+                ui.strong(t.text("tool-inspect-schema"));
+                ui.add_space(6.0);
 
-                            egui::ScrollArea::both()
-                                .id_salt(("tool-inspect-schema", tool.config_key))
-                                .max_height(schema_height)
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    let editor_width = ui.available_width().max(1.0);
-                                    ui.add_sized(
-                                        [editor_width, schema_height],
-                                        egui::TextEdit::multiline(&mut schema_json)
-                                            .desired_width(f32::INFINITY)
-                                            .font(egui::TextStyle::Monospace)
-                                            .code_editor()
-                                            .layouter(&mut json_layouter)
-                                            .interactive(false),
-                                    );
-                                });
+                let schema_height =
+                    (ui.available_height() - ui.spacing().item_spacing.y).max(1.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_min_height(schema_height);
+                    ui.set_max_height(schema_height);
+                    if definition.is_none() {
+                        egui::ScrollArea::vertical()
+                            .id_salt(("tool-inspect-schema-empty", tool.config_key))
+                            .max_height(schema_height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.label(t.text("tool-inspect-metadata-unavailable"));
+                            });
+                        return;
+                    }
+
+                    egui::ScrollArea::both()
+                        .id_salt(("tool-inspect-schema", tool.config_key))
+                        .max_height(schema_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let editor_width = ui.available_width().max(1.0);
+                            ui.add_sized(
+                                [editor_width, schema_height],
+                                egui::TextEdit::multiline(&mut schema_json)
+                                    .desired_width(f32::INFINITY)
+                                    .font(egui::TextStyle::Monospace)
+                                    .code_editor()
+                                    .layouter(&mut json_layouter)
+                                    .interactive(false),
+                            );
                         });
-                    });
+                });
             });
         });
 
