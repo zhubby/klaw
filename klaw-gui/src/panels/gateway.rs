@@ -7,6 +7,7 @@ use crate::{
     request_set_tailscale_mode, request_start_gateway, request_tailscale_host_status,
 };
 use egui::Color32;
+use egui_dock::{AllowedSplits, DockArea, DockState, NodeIndex, Style, SurfaceIndex, TabIndex};
 use egui_phosphor::regular;
 use klaw_config::{
     AppConfig, ConfigError, ConfigSnapshot, ConfigStore, GatewayConfig, TailscaleMode,
@@ -112,6 +113,37 @@ struct PendingGatewayRequest {
     receiver: Receiver<PendingGatewayResult>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayTab {
+    Gateway,
+    Tailscale,
+}
+
+impl GatewayTab {
+    const ALL: [Self; 2] = [Self::Gateway, Self::Tailscale];
+
+    fn title_key(self) -> &'static str {
+        match self {
+            Self::Gateway => "menu-gateway",
+            Self::Tailscale => "gw-ts-heading",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Gateway => regular::PLUGS_CONNECTED,
+            Self::Tailscale => regular::NETWORK,
+        }
+    }
+
+    fn tab_id(self) -> &'static str {
+        match self {
+            Self::Gateway => "gateway",
+            Self::Tailscale => "tailscale",
+        }
+    }
+}
+
 pub struct GatewayPanel {
     status: Option<GatewayStatusSnapshot>,
     load_error: Option<String>,
@@ -123,6 +155,8 @@ pub struct GatewayPanel {
     config_form: GatewayConfigForm,
     config_window_open: bool,
     auth_token_visible: bool,
+    active_tab: GatewayTab,
+    tab_dock_state: DockState<GatewayTab>,
     selected_tailscale_mode: TailscaleMode,
     pending_request: Option<PendingGatewayRequest>,
 }
@@ -140,6 +174,8 @@ impl Default for GatewayPanel {
             config_form: GatewayConfigForm::default(),
             config_window_open: false,
             auth_token_visible: false,
+            active_tab: GatewayTab::Gateway,
+            tab_dock_state: Self::tab_dock_state(GatewayTab::Gateway),
             selected_tailscale_mode: TailscaleMode::Off,
             pending_request: None,
         }
@@ -149,6 +185,20 @@ impl Default for GatewayPanel {
 impl GatewayPanel {
     fn translator() -> Translator {
         Translator::new(LocaleDomain::Gui, current_ui_language())
+    }
+
+    fn tab_dock_state(active_tab: GatewayTab) -> DockState<GatewayTab> {
+        let mut dock_state = DockState::new(GatewayTab::ALL.to_vec());
+        let active_index = GatewayTab::ALL
+            .iter()
+            .position(|tab| *tab == active_tab)
+            .unwrap_or_default();
+        dock_state.set_active_tab((
+            SurfaceIndex::main(),
+            NodeIndex::root(),
+            TabIndex(active_index),
+        ));
+        dock_state
     }
 
     fn ensure_loaded(&mut self, notifications: &mut NotificationCenter) {
@@ -578,6 +628,362 @@ impl GatewayPanel {
             });
         self.config_window_open = open;
     }
+
+    fn render_gateway_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        status: &GatewayStatusSnapshot,
+        t: &Translator,
+    ) {
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    self.pending_request.is_none(),
+                    egui::Button::new(t.text_args(
+                        "gw-btn-refresh",
+                        HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                    )),
+                )
+                .clicked()
+            {
+                self.refresh(notifications, true, false);
+            }
+
+            if ui
+                .button(t.text_args(
+                    "gw-btn-config",
+                    HashMap::from([("icon", regular::SLIDERS.to_string())]),
+                ))
+                .clicked()
+            {
+                self.open_config_window();
+            }
+
+            if ui
+                .add_enabled(
+                    !status.transitioning && !status.running && self.pending_request.is_none(),
+                    egui::Button::new(t.text_args(
+                        "gw-btn-start",
+                        HashMap::from([("icon", regular::PLAY.to_string())]),
+                    )),
+                )
+                .clicked()
+            {
+                self.start(notifications);
+            }
+
+            if ui
+                .add_enabled(
+                    !status.transitioning && status.running && self.pending_request.is_none(),
+                    egui::Button::new(t.text_args(
+                        "gw-btn-restart",
+                        HashMap::from([("icon", regular::ARROW_COUNTER_CLOCKWISE.to_string())]),
+                    )),
+                )
+                .clicked()
+            {
+                self.restart(notifications);
+            }
+        });
+
+        ui.add_space(8.0);
+        egui::Grid::new("gateway-panel-status-grid")
+            .num_columns(2)
+            .spacing([16.0, 8.0])
+            .show(ui, |ui| {
+                ui.label(t.text("gw-status-configured"));
+                render_boolean_status(
+                    ui,
+                    status.configured_enabled,
+                    &t.text("gw-status-enabled"),
+                    &t.text("gw-status-disabled"),
+                );
+                ui.end_row();
+
+                ui.label(t.text("gw-status-runtime"));
+                let running_label = if status.running {
+                    t.text("gw-status-running")
+                } else {
+                    t.text("gw-status-stopped")
+                };
+                ui.label(running_label);
+                ui.end_row();
+
+                ui.label(t.text("gw-status-transition"));
+                let transition_label = if status.transitioning {
+                    t.text("gw-status-busy")
+                } else {
+                    t.text("gw-status-idle")
+                };
+                ui.label(transition_label);
+                ui.end_row();
+
+                ui.label(t.text("gw-status-auth"));
+                render_boolean_status(
+                    ui,
+                    status.auth_configured,
+                    &t.text("gw-status-auth-configured"),
+                    &t.text("gw-status-auth-not-configured"),
+                );
+                ui.end_row();
+
+                if let Some(info) = &status.info {
+                    ui.label(t.text("gw-status-listen-ip"));
+                    ui.label(&info.listen_ip);
+                    ui.end_row();
+
+                    ui.label(t.text("gw-status-configured-port"));
+                    ui.label(info.configured_port.to_string());
+                    ui.end_row();
+
+                    ui.label(t.text("gw-status-actual-port"));
+                    ui.label(info.actual_port.to_string());
+                    ui.end_row();
+
+                    ui.label(t.text("gw-status-address"));
+                    ui.hyperlink(gateway_base_url(&info.ws_url));
+                    ui.end_row();
+
+                    ui.label(t.text("gw-status-started-at"));
+                    ui.label(format_timestamp_seconds(info.started_at_unix_seconds));
+                    ui.end_row();
+                }
+            });
+    }
+
+    fn render_tailscale_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        status: &GatewayStatusSnapshot,
+        t: &Translator,
+    ) {
+        ui.label(t.text("gw-ts-subtitle"));
+        ui.add_space(8.0);
+
+        let current_mode = status.tailscale_mode;
+        let tailscale_available = tailscale_service_available(status);
+
+        ui.horizontal(|ui| {
+            ui.label(t.text("gw-ts-mode"));
+            egui::ComboBox::from_id_salt("tailscale-mode")
+                .selected_text(mode_display(self.selected_tailscale_mode, t))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.selected_tailscale_mode,
+                        TailscaleMode::Off,
+                        t.text("gw-ts-mode-off"),
+                    );
+                    ui.selectable_value(
+                        &mut self.selected_tailscale_mode,
+                        TailscaleMode::Serve,
+                        t.text("gw-ts-mode-serve"),
+                    );
+                    ui.selectable_value(
+                        &mut self.selected_tailscale_mode,
+                        TailscaleMode::Funnel,
+                        t.text("gw-ts-mode-funnel"),
+                    );
+                });
+            if ui
+                .add_enabled(
+                    self.pending_request.is_none(),
+                    egui::Button::new(t.text_args(
+                        "gw-btn-refresh-ts",
+                        HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                    )),
+                )
+                .clicked()
+            {
+                self.refresh(notifications, true, true);
+            }
+            let apply_enabled = self.selected_tailscale_mode != current_mode
+                && tailscale_available
+                && !status.transitioning
+                && self.pending_request.is_none();
+            if ui
+                .add_enabled(apply_enabled, egui::Button::new(t.text("gw-btn-apply")))
+                .clicked()
+            {
+                self.set_tailscale_mode(self.selected_tailscale_mode, notifications);
+            }
+        });
+
+        ui.add_space(8.0);
+        ui.label(t.text("gw-ts-host-status"));
+        egui::Grid::new("gateway-panel-tailscale-host-grid")
+            .num_columns(2)
+            .spacing([16.0, 8.0])
+            .show(ui, |ui| {
+                ui.label(t.text("gw-ts-host-status-label"));
+                render_tailscale_status(ui, &status.tailscale_host.status, t);
+                ui.end_row();
+
+                if let Some(version) = &status.tailscale_host.version {
+                    ui.label(t.text("gw-ts-host-version"));
+                    ui.label(version);
+                    ui.end_row();
+                }
+
+                if let Some(backend_state) = &status.tailscale_host.backend_state {
+                    ui.label(t.text("gw-ts-host-backend-state"));
+                    ui.label(backend_state);
+                    ui.end_row();
+                }
+
+                if let Some(dns_name) = &status.tailscale_host.dns_name {
+                    ui.label(t.text("gw-ts-host-dns-name"));
+                    ui.label(dns_name);
+                    ui.end_row();
+                }
+
+                if let Some(url) = &status.tailscale_host.public_url {
+                    ui.label(t.text("gw-ts-host-tailnet-url"));
+                    ui.hyperlink(url);
+                    ui.end_row();
+                }
+
+                if let Some(message) = &status.tailscale_host.message {
+                    ui.label(t.text("gw-ts-host-message"));
+                    ui.label(message);
+                    ui.end_row();
+                }
+            });
+
+        if let Some(info) = &status.info
+            && let Some(ts) = &info.tailscale
+        {
+            ui.add_space(8.0);
+            egui::Grid::new("gateway-panel-tailscale-grid")
+                .num_columns(2)
+                .spacing([16.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label(t.text("gw-ts-gateway-exposure"));
+                    render_tailscale_status(ui, &ts.status, t);
+                    ui.end_row();
+
+                    if let Some(url) = &ts.public_url {
+                        ui.label(t.text("gw-ts-gateway-url"));
+                        ui.hyperlink(url);
+                        ui.end_row();
+                    }
+
+                    if let Some(msg) = &ts.message {
+                        ui.label(t.text("gw-ts-message"));
+                        ui.label(msg);
+                        ui.end_row();
+                    }
+                });
+        }
+
+        if status.tailscale_mode == TailscaleMode::Funnel && !status.auth_configured {
+            ui.add_space(8.0);
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                t.text("gw-ts-funnel-no-auth-warning"),
+            );
+        }
+    }
+
+    fn render_tab_dock(
+        &mut self,
+        ui: &mut egui::Ui,
+        notifications: &mut NotificationCenter,
+        status: GatewayStatusSnapshot,
+        t: &Translator,
+    ) {
+        let mut dock_state = std::mem::replace(
+            &mut self.tab_dock_state,
+            Self::tab_dock_state(self.active_tab),
+        );
+        let mut style = Style::from_egui(ui.style().as_ref());
+        style.tab_bar.show_scroll_bar_on_overflow = false;
+
+        DockArea::new(&mut dock_state)
+            .id(egui::Id::new("gateway-panel-dock"))
+            .style(style)
+            .show_add_buttons(false)
+            .show_close_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_leaf_collapse_buttons(false)
+            .tab_context_menus(false)
+            .draggable_tabs(false)
+            .allowed_splits(AllowedSplits::None)
+            .show_inside(
+                ui,
+                &mut GatewayTabViewer {
+                    panel: self,
+                    notifications,
+                    status,
+                    translator: t,
+                },
+            );
+
+        self.tab_dock_state = dock_state;
+    }
+}
+
+struct GatewayTabViewer<'a> {
+    panel: &'a mut GatewayPanel,
+    notifications: &'a mut NotificationCenter,
+    status: GatewayStatusSnapshot,
+    translator: &'a Translator,
+}
+
+impl egui_dock::TabViewer for GatewayTabViewer<'_> {
+    type Tab = GatewayTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        format!("{} {}", tab.icon(), self.translator.text(tab.title_key())).into()
+    }
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        egui::Id::new(("gateway-panel-tab", tab.tab_id()))
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        self.panel.active_tab = *tab;
+        egui::ScrollArea::vertical()
+            .id_salt(("gateway-panel-tab-scroll", tab.tab_id()))
+            .auto_shrink([false, false])
+            .show(ui, |ui| match *tab {
+                GatewayTab::Gateway => {
+                    self.panel.render_gateway_tab(
+                        ui,
+                        self.notifications,
+                        &self.status,
+                        self.translator,
+                    );
+                }
+                GatewayTab::Tailscale => {
+                    self.panel.render_tailscale_tab(
+                        ui,
+                        self.notifications,
+                        &self.status,
+                        self.translator,
+                    );
+                }
+            });
+    }
+
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
+        false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        if response.clicked() {
+            self.panel.active_tab = *tab;
+        }
+    }
+
+    fn allowed_in_windows(&self, _tab: &mut Self::Tab) -> bool {
+        false
+    }
+
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false]
+    }
 }
 
 impl PanelRenderer for GatewayPanel {
@@ -590,298 +996,44 @@ impl PanelRenderer for GatewayPanel {
         let t = Self::translator();
         self.ensure_loaded(notifications);
         self.poll_pending_request(notifications);
-        egui::ScrollArea::vertical()
-            .id_salt("gateway-panel-scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.heading(ctx.tab_title);
-                ui.label(t.text("gw-subtitle"));
-                ui.separator();
 
-                let Some(status) = self.status.clone() else {
-                    if let Some(err) = &self.load_error {
-                        ui.colored_label(
-                            ui.visuals().error_fg_color,
-                            t.text_args(
-                                "gw-status-unavailable",
-                                HashMap::from([("error", err.clone())]),
-                            ),
-                        );
-                        ui.add_space(8.0);
-                        if ui
-                            .button(t.text_args(
-                                "gw-btn-retry",
-                                HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
-                            ))
-                            .clicked()
-                        {
-                            self.refresh(notifications, true, false);
-                        }
-                    } else {
-                        ui.label(t.text("gw-loading"));
-                    }
-                    return;
-                };
+        ui.heading(ctx.tab_title);
+        ui.label(t.text("gw-subtitle"));
+        ui.separator();
 
-                if status.transitioning {
-                    ui.ctx().request_repaint_after(GATEWAY_POLL_INTERVAL);
-                }
-                if self.pending_request.is_some() {
-                    ui.ctx().request_repaint_after(GATEWAY_POLL_INTERVAL);
-                }
-
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            self.pending_request.is_none(),
-                            egui::Button::new(t.text_args(
-                                "gw-btn-refresh",
-                                HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
-                            )),
-                        )
-                        .clicked()
-                    {
-                        self.refresh(notifications, true, false);
-                    }
-
-                    if ui
-                        .button(t.text_args(
-                            "gw-btn-config",
-                            HashMap::from([("icon", regular::SLIDERS.to_string())]),
-                        ))
-                        .clicked()
-                    {
-                        self.open_config_window();
-                    }
-
-                    if ui
-                        .add_enabled(
-                            !status.transitioning
-                                && !status.running
-                                && self.pending_request.is_none(),
-                            egui::Button::new(t.text_args(
-                                "gw-btn-start",
-                                HashMap::from([("icon", regular::PLAY.to_string())]),
-                            )),
-                        )
-                        .clicked()
-                    {
-                        self.start(notifications);
-                    }
-
-                    if ui
-                        .add_enabled(
-                            !status.transitioning
-                                && status.running
-                                && self.pending_request.is_none(),
-                            egui::Button::new(t.text_args(
-                                "gw-btn-restart",
-                                HashMap::from([(
-                                    "icon",
-                                    regular::ARROW_COUNTER_CLOCKWISE.to_string(),
-                                )]),
-                            )),
-                        )
-                        .clicked()
-                    {
-                        self.restart(notifications);
-                    }
-                });
-
+        let Some(status) = self.status.clone() else {
+            if let Some(err) = &self.load_error {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    t.text_args(
+                        "gw-status-unavailable",
+                        HashMap::from([("error", err.clone())]),
+                    ),
+                );
                 ui.add_space(8.0);
-                egui::Grid::new("gateway-panel-status-grid")
-                    .num_columns(2)
-                    .spacing([16.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label(t.text("gw-status-configured"));
-                        render_boolean_status(
-                            ui,
-                            status.configured_enabled,
-                            &t.text("gw-status-enabled"),
-                            &t.text("gw-status-disabled"),
-                        );
-                        ui.end_row();
-
-                        ui.label(t.text("gw-status-runtime"));
-                        let running_label = if status.running {
-                            t.text("gw-status-running")
-                        } else {
-                            t.text("gw-status-stopped")
-                        };
-                        ui.label(running_label);
-                        ui.end_row();
-
-                        ui.label(t.text("gw-status-transition"));
-                        let transition_label = if status.transitioning {
-                            t.text("gw-status-busy")
-                        } else {
-                            t.text("gw-status-idle")
-                        };
-                        ui.label(transition_label);
-                        ui.end_row();
-
-                        ui.label(t.text("gw-status-auth"));
-                        render_boolean_status(
-                            ui,
-                            status.auth_configured,
-                            &t.text("gw-status-auth-configured"),
-                            &t.text("gw-status-auth-not-configured"),
-                        );
-                        ui.end_row();
-
-                        if let Some(info) = &status.info {
-                            ui.label(t.text("gw-status-listen-ip"));
-                            ui.label(&info.listen_ip);
-                            ui.end_row();
-
-                            ui.label(t.text("gw-status-configured-port"));
-                            ui.label(info.configured_port.to_string());
-                            ui.end_row();
-
-                            ui.label(t.text("gw-status-actual-port"));
-                            ui.label(info.actual_port.to_string());
-                            ui.end_row();
-
-                            ui.label(t.text("gw-status-address"));
-                            ui.hyperlink(gateway_base_url(&info.ws_url));
-                            ui.end_row();
-
-                            ui.label(t.text("gw-status-started-at"));
-                            ui.label(format_timestamp_seconds(info.started_at_unix_seconds));
-                            ui.end_row();
-                        }
-                    });
-
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(8.0);
-                ui.heading(t.text("gw-ts-heading"));
-                ui.label(t.text("gw-ts-subtitle"));
-                ui.add_space(8.0);
-
-                let current_mode = status.tailscale_mode;
-                let tailscale_available = tailscale_service_available(&status);
-
-                ui.horizontal(|ui| {
-                    ui.label(t.text("gw-ts-mode"));
-                    egui::ComboBox::from_id_salt("tailscale-mode")
-                        .selected_text(mode_display(self.selected_tailscale_mode, &t))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.selected_tailscale_mode,
-                                TailscaleMode::Off,
-                                t.text("gw-ts-mode-off"),
-                            );
-                            ui.selectable_value(
-                                &mut self.selected_tailscale_mode,
-                                TailscaleMode::Serve,
-                                t.text("gw-ts-mode-serve"),
-                            );
-                            ui.selectable_value(
-                                &mut self.selected_tailscale_mode,
-                                TailscaleMode::Funnel,
-                                t.text("gw-ts-mode-funnel"),
-                            );
-                        });
-                    if ui
-                        .add_enabled(
-                            self.pending_request.is_none(),
-                            egui::Button::new(t.text_args(
-                                "gw-btn-refresh-ts",
-                                HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
-                            )),
-                        )
-                        .clicked()
-                    {
-                        self.refresh(notifications, true, true);
-                    }
-                    let apply_enabled = self.selected_tailscale_mode != current_mode
-                        && tailscale_available
-                        && !status.transitioning
-                        && self.pending_request.is_none();
-                    if ui
-                        .add_enabled(apply_enabled, egui::Button::new(t.text("gw-btn-apply")))
-                        .clicked()
-                    {
-                        self.set_tailscale_mode(self.selected_tailscale_mode, notifications);
-                    }
-                });
-
-                ui.add_space(8.0);
-                ui.label(t.text("gw-ts-host-status"));
-                egui::Grid::new("gateway-panel-tailscale-host-grid")
-                    .num_columns(2)
-                    .spacing([16.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label(t.text("gw-ts-host-status-label"));
-                        render_tailscale_status(ui, &status.tailscale_host.status, &t);
-                        ui.end_row();
-
-                        if let Some(version) = &status.tailscale_host.version {
-                            ui.label(t.text("gw-ts-host-version"));
-                            ui.label(version);
-                            ui.end_row();
-                        }
-
-                        if let Some(backend_state) = &status.tailscale_host.backend_state {
-                            ui.label(t.text("gw-ts-host-backend-state"));
-                            ui.label(backend_state);
-                            ui.end_row();
-                        }
-
-                        if let Some(dns_name) = &status.tailscale_host.dns_name {
-                            ui.label(t.text("gw-ts-host-dns-name"));
-                            ui.label(dns_name);
-                            ui.end_row();
-                        }
-
-                        if let Some(url) = &status.tailscale_host.public_url {
-                            ui.label(t.text("gw-ts-host-tailnet-url"));
-                            ui.hyperlink(url);
-                            ui.end_row();
-                        }
-
-                        if let Some(message) = &status.tailscale_host.message {
-                            ui.label(t.text("gw-ts-host-message"));
-                            ui.label(message);
-                            ui.end_row();
-                        }
-                    });
-
-                if let Some(info) = &status.info
-                    && let Some(ts) = &info.tailscale
+                if ui
+                    .button(t.text_args(
+                        "gw-btn-retry",
+                        HashMap::from([("icon", regular::ARROWS_CLOCKWISE.to_string())]),
+                    ))
+                    .clicked()
                 {
-                    ui.add_space(8.0);
-                    egui::Grid::new("gateway-panel-tailscale-grid")
-                        .num_columns(2)
-                        .spacing([16.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.label(t.text("gw-ts-gateway-exposure"));
-                            render_tailscale_status(ui, &ts.status, &t);
-                            ui.end_row();
-
-                            if let Some(url) = &ts.public_url {
-                                ui.label(t.text("gw-ts-gateway-url"));
-                                ui.hyperlink(url);
-                                ui.end_row();
-                            }
-
-                            if let Some(msg) = &ts.message {
-                                ui.label(t.text("gw-ts-message"));
-                                ui.label(msg);
-                                ui.end_row();
-                            }
-                        });
+                    self.refresh(notifications, true, false);
                 }
+            } else {
+                ui.label(t.text("gw-loading"));
+            }
+            if self.config_window_open {
+                self.render_config_window(ui.ctx(), notifications);
+            }
+            return;
+        };
 
-                if status.tailscale_mode == TailscaleMode::Funnel && !status.auth_configured {
-                    ui.add_space(8.0);
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        t.text("gw-ts-funnel-no-auth-warning"),
-                    );
-                }
-            });
+        if status.transitioning || self.pending_request.is_some() {
+            ui.ctx().request_repaint_after(GATEWAY_POLL_INTERVAL);
+        }
+
+        self.render_tab_dock(ui, notifications, status, &t);
 
         if self.config_window_open {
             self.render_config_window(ui.ctx(), notifications);

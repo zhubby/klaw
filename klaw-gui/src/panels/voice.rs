@@ -24,6 +24,7 @@ use tokio::runtime::Builder;
 use uuid::Uuid;
 
 const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const VOICE_CONFIG_WINDOW_MAX_HEIGHT: f32 = 640.0;
 const TTS_INPUT_ROWS: usize = 6;
 
 #[derive(Debug, Clone)]
@@ -665,6 +666,7 @@ impl VoicePanel {
             .open(&mut open)
             .resizable(true)
             .default_width(720.0)
+            .max_height(VOICE_CONFIG_WINDOW_MAX_HEIGHT)
             .show(ctx, |ui| {
                 ui.label(t.text("voice-config-subtitle"));
                 ui.separator();
