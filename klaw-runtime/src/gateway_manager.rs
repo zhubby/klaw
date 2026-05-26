@@ -302,6 +302,7 @@ listen_port = 0
 
 [gateway.auth]
 enabled = true
+token = "source-token"
 env_key = "KLAW_GATEWAY_TOKEN"
 
 [gateway.tailscale]

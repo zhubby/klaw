@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-05-26
+
+### Added
+
+- Runtime gateway options now inject an MCP management handler that persists MCP config changes with `ConfigStore::update_config`, syncs the live MCP manager after writes, and returns redacted server views.
+
+### Fixed
+
+- Gateway manager config persistence tests now use a valid auth fixture instead of relying on an unresolved environment token.
+
 ## 2026-05-14
 
 ### Added

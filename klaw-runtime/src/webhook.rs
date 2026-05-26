@@ -3,11 +3,15 @@ use super::{
     submit_webhook_event,
 };
 use async_trait::async_trait;
-use klaw_config::{AppConfig, ConfigStore};
+use klaw_config::{AppConfig, ConfigError, ConfigStore, McpServerConfig};
 use klaw_gateway::{
-    GatewayOptions, GatewayWebhookAgentRequest, GatewayWebhookAgentResponse, GatewayWebhookHandler,
-    GatewayWebhookHandlerError, GatewayWebhookRequest, GatewayWebhookResponse,
+    GatewayMcpHandler, GatewayMcpHandlerError, GatewayMcpRuntimeSnapshot,
+    GatewayMcpServerConfigView, GatewayMcpServerDetailView, GatewayMcpServerStatusView,
+    GatewayMcpServerUpsertRequest, GatewayOptions, GatewayWebhookAgentRequest,
+    GatewayWebhookAgentResponse, GatewayWebhookHandler, GatewayWebhookHandlerError,
+    GatewayWebhookRequest, GatewayWebhookResponse,
 };
+use klaw_mcp::{McpConfigSnapshot, McpRuntimeSnapshot, McpServerKey};
 use klaw_session::{
     NewWebhookAgentRecord, NewWebhookEventRecord, SessionManager, SqliteSessionManager,
     UpdateWebhookAgentResult, UpdateWebhookEventResult, WebhookEventStatus,
@@ -36,7 +40,403 @@ pub fn gateway_options(runtime: Arc<RuntimeBundle>, config: &AppConfig) -> Gatew
         )),
         archive_service: runtime.archive_service.clone(),
         app_config: Some(Arc::new(config.clone())),
+        mcp_handler: Some(Arc::new(RuntimeMcpHandler {
+            runtime: Arc::clone(&runtime),
+        })),
         ..GatewayOptions::default()
+    }
+}
+
+struct RuntimeMcpHandler {
+    runtime: Arc<RuntimeBundle>,
+}
+
+#[async_trait]
+impl GatewayMcpHandler for RuntimeMcpHandler {
+    async fn status(&self) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        let snapshot = McpConfigSnapshot::from_mcp_config(&store.snapshot().config.mcp);
+        let manager = self.mcp_manager().await;
+        let guard = manager
+            .try_lock()
+            .map_err(|_| GatewayMcpHandlerError::unavailable("mcp manager is busy"))?;
+        Ok(convert_mcp_runtime_snapshot(
+            guard.runtime_snapshot(&snapshot),
+        ))
+    }
+
+    async fn list_servers(
+        &self,
+    ) -> Result<(Vec<GatewayMcpServerConfigView>, GatewayMcpRuntimeSnapshot), GatewayMcpHandlerError>
+    {
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        let config = store.snapshot().config;
+        let servers = config.mcp.servers.iter().map(redacted_mcp_server).collect();
+        let runtime = self.status().await?;
+        Ok((servers, runtime))
+    }
+
+    async fn get_server(
+        &self,
+        id: String,
+    ) -> Result<
+        (
+            GatewayMcpServerConfigView,
+            Option<GatewayMcpServerStatusView>,
+            Option<GatewayMcpServerDetailView>,
+        ),
+        GatewayMcpHandlerError,
+    > {
+        let id = normalize_mcp_server_id(&id)?;
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        let config = store.snapshot().config;
+        let Some(server) = config.mcp.servers.iter().find(|server| server.id == id) else {
+            return Err(GatewayMcpHandlerError::not_found(format!(
+                "mcp server '{id}' not found"
+            )));
+        };
+        let runtime = self.status().await?;
+        let status = runtime.statuses.into_iter().find(|status| status.id == id);
+        let detail = runtime.details.into_iter().find(|detail| detail.id == id);
+        Ok((redacted_mcp_server(server), status, detail))
+    }
+
+    async fn create_server(
+        &self,
+        request: GatewayMcpServerUpsertRequest,
+    ) -> Result<(GatewayMcpServerConfigView, GatewayMcpRuntimeSnapshot), GatewayMcpHandlerError>
+    {
+        let server = build_mcp_server_config(request, None)?;
+        let created_id = server.id.clone();
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        let saved = store
+            .update_config(|config| {
+                if config.mcp.servers.iter().any(|item| item.id == created_id) {
+                    return Err(ConfigError::InvalidConfig(format!(
+                        "mcp server '{created_id}' already exists"
+                    )));
+                }
+                config.mcp.servers.push(server);
+                Ok(())
+            })
+            .map_err(gateway_mcp_config_error)?
+            .0;
+        let runtime = self.sync_snapshot(&saved.config).await?;
+        let created = saved
+            .config
+            .mcp
+            .servers
+            .iter()
+            .find(|server| server.id == created_id)
+            .map(redacted_mcp_server)
+            .ok_or_else(|| GatewayMcpHandlerError::internal("created mcp server missing"))?;
+        Ok((created, runtime))
+    }
+
+    async fn update_server(
+        &self,
+        id: String,
+        request: GatewayMcpServerUpsertRequest,
+    ) -> Result<(GatewayMcpServerConfigView, GatewayMcpRuntimeSnapshot), GatewayMcpHandlerError>
+    {
+        let id = normalize_mcp_server_id(&id)?;
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        let (saved, updated_id) = store
+            .update_config(|config| {
+                let Some(position) = config.mcp.servers.iter().position(|item| item.id == id)
+                else {
+                    return Err(ConfigError::InvalidConfig(format!(
+                        "mcp server '{id}' not found"
+                    )));
+                };
+                let replacement =
+                    build_mcp_server_config(request, Some(config.mcp.servers[position].clone()))
+                        .map_err(|err| ConfigError::InvalidConfig(err.message))?;
+                if replacement.id != id
+                    && config
+                        .mcp
+                        .servers
+                        .iter()
+                        .any(|item| item.id == replacement.id)
+                {
+                    return Err(ConfigError::InvalidConfig(format!(
+                        "mcp server '{}' already exists",
+                        replacement.id
+                    )));
+                }
+                let updated_id = replacement.id.clone();
+                config.mcp.servers[position] = replacement;
+                Ok(updated_id)
+            })
+            .map_err(gateway_mcp_config_error)?;
+        let runtime = self.sync_snapshot(&saved.config).await?;
+        let updated = saved
+            .config
+            .mcp
+            .servers
+            .iter()
+            .find(|server| server.id == updated_id)
+            .map(redacted_mcp_server)
+            .ok_or_else(|| GatewayMcpHandlerError::internal("updated mcp server missing"))?;
+        Ok((updated, runtime))
+    }
+
+    async fn delete_server(
+        &self,
+        id: String,
+    ) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+        let id = normalize_mcp_server_id(&id)?;
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        let saved = store
+            .update_config(|config| {
+                let original_len = config.mcp.servers.len();
+                config.mcp.servers.retain(|server| server.id != id);
+                if config.mcp.servers.len() == original_len {
+                    return Err(ConfigError::InvalidConfig(format!(
+                        "mcp server '{id}' not found"
+                    )));
+                }
+                Ok(())
+            })
+            .map_err(gateway_mcp_config_error)?
+            .0;
+        self.sync_snapshot(&saved.config).await
+    }
+
+    async fn sync(&self) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        self.sync_snapshot(&store.snapshot().config).await
+    }
+
+    async fn restart_server(
+        &self,
+        id: String,
+    ) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+        let id = normalize_mcp_server_id(&id)?;
+        let store = ConfigStore::open(None).map_err(gateway_mcp_config_error)?;
+        let snapshot = McpConfigSnapshot::from_mcp_config(&store.snapshot().config.mcp);
+        let manager = self.mcp_manager().await;
+        let mut guard = manager.lock().await;
+        guard
+            .restart_server(&McpServerKey::new(&id), &snapshot)
+            .await
+            .map(convert_mcp_runtime_snapshot)
+            .map_err(GatewayMcpHandlerError::bad_request)
+    }
+}
+
+impl RuntimeMcpHandler {
+    async fn mcp_manager(&self) -> Arc<tokio::sync::Mutex<klaw_mcp::McpManager>> {
+        let guard = self.runtime.mcp_init.lock().await;
+        guard.manager()
+    }
+
+    async fn sync_snapshot(
+        &self,
+        config: &AppConfig,
+    ) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+        let snapshot = McpConfigSnapshot::from_mcp_config(&config.mcp);
+        let manager = self.mcp_manager().await;
+        let mut guard = manager.lock().await;
+        guard.sync(snapshot.clone()).await;
+        Ok(convert_mcp_runtime_snapshot(
+            guard.runtime_snapshot(&snapshot),
+        ))
+    }
+}
+
+fn build_mcp_server_config(
+    request: GatewayMcpServerUpsertRequest,
+    existing: Option<McpServerConfig>,
+) -> Result<McpServerConfig, GatewayMcpHandlerError> {
+    let id = match request.id {
+        Some(id) => normalize_mcp_server_id(&id)?,
+        None => match existing.as_ref() {
+            Some(existing) => existing.id.clone(),
+            None => {
+                return Err(GatewayMcpHandlerError::bad_request(
+                    "mcp server id is required",
+                ));
+            }
+        },
+    };
+    let default = existing.unwrap_or_default();
+    Ok(McpServerConfig {
+        id,
+        enabled: request.enabled.unwrap_or(default.enabled),
+        mode: request.mode,
+        tool_timeout_seconds: request
+            .tool_timeout_seconds
+            .unwrap_or(default.tool_timeout_seconds),
+        command: request.command.or(default.command),
+        args: request.args.unwrap_or(default.args),
+        env: request.env.unwrap_or(default.env),
+        cwd: request.cwd.or(default.cwd),
+        url: request.url.or(default.url),
+        headers: request.headers.unwrap_or(default.headers),
+    })
+}
+
+fn normalize_mcp_server_id(id: &str) -> Result<String, GatewayMcpHandlerError> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err(GatewayMcpHandlerError::bad_request(
+            "mcp server id cannot be empty",
+        ));
+    }
+    Ok(id.to_string())
+}
+
+fn redacted_mcp_server(server: &McpServerConfig) -> GatewayMcpServerConfigView {
+    GatewayMcpServerConfigView {
+        id: server.id.clone(),
+        enabled: server.enabled,
+        mode: server.mode.clone(),
+        tool_timeout_seconds: server.tool_timeout_seconds,
+        command: server.command.clone(),
+        args: server.args.clone(),
+        cwd: server.cwd.clone(),
+        url: server.url.clone(),
+        env_keys: server.env.keys().cloned().collect(),
+        header_keys: server.headers.keys().cloned().collect(),
+    }
+}
+
+fn convert_mcp_runtime_snapshot(snapshot: McpRuntimeSnapshot) -> GatewayMcpRuntimeSnapshot {
+    GatewayMcpRuntimeSnapshot {
+        statuses: snapshot
+            .statuses
+            .into_iter()
+            .map(|status| GatewayMcpServerStatusView {
+                id: status.key.as_str().to_string(),
+                mode: status.mode,
+                enabled: status.enabled,
+                state: status.state.as_str().to_string(),
+                last_error: status.last_error,
+                tool_count: status.tool_count,
+            })
+            .collect(),
+        details: snapshot
+            .details
+            .into_iter()
+            .map(|detail| GatewayMcpServerDetailView {
+                id: detail.key.as_str().to_string(),
+                tools_list_response: detail.tools_list_response,
+            })
+            .collect(),
+    }
+}
+
+fn gateway_mcp_config_error(err: ConfigError) -> GatewayMcpHandlerError {
+    match err {
+        ConfigError::InvalidConfig(message) if message.contains("not found") => {
+            GatewayMcpHandlerError::not_found(message)
+        }
+        ConfigError::InvalidConfig(message) if message.contains("already exists") => {
+            GatewayMcpHandlerError::conflict(message)
+        }
+        ConfigError::InvalidConfig(message) => GatewayMcpHandlerError::bad_request(message),
+        other => GatewayMcpHandlerError::internal(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod mcp_api_tests {
+    use super::*;
+    use klaw_config::McpServerMode;
+
+    fn request_with_secret_maps(
+        env: Option<BTreeMap<String, String>>,
+        headers: Option<BTreeMap<String, String>>,
+    ) -> GatewayMcpServerUpsertRequest {
+        GatewayMcpServerUpsertRequest {
+            id: Some("renamed".to_string()),
+            enabled: Some(true),
+            mode: McpServerMode::Stdio,
+            tool_timeout_seconds: Some(45),
+            command: Some("npx".to_string()),
+            args: Some(vec!["server".to_string()]),
+            env,
+            cwd: None,
+            url: None,
+            headers,
+        }
+    }
+
+    fn existing_server() -> McpServerConfig {
+        McpServerConfig {
+            id: "local".to_string(),
+            enabled: true,
+            mode: McpServerMode::Stdio,
+            tool_timeout_seconds: 60,
+            command: Some("old".to_string()),
+            args: vec!["old-server".to_string()],
+            env: BTreeMap::from([("API_KEY".to_string(), "secret".to_string())]),
+            cwd: None,
+            url: None,
+            headers: BTreeMap::from([("Authorization".to_string(), "Bearer secret".to_string())]),
+        }
+    }
+
+    #[test]
+    fn mcp_update_request_preserves_env_and_headers_when_omitted() {
+        let server = build_mcp_server_config(
+            request_with_secret_maps(None, None),
+            Some(existing_server()),
+        )
+        .expect("request should build");
+
+        assert_eq!(server.id, "renamed");
+        assert_eq!(
+            server.env.get("API_KEY").map(String::as_str),
+            Some("secret")
+        );
+        assert_eq!(
+            server.headers.get("Authorization").map(String::as_str),
+            Some("Bearer secret")
+        );
+    }
+
+    #[test]
+    fn mcp_update_request_clears_env_and_headers_when_empty_maps_are_sent() {
+        let server = build_mcp_server_config(
+            request_with_secret_maps(Some(BTreeMap::new()), Some(BTreeMap::new())),
+            Some(existing_server()),
+        )
+        .expect("request should build");
+
+        assert!(server.env.is_empty());
+        assert!(server.headers.is_empty());
+    }
+
+    #[test]
+    fn mcp_redacted_config_returns_only_secret_keys() {
+        let view = redacted_mcp_server(&existing_server());
+
+        assert_eq!(view.env_keys, vec!["API_KEY"]);
+        assert_eq!(view.header_keys, vec!["Authorization"]);
+    }
+
+    #[test]
+    fn mcp_create_request_requires_id() {
+        let err = build_mcp_server_config(
+            GatewayMcpServerUpsertRequest {
+                id: None,
+                enabled: None,
+                mode: McpServerMode::Stdio,
+                tool_timeout_seconds: None,
+                command: None,
+                args: None,
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+            None,
+        )
+        .expect_err("missing id should fail");
+
+        assert_eq!(err.status.as_u16(), 400);
     }
 }
 
