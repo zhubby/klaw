@@ -72,6 +72,8 @@ pub fn should_require_gateway_auth(path: &str) -> bool {
         || path == Route::ArchiveUpload.as_str()
         || path == Route::ArchiveList.as_str()
         || path == Route::ProvidersList.as_str()
+        || path == Route::OpenApiJson.as_str()
+        || path == Route::Scalar.as_str()
         || path.starts_with("/archive/download/")
         || path.starts_with("/archive/")
         || path.starts_with("/mcp/")
@@ -352,6 +354,8 @@ mod tests {
         assert!(should_require_gateway_auth("/providers/list"));
         assert!(should_require_gateway_auth("/mcp/status"));
         assert!(should_require_gateway_auth("/mcp/servers/local/restart"));
+        assert!(should_require_gateway_auth("/openapi.json"));
+        assert!(should_require_gateway_auth("/scalar"));
         assert!(!should_require_gateway_auth("/"));
         assert!(!should_require_gateway_auth("/health/status"));
         assert!(!should_require_gateway_auth("/metrics"));

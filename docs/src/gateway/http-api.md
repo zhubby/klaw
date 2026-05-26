@@ -14,6 +14,7 @@
 - 归档模型与服务：`klaw-archive/src/model.rs`、`klaw-archive/src/service.rs`
 - 健康注册表：`klaw-observability/src/health.rs`
 - 路由常量：`klaw-gateway/src/routes.rs`
+- OpenAPI/Scalar 文档：`klaw-gateway/src/openapi.rs`
 - Gateway 配置结构：`klaw-config/src/lib.rs`
 
 ## 概述
@@ -23,6 +24,10 @@
 - 认证方式：
   - **Gateway Auth**：保护 `/ws/chat`、`/archive/*`、`/providers/list`、`/mcp/*` 等路径，使用 `gateway.auth.token` 或 `gateway.auth.env_key` 配置的 Bearer Token。
   - **Webhook Auth**：保护 `/webhook/events` 和 `/webhook/agents`，支持多种验证模式（Bearer Token、GitHub HMAC、GitLab Token/签名），同样使用 `gateway.auth` 配置的密钥。
+- API 文档：
+  - `GET /openapi.json` 返回 Gateway HTTP API 的 OpenAPI JSON。
+  - `GET /scalar` 返回 Scalar API reference UI。
+  - 当 `gateway.auth.enabled = true` 时，这两个端点与其他 Gateway Auth 端点一样要求 `Authorization: Bearer <token>`；未开启认证时可直接访问。
 
 ## 路由注册条件
 
@@ -34,9 +39,25 @@
 - `/webhook/events`：仅当 `gateway.webhook.enabled = true` 且 `gateway.webhook.events.enabled = true` 时注册
 - `/webhook/agents`：仅当 `gateway.webhook.enabled = true` 且 `gateway.webhook.agents.enabled = true` 时注册
 
+`/openapi.json` 和 `/scalar` 始终注册。OpenAPI 首版覆盖 Gateway HTTP API；`/ws/chat` 只作为 WebSocket upgrade 入口描述，内部 JSON-RPC v1 协议仍以 WebSocket 协议文档为准。
+
 未注册的路由返回 `404 Not Found`。
 
 ## API 端点列表
+
+### 0. API 文档接口
+
+#### 0.1 OpenAPI JSON
+
+- **端点**：`GET /openapi.json`
+- **认证**：Gateway Auth（仅当 `gateway.auth.enabled = true`）
+- **描述**：返回 Gateway HTTP API 的 OpenAPI 3.1 JSON 文档，覆盖 archive、providers、MCP、webhook、health、metrics 和 `/ws/chat` upgrade 描述。
+
+#### 0.2 Scalar API Reference
+
+- **端点**：`GET /scalar`
+- **认证**：Gateway Auth（仅当 `gateway.auth.enabled = true`）
+- **描述**：返回 Scalar API reference UI。页面内嵌当前 OpenAPI spec，并标记 `/openapi.json` 作为机器可读文档地址。
 
 ### 1. 归档管理接口
 

@@ -24,6 +24,8 @@ strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "sync"] }
 tracing = { workspace = true }
+utoipa = { workspace = true }
+utoipa-scalar = { workspace = true }
 urlencoding = { workspace = true }
 uuid = { workspace = true }
 
