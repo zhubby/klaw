@@ -1,5 +1,6 @@
 .git
 .gitignore
+.github
 .DS_Store
 .crush
 .superpowers
