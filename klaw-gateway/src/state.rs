@@ -1,5 +1,6 @@
 use crate::{
     GatewayError,
+    mcp::GatewayMcpHandler,
     webhook::GatewayWebhookHandler,
     websocket::{GatewayWebsocketFrameTx, GatewayWebsocketHandler, GatewayWebsocketServerFrame},
 };
@@ -38,6 +39,10 @@ pub struct GatewayArchiveState {
 pub struct GatewayProvidersState {
     pub providers: BTreeMap<String, ModelProviderConfig>,
     pub default_provider: String,
+}
+
+pub(crate) struct GatewayMcpState {
+    pub(crate) handler: Arc<dyn GatewayMcpHandler>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -250,6 +255,7 @@ pub(crate) struct GatewayState {
     pub(crate) websocket: Option<GatewayWebsocketState>,
     pub(crate) archive: Option<Arc<GatewayArchiveState>>,
     pub(crate) providers: Option<Arc<GatewayProvidersState>>,
+    pub(crate) mcp: Option<Arc<GatewayMcpState>>,
 }
 
 impl GatewayState {
@@ -261,6 +267,7 @@ impl GatewayState {
         websocket: Option<GatewayWebsocketState>,
         archive: Option<Arc<GatewayArchiveState>>,
         providers: Option<Arc<GatewayProvidersState>>,
+        mcp: Option<Arc<GatewayMcpState>>,
     ) -> Self {
         Self {
             websocket_broadcaster,
@@ -270,6 +277,7 @@ impl GatewayState {
             websocket,
             archive,
             providers,
+            mcp,
         }
     }
 }

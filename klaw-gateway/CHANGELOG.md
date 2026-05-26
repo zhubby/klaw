@@ -2,6 +2,10 @@
 
 ## 2026-05-26
 
+### Added
+
+- Gateway now exposes authenticated `/mcp/*` management endpoints for MCP runtime status, redacted server config CRUD, runtime sync, and stdio server restart.
+
 ### Fixed
 
 - Gateway startup now fails fast when auth is enabled but no token or environment-backed token can be resolved, preventing accidental unauthenticated exposure.

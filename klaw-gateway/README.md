@@ -15,6 +15,15 @@
   - `GET /archive/:id`: 获取文件元数据
 - 可选暴露 model providers 列表接口：
   - `GET /providers/list`: 获取所有配置的 model providers
+- 可选暴露 MCP 管理接口：
+  - `GET /mcp/status`: 获取 MCP runtime 状态与 tools/list detail
+  - `GET /mcp/servers`: 获取脱敏后的 MCP server 配置列表
+  - `GET /mcp/servers/:id`: 获取单个 MCP server 的脱敏配置与 runtime detail
+  - `POST /mcp/servers`: 新增 MCP server 配置并立即同步 runtime
+  - `PUT /mcp/servers/:id`: 替换 MCP server 配置并立即同步 runtime
+  - `DELETE /mcp/servers/:id`: 删除 MCP server 配置并立即同步 runtime
+  - `POST /mcp/sync`: 按磁盘最新配置同步 MCP runtime
+  - `POST /mcp/servers/:id/restart`: 重启 stdio MCP server
 - `/ws/chat` 仅支持 v1 JSON-RPC 形态 agent 协议，覆盖 initialize、session/thread 方法、turn/item 生命周期、结构化 content/tool/approval payload、取消与 server request 闭环
 - webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
 - 按 `session_key` 维护房间广播通道
@@ -32,6 +41,7 @@
 - `webhook.rs`: webhook 鉴权、`events` / `agents` payload 归一化与 handler 集成
 - `archive.rs`: archive 文件上传下载接口实现
 - `providers.rs`: model providers 列表接口实现
+- `mcp.rs`: MCP 管理 HTTP DTO、路由 handler 与 runtime handler trait
 - `handlers.rs`: health / metrics HTTP handlers
 - `error.rs`: `GatewayError`
 
@@ -45,7 +55,8 @@
 - `/ws/chat` v1 文本帧默认最大 `1048576` 字节；超限会返回 `payload_too_large` 协议错误。出站队列与单连接 active turn 也有稳定目标上限，供客户端实现重试和限流
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
 - archive 路由在 `GatewayOptions` 中提供 `archive_service` 时自动注册，所有 archive 接口均需要 Bearer 鉴权
-- 仅 `/ws/chat` 和 `/archive/*` 会走 gateway Bearer 鉴权中间件（含 query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
+- MCP 路由在 `GatewayOptions` 中提供 `mcp_handler` 时自动注册，所有 `/mcp/*` 接口均需要 Bearer 鉴权；返回 server 配置时只暴露 `env_keys` / `header_keys`，不回传 secret 原文
+- 仅 `/ws/chat`、`/archive/*`、`/providers/list` 和 `/mcp/*` 会走 gateway Bearer 鉴权中间件（含 `/ws/chat` query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
 - `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息；当本机 daemon 无响应时会在短超时后回落为 host 侧不可用状态，避免拖慢整个 gateway 状态刷新
 - Tailscale Serve/Funnel 会在 gateway 绑定完成后使用实际监听端口做反向代理，并在 setup 后回读 `tailscale serve status --json` / `tailscale funnel status --json` 确认配置是否生效；setup/reset/status 通过 `tokio::process::Command` 执行并带超时，超时会终止子进程，避免本机 Tailscale CLI 卡住 async runtime；Funnel 未配置 auth 时允许启动，但应视为公网裸露入口
 
@@ -119,6 +130,82 @@ Response:
   "error": null
 }
 ```
+
+## MCP API Usage
+
+### List MCP Servers
+
+```bash
+curl -X GET http://127.0.0.1:18080/mcp/servers \
+  -H "Authorization: Bearer your-token"
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "servers": [
+    {
+      "id": "filesystem",
+      "enabled": true,
+      "mode": "stdio",
+      "tool_timeout_seconds": 60,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "env_keys": ["API_KEY"],
+      "header_keys": []
+    }
+  ],
+  "runtime": {
+    "statuses": [
+      {
+        "id": "filesystem",
+        "mode": "stdio",
+        "enabled": true,
+        "state": "running",
+        "last_error": null,
+        "tool_count": 3
+      }
+    ],
+    "details": []
+  },
+  "error": null
+}
+```
+
+### Create Or Update MCP Servers
+
+`POST /mcp/servers` creates a server. `PUT /mcp/servers/{id}` replaces the server identified by the path id and may rename it when the JSON body carries a different `id`. Both operations save the latest on-disk config with a targeted mutation, then immediately sync the MCP runtime.
+
+```bash
+curl -X POST http://127.0.0.1:18080/mcp/servers \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "filesystem",
+    "enabled": true,
+    "mode": "stdio",
+    "tool_timeout_seconds": 60,
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+    "env": {"API_KEY": "secret"}
+  }'
+```
+
+`env` and `headers` are write-only from the HTTP API perspective: responses expose only `env_keys` and `header_keys`. For `PUT`, omitting `env` or `headers` preserves the existing map; sending `{}` clears it.
+
+### Sync Or Restart MCP
+
+```bash
+curl -X POST http://127.0.0.1:18080/mcp/sync \
+  -H "Authorization: Bearer your-token"
+
+curl -X POST http://127.0.0.1:18080/mcp/servers/filesystem/restart \
+  -H "Authorization: Bearer your-token"
+```
+
+Restart currently uses the existing runtime behavior and only supports enabled stdio MCP servers.
 
 ### Download File
 
