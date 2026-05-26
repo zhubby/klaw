@@ -59,8 +59,8 @@
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
 - archive 路由在 `GatewayOptions` 中提供 `archive_service` 时自动注册，所有 archive 接口均需要 Bearer 鉴权
 - MCP 路由在 `GatewayOptions` 中提供 `mcp_handler` 时自动注册，所有 `/mcp/*` 接口均需要 Bearer 鉴权；返回 server 配置时只暴露 `env_keys` / `header_keys`，不回传 secret 原文
-- `/openapi.json` 和 `/scalar` 始终注册；当 `gateway.auth.enabled = true` 时，它们与 `/ws/chat`、`/archive/*`、`/providers/list`、`/mcp/*` 使用同一套 gateway Bearer 鉴权；未开启认证时保持无认证访问
-- 仅 `/ws/chat`、`/archive/*`、`/providers/list`、`/mcp/*`、`/openapi.json` 和 `/scalar` 会走 gateway Bearer 鉴权中间件（含 `/ws/chat` query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
+- `/openapi.json` 和 `/scalar` 始终注册并保持无认证访问，方便浏览器直接打开 API reference；生产暴露时请把它们视为公开文档端点
+- 仅 `/ws/chat`、`/archive/*`、`/providers/list` 和 `/mcp/*` 会走 gateway Bearer 鉴权中间件（含 `/ws/chat` query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics、API docs 不做鉴权
 - `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息；当本机 daemon 无响应时会在短超时后回落为 host 侧不可用状态，避免拖慢整个 gateway 状态刷新
 - Tailscale Serve/Funnel 会在 gateway 绑定完成后使用实际监听端口做反向代理，并在 setup 后回读 `tailscale serve status --json` / `tailscale funnel status --json` 确认配置是否生效；setup/reset/status 通过 `tokio::process::Command` 执行并带超时，超时会终止子进程，避免本机 Tailscale CLI 卡住 async runtime；Funnel 未配置 auth 时允许启动，但应视为公网裸露入口
 
@@ -102,11 +102,10 @@ GATEWAY_TOKEN=your-token BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gatew
 ## API Docs Usage
 
 ```bash
-curl -X GET http://127.0.0.1:18080/openapi.json \
-  -H "Authorization: Bearer your-token"
+curl -X GET http://127.0.0.1:18080/openapi.json
 ```
 
-Open `http://127.0.0.1:18080/scalar` in a browser for the Scalar API reference. Both docs endpoints are public only when `gateway.auth.enabled = false`.
+Open `http://127.0.0.1:18080/scalar` in a browser for the Scalar API reference. Both docs endpoints are public even when `gateway.auth.enabled = true`.
 
 ### Upload File
 

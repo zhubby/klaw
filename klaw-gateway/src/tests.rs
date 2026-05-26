@@ -489,7 +489,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gateway_docs_routes_require_gateway_auth_when_enabled() {
+    async fn gateway_docs_routes_remain_public_when_gateway_auth_enabled() {
         let mut config = test_gateway_config();
         config.auth = GatewayAuthConfig {
             enabled: true,
@@ -513,12 +513,12 @@ mod tests {
             .expect("reqwest client");
 
         for route in [Route::OpenApiJson, Route::Scalar] {
-            let unauthorized = client
+            let public = client
                 .get(format!("{base_url}{}", route.as_str()))
                 .send()
                 .await
                 .expect("docs route should respond");
-            assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(public.status(), StatusCode::OK);
 
             let authorized = client
                 .get(format!("{base_url}{}", route.as_str()))

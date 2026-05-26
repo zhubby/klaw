@@ -27,7 +27,7 @@
 - API 文档：
   - `GET /openapi.json` 返回 Gateway HTTP API 的 OpenAPI JSON。
   - `GET /scalar` 返回 Scalar API reference UI。
-  - 当 `gateway.auth.enabled = true` 时，这两个端点与其他 Gateway Auth 端点一样要求 `Authorization: Bearer <token>`；未开启认证时可直接访问。
+  - 这两个端点始终不做 Gateway Auth，方便浏览器直接打开；生产暴露时请将其视为公开文档端点。
 
 ## 路由注册条件
 
@@ -50,13 +50,13 @@
 #### 0.1 OpenAPI JSON
 
 - **端点**：`GET /openapi.json`
-- **认证**：Gateway Auth（仅当 `gateway.auth.enabled = true`）
+- **认证**：无
 - **描述**：返回 Gateway HTTP API 的 OpenAPI 3.1 JSON 文档，覆盖 archive、providers、MCP、webhook、health、metrics 和 `/ws/chat` upgrade 描述。
 
 #### 0.2 Scalar API Reference
 
 - **端点**：`GET /scalar`
-- **认证**：Gateway Auth（仅当 `gateway.auth.enabled = true`）
+- **认证**：无
 - **描述**：返回 Scalar API reference UI。页面内嵌当前 OpenAPI spec，并标记 `/openapi.json` 作为机器可读文档地址。
 
 ### 1. 归档管理接口
