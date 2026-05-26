@@ -186,6 +186,38 @@ klaw gateway                    # WebSocket
 
 Running `cargo build` directly from the root directory uses the workspace `default-members` configuration, which does not include `klaw-webui` by default. To build the browser-side WASM resources, run `make webui-wasm` first, then compile `klaw-gateway`.
 
+## Container Images
+
+Build a container image from source, including the embedded WebUI WASM assets:
+
+```bash
+docker build -t klaw:latest .
+```
+
+Package a locally compiled binary into the runtime image:
+
+```bash
+cargo build --release -p klaw-cli
+docker build -f docker/Dockerfile \
+  --build-arg KLAW_BINARY=target/release/klaw \
+  -t klaw:prebuilt .
+```
+
+Run the gateway with persistent Klaw data:
+
+```bash
+docker run --rm -p 18080:18080 -v klaw-data:/root/.klaw klaw:latest
+```
+
+For container access, configure `~/.klaw/config.toml` with a fixed gateway port and all-interface bind:
+
+```toml
+[gateway]
+enabled = true
+listen_ip = "0.0.0.0"
+listen_port = 18080
+```
+
 ## macOS Packaging
 
 Build a native macOS app bundle and dmg from the existing GUI entrypoint:
