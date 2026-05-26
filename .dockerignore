@@ -20,6 +20,7 @@ target/*/*
 !target/*/release/
 target/*/release/*
 !target/*/release/klaw
+!target/release/klaw
 
 klaw-gateway/static/chat/dist/
 klaw-gateway/static/chat/pkg/
