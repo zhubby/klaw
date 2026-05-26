@@ -422,6 +422,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_docs_routes_expose_openapi_and_scalar_without_auth() {
+        let config = test_gateway_config();
+        let handle = match spawn_gateway_with_options(&config, GatewayOptions::default()).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let base_url = format!("http://127.0.0.1:{}", handle.info().actual_port);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("reqwest client");
+
+        let openapi: serde_json::Value = client
+            .get(format!("{base_url}{}", Route::OpenApiJson.as_str()))
+            .send()
+            .await
+            .expect("openapi should respond")
+            .json()
+            .await
+            .expect("openapi json");
+        assert_eq!(
+            openapi.pointer("/openapi").and_then(|value| value.as_str()),
+            Some("3.1.0")
+        );
+        for path in [
+            "/mcp/status",
+            "/mcp/servers",
+            "/archive/upload",
+            "/providers/list",
+            "/webhook/events",
+            "/health/status",
+        ] {
+            assert!(
+                openapi
+                    .pointer(&format!("/paths/{}", path.replace('/', "~1")))
+                    .is_some(),
+                "OpenAPI document should include {path}"
+            );
+        }
+
+        let scalar = client
+            .get(format!("{base_url}{}", Route::Scalar.as_str()))
+            .send()
+            .await
+            .expect("scalar should respond");
+        assert_eq!(scalar.status(), StatusCode::OK);
+        let content_type = scalar
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let html = scalar.text().await.expect("scalar html");
+        assert!(content_type.starts_with("text/html"));
+        assert!(html.contains("Klaw Gateway API"));
+        assert!(html.contains("/openapi.json"));
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn gateway_docs_routes_require_gateway_auth_when_enabled() {
+        let mut config = test_gateway_config();
+        config.auth = GatewayAuthConfig {
+            enabled: true,
+            token: Some("secret-token".to_string()),
+            env_key: None,
+        };
+        let handle = match spawn_gateway_with_options(&config, GatewayOptions::default()).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let base_url = format!("http://127.0.0.1:{}", handle.info().actual_port);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("reqwest client");
+
+        for route in [Route::OpenApiJson, Route::Scalar] {
+            let unauthorized = client
+                .get(format!("{base_url}{}", route.as_str()))
+                .send()
+                .await
+                .expect("docs route should respond");
+            assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+            let authorized = client
+                .get(format!("{base_url}{}", route.as_str()))
+                .bearer_auth("secret-token")
+                .send()
+                .await
+                .expect("docs route should respond with auth");
+            assert_eq!(authorized.status(), StatusCode::OK);
+        }
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
     async fn spawn_gateway_uses_actual_random_port() {
         let config = GatewayConfig {
             enabled: true,
@@ -810,6 +921,8 @@ mod tests {
             Route::McpServerRestart.as_str(),
             "/mcp/servers/{id}/restart"
         );
+        assert_eq!(Route::OpenApiJson.as_str(), "/openapi.json");
+        assert_eq!(Route::Scalar.as_str(), "/scalar");
     }
 
     #[test]

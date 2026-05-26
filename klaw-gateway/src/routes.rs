@@ -50,6 +50,10 @@ pub enum Route {
     HealthStatus,
     #[strum(serialize = "/metrics")]
     Metrics,
+    #[strum(serialize = "/openapi.json")]
+    OpenApiJson,
+    #[strum(serialize = "/scalar")]
+    Scalar,
 }
 
 impl Route {

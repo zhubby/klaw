@@ -4,6 +4,7 @@
 
 ### Added
 
+- Gateway now serves OpenAPI JSON at `/openapi.json` and a Scalar API reference UI at `/scalar`, with the same Gateway Auth behavior as protected gateway APIs.
 - Gateway now exposes authenticated `/mcp/*` management endpoints for MCP runtime status, redacted server config CRUD, runtime sync, and stdio server restart.
 
 ### Fixed

@@ -24,6 +24,9 @@
   - `DELETE /mcp/servers/:id`: 删除 MCP server 配置并立即同步 runtime
   - `POST /mcp/sync`: 按磁盘最新配置同步 MCP runtime
   - `POST /mcp/servers/:id/restart`: 重启 stdio MCP server
+- 暴露 API 文档接口：
+  - `GET /openapi.json`: 获取 Gateway HTTP API 的 OpenAPI JSON
+  - `GET /scalar`: 打开 Scalar API reference UI
 - `/ws/chat` 仅支持 v1 JSON-RPC 形态 agent 协议，覆盖 initialize、session/thread 方法、turn/item 生命周期、结构化 content/tool/approval payload、取消与 server request 闭环
 - webhook 请求会进入独立的 `webhook:*` 执行 session；若提供 `base_session_key`，最终回复会路由回目标 IM 会话当前 active session
 - 按 `session_key` 维护房间广播通道
@@ -56,7 +59,8 @@
 - webhook 路由是否注册由 `gateway.webhook.enabled` 决定；`events` / `agents` 仅可分别启停并配置独立 body limit，路径固定不再开放配置
 - archive 路由在 `GatewayOptions` 中提供 `archive_service` 时自动注册，所有 archive 接口均需要 Bearer 鉴权
 - MCP 路由在 `GatewayOptions` 中提供 `mcp_handler` 时自动注册，所有 `/mcp/*` 接口均需要 Bearer 鉴权；返回 server 配置时只暴露 `env_keys` / `header_keys`，不回传 secret 原文
-- 仅 `/ws/chat`、`/archive/*`、`/providers/list` 和 `/mcp/*` 会走 gateway Bearer 鉴权中间件（含 `/ws/chat` query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
+- `/openapi.json` 和 `/scalar` 始终注册；当 `gateway.auth.enabled = true` 时，它们与 `/ws/chat`、`/archive/*`、`/providers/list`、`/mcp/*` 使用同一套 gateway Bearer 鉴权；未开启认证时保持无认证访问
+- 仅 `/ws/chat`、`/archive/*`、`/providers/list`、`/mcp/*`、`/openapi.json` 和 `/scalar` 会走 gateway Bearer 鉴权中间件（含 `/ws/chat` query token 回退）；`/webhook/events` 与 `/webhook/agents` 继续复用 `gateway.auth` 的 token/env secret 做 webhook 专用多模式校验；首页、`/chat` 及其静态资源、health、metrics 不做鉴权
 - `TailscaleManager::inspect_host()` 可独立读取本机 Tailscale 状态，供 GUI 在 gateway 未运行时展示主机连接信息；当本机 daemon 无响应时会在短超时后回落为 host 侧不可用状态，避免拖慢整个 gateway 状态刷新
 - Tailscale Serve/Funnel 会在 gateway 绑定完成后使用实际监听端口做反向代理，并在 setup 后回读 `tailscale serve status --json` / `tailscale funnel status --json` 确认配置是否生效；setup/reset/status 通过 `tokio::process::Command` 执行并带超时，超时会终止子进程，避免本机 Tailscale CLI 卡住 async runtime；Funnel 未配置 auth 时允许启动，但应视为公网裸露入口
 
@@ -94,6 +98,15 @@ GATEWAY_TOKEN=your-token BASE_URL=http://127.0.0.1:18080 cargo run -p klaw-gatew
 ```
 
 ## Archive API Usage
+
+## API Docs Usage
+
+```bash
+curl -X GET http://127.0.0.1:18080/openapi.json \
+  -H "Authorization: Bearer your-token"
+```
+
+Open `http://127.0.0.1:18080/scalar` in a browser for the Scalar API reference. Both docs endpoints are public only when `gateway.auth.enabled = false`.
 
 ### Upload File
 

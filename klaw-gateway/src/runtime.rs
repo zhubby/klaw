@@ -12,6 +12,7 @@ use crate::{
         mcp_get_server_handler, mcp_list_servers_handler, mcp_restart_server_handler,
         mcp_status_handler, mcp_sync_handler, mcp_update_server_handler,
     },
+    openapi::{openapi_json_handler, scalar_router},
     providers::providers_list_handler,
     routes::Route,
     state::{
@@ -253,7 +254,9 @@ fn build_router(
         .route(Route::HealthLive.as_str(), get(health_live_handler))
         .route(Route::HealthReady.as_str(), get(health_ready_handler))
         .route(Route::HealthStatus.as_str(), get(health_status_handler))
-        .route(Route::Metrics.as_str(), get(metrics_handler));
+        .route(Route::Metrics.as_str(), get(metrics_handler))
+        .route(Route::OpenApiJson.as_str(), get(openapi_json_handler))
+        .merge(scalar_router());
 
     if config.webhook.enabled {
         if config.webhook.events.enabled {

@@ -6,6 +6,7 @@ mod error;
 mod handlers;
 mod home;
 mod mcp;
+mod openapi;
 mod protocol;
 mod providers;
 mod routes;
