@@ -57,6 +57,11 @@
 - 配置文件绝对路径
 - `~/.klaw/logs/` 下的 stdout/stderr 日志路径
 
+服务端部署建议：
+
+- 为 daemon 配置固定 `gateway.listen_port`；`listen_port = 0` 会使用随机端口，只适合前台临时运行或从 stdout 日志读取实际地址
+- daemon 进程不保证继承交互式 shell 的环境变量；依赖 `gateway.auth.env_key`、provider API key、Tailscale 或 MCP server 的配置需要在服务环境中显式提供
+
 ## Runtime Integration
 
 - `klaw-cli` 不再内嵌共享 runtime 实现；`tui`、`agent`、`gateway` 与 `gui` 统一通过 `klaw-runtime` 获取宿主能力
@@ -67,7 +72,7 @@
 - `tui` 默认会将 tracing 日志写入 `~/.klaw/logs/terminal.log`，避免后台日志干扰全屏界面
 - `tui --verbose-terminal` 可显式把 tracing 日志重新打回终端，便于排查启动或 MCP 问题
 - `tui` 与 `gateway` 都监听统一的 shutdown signal；`tui` 在运行阶段可中断，在 shutdown 阶段再次收到信号会直接退出
-- `gateway` 在收到终止信号时会执行 runtime shutdown，确保 MCP/bootstrap 资源收尾
+- `gateway` 在收到终止信号时会先优雅关闭 HTTP gateway，再执行 runtime shutdown，确保 Tailscale 与 MCP/bootstrap 资源收尾
 - `klaw gui` 现在会在技能安装、卸载和 registry sync 后向 GUI runtime 发送技能 prompt 热重载命令，使后续请求可立即看到最新 skills
 - `klaw gui` / `klaw gateway` 通过共享 `ChannelManager` 管理运行中的 channel 实例；GUI 保存 channel 配置后会立即发送通用 `SyncChannels` 事件，由 runtime 按最新快照执行 keep/start/stop/restart，并在 channel manager 忙碌时用缓存状态快照响应 GUI 状态查询
 - `klaw gui` 的 skills prompt 热重载会在 runtime dispatcher 后台执行，避免技能重载阻塞其他面板状态请求

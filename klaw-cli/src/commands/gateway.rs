@@ -1,7 +1,7 @@
 use clap::Args;
 use klaw_channel::{ChannelConfigSnapshot, ChannelManager};
 use klaw_config::AppConfig;
-use klaw_gateway::run_gateway_with_options;
+use klaw_gateway::{GatewayHandle, spawn_gateway_with_options};
 use klaw_runtime::{
     build_channel_driver_factory, build_hosted_runtime, shutdown_runtime_bundle, webhook,
 };
@@ -34,24 +34,10 @@ impl GatewayCommand {
                 let gateway_options =
                     webhook::gateway_options(Arc::clone(&hosted.runtime), config.as_ref());
 
-                let mut gateway_task = tokio::task::spawn_local(async move {
-                    run_gateway_with_options(&gateway_config, gateway_options).await
-                });
-                let run_result = tokio::select! {
-                    result = &mut gateway_task => {
-                        match result {
-                            Ok(result) => result.map_err(Box::<dyn std::error::Error>::from),
-                            Err(err) => Err(Box::<dyn std::error::Error>::from(err)),
-                        }
-                    }
-                    _ = shutdown_signal() => {
-                        info!("shutdown signal received, stopping gateway");
-                        let _ = shutdown_tx.send(true);
-                        gateway_task.abort();
-                        let _ = gateway_task.await;
-                        Ok(())
-                    }
-                };
+                let gateway_handle = spawn_gateway_with_options(&gateway_config, gateway_options)
+                    .await
+                    .map_err(Box::<dyn std::error::Error>::from)?;
+                let run_result = run_gateway_until_shutdown_signal(gateway_handle).await;
 
                 let _ = shutdown_tx.send(true);
                 channel_manager.shutdown_all().await;
@@ -61,5 +47,22 @@ impl GatewayCommand {
             })
             .await?;
         Ok(())
+    }
+}
+
+async fn run_gateway_until_shutdown_signal(
+    mut gateway_handle: GatewayHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    tokio::select! {
+        result = gateway_handle.wait_until_stopped() => {
+            result.map_err(Box::<dyn std::error::Error>::from)
+        }
+        _ = shutdown_signal() => {
+            info!("shutdown signal received, stopping gateway");
+            gateway_handle
+                .shutdown_gracefully()
+                .await
+                .map_err(Box::<dyn std::error::Error>::from)
+        }
     }
 }

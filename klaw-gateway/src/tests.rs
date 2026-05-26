@@ -306,6 +306,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spawn_gateway_rejects_enabled_auth_without_token() {
+        let mut config = test_gateway_config();
+        config.auth = GatewayAuthConfig {
+            enabled: true,
+            token: None,
+            env_key: None,
+        };
+
+        let err = match spawn_gateway(&config).await {
+            Ok(handle) => {
+                let _ = handle.shutdown().await;
+                panic!("gateway should reject missing auth token");
+            }
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, crate::GatewayError::MissingAuthToken));
+    }
+
+    #[tokio::test]
+    async fn spawn_gateway_accepts_enabled_auth_with_token() {
+        let mut config = test_gateway_config();
+        config.auth = GatewayAuthConfig {
+            enabled: true,
+            token: Some("secret-token".to_string()),
+            env_key: None,
+        };
+
+        let handle = match spawn_gateway(&config).await {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        assert!(handle.info().auth_configured);
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
     async fn gateway_root_route_serves_home_page_and_logo() {
         let config = GatewayConfig {
             enabled: true,

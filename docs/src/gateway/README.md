@@ -18,7 +18,7 @@
 [gateway]
 enabled = false
 listen_ip = "127.0.0.1"
-listen_port = 0
+listen_port = 18080
 
 [gateway.auth]
 enabled = false
@@ -43,8 +43,8 @@ key_path = "/path/to/privkey.pem"
 ### 配置说明
 
 - `enabled = true` 时，`klaw gui` 启动会自动拉起内置 gateway
-- `listen_port = 0` 时由系统分配随机可用端口，实际端口会输出到日志并展示在 GUI Gateway 面板
-- `gateway.auth.enabled = true` 时，`/ws/chat` 需要 `Authorization: Bearer <token>`，浏览器 WebSocket 也可用 `?token=` 传递
+- `listen_port = 0` 时由系统分配随机可用端口，适合临时前台调试；`klaw daemon` 长期服务建议配置固定端口
+- `gateway.auth.enabled = true` 时，`/ws/chat` 需要 `Authorization: Bearer <token>`，浏览器 WebSocket 也可用 `?token=` 传递；启用后必须配置 `token` 或可解析的 `env_key`
 - `gateway.tailscale.mode` 可将 gateway 暴露到 Tailscale 私有网络或公网
 - `gateway.webhook.enabled = true` 时会注册 webhook HTTP 路由
 
@@ -52,9 +52,10 @@ key_path = "/path/to/privkey.pem"
 
 - `listen_ip` 必须能解析为合法 IP
 - `listen_port` 允许为 `0`（随机端口）或任意合法 `u16` 端口
+- `gateway.auth.enabled = true` 时必须能解析出 token，否则 gateway 会拒绝启动，避免无认证暴露
 - `gateway.webhook.path` 必须以 `/` 开头
 - `gateway.webhook.max_body_bytes` 必须大于 `0`
-- `tls.enabled=true` 时，`cert_path` 和 `key_path` 不能为空
+- `tls.enabled=true` 当前会被拒绝；HTTPS/WSS 监听尚未实现，请使用 HTTP + gateway auth 或 Tailscale
 - `gateway.tailscale.mode = "funnel"` 时，必须配置 `gateway.auth`
 
 ## 启动
@@ -62,6 +63,8 @@ key_path = "/path/to/privkey.pem"
 ```bash
 klaw gateway
 ```
+
+`klaw gateway` 以前台进程运行，收到 `SIGINT` / `SIGTERM` 时会优雅关闭 HTTP 服务并执行 Tailscale 清理。需要后台长期运行时使用 `klaw daemon install`，并确保配置固定 `listen_port`。
 
 连接示例：
 
@@ -86,6 +89,15 @@ curl -X POST http://127.0.0.1:18080/webhook/events \
 ```
 
 > **注意**: Webhook 复用 `gateway.auth` 的 token 配置。若 `gateway.auth.enabled = false`，则 webhook 无需鉴权。
+
+## Daemon 环境
+
+`klaw daemon install` 会把当前 `klaw` 可执行文件、配置路径和日志路径固化到用户级 systemd/launchd 服务中。daemon 进程不保证继承交互式 shell 的环境变量；如果 gateway auth、模型 provider、Tailscale 或 MCP server 依赖环境变量，建议在服务环境中显式配置，或把非敏感服务端参数写入 `~/.klaw/config.toml`。
+
+日志位置：
+
+- stdout: `~/.klaw/logs/gateway.stdout.log`
+- stderr: `~/.klaw/logs/gateway.stderr.log`
 
 Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，随后由 runtime 异步处理，并把请求、状态和结果摘要落库供 GUI `Webhook` 面板查看。
 
@@ -112,7 +124,7 @@ Webhook 请求在鉴权和参数校验通过后会立即返回 `202 Accepted`，
 
 ## 当前限制
 
-- TLS 仅有配置模型，尚未实现 HTTPS/WSS 监听
+- TLS 仅有配置模型，当前配置校验会拒绝启用 HTTPS/WSS 监听
 - 连接状态为进程内内存结构，重启后不保留
 - 当前 streaming 以 runtime snapshot 事件为单位，不是 token 级别推送
 

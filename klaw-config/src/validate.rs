@@ -57,31 +57,17 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
             config.gateway.listen_ip, err
         ))
     })?;
+    if config.gateway.auth.enabled && config.gateway.auth.resolve_token().is_none() {
+        return Err(ConfigError::InvalidConfig(
+            "gateway.auth.enabled=true requires gateway.auth.token or a resolvable gateway.auth.env_key"
+                .to_string(),
+        ));
+    }
     if config.gateway.tls.enabled {
-        let cert_path = config
-            .gateway
-            .tls
-            .cert_path
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default();
-        if cert_path.is_empty() {
-            return Err(ConfigError::InvalidConfig(
-                "gateway.tls.cert_path cannot be empty when gateway.tls.enabled=true".to_string(),
-            ));
-        }
-        let key_path = config
-            .gateway
-            .tls
-            .key_path
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default();
-        if key_path.is_empty() {
-            return Err(ConfigError::InvalidConfig(
-                "gateway.tls.key_path cannot be empty when gateway.tls.enabled=true".to_string(),
-            ));
-        }
+        return Err(ConfigError::InvalidConfig(
+            "gateway.tls.enabled=true is not supported yet; use HTTP with gateway.auth or Tailscale"
+                .to_string(),
+        ));
     }
     validate_gateway_webhook_endpoint(
         "gateway.webhook.events",

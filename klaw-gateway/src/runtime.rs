@@ -81,11 +81,7 @@ pub async fn spawn_gateway_with_options(
             default_provider: app_config.model_provider.clone(),
         })
     });
-    let auth_token = config
-        .auth
-        .enabled
-        .then(|| config.auth.resolve_token())
-        .flatten();
+    let auth_token = resolve_auth_token(config)?;
     let websocket_broadcaster = options
         .websocket_broadcaster
         .unwrap_or_else(|| Arc::new(GatewayWebsocketBroadcaster::new()));
@@ -139,6 +135,18 @@ pub async fn spawn_gateway_with_options(
         task,
         tailscale_manager.map(Box::new),
     ))
+}
+
+fn resolve_auth_token(config: &GatewayConfig) -> Result<Option<String>, GatewayError> {
+    if !config.auth.enabled {
+        return Ok(None);
+    }
+
+    config
+        .auth
+        .resolve_token()
+        .ok_or(GatewayError::MissingAuthToken)
+        .map(Some)
 }
 
 async fn setup_tailscale(config: &GatewayConfig, actual_port: u16) -> Option<TailscaleRuntimeInfo> {

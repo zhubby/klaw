@@ -807,6 +807,27 @@ fn validate_accepts_gateway_random_port() {
 }
 
 #[test]
+fn validate_fails_when_gateway_auth_enabled_without_secret() {
+    let mut cfg = AppConfig::default();
+    cfg.gateway.auth.enabled = true;
+    cfg.gateway.auth.token = None;
+    cfg.gateway.auth.env_key = None;
+
+    let err = validate(&cfg).expect_err("should fail");
+
+    assert!(format!("{err}").contains("gateway.auth.enabled=true"));
+}
+
+#[test]
+fn validate_accepts_gateway_auth_enabled_with_token() {
+    let mut cfg = AppConfig::default();
+    cfg.gateway.auth.enabled = true;
+    cfg.gateway.auth.token = Some("secret-token".to_string());
+
+    validate(&cfg).expect("configured auth token should be valid");
+}
+
+#[test]
 fn validate_fails_when_gateway_webhook_max_body_bytes_zero() {
     let mut cfg = AppConfig::default();
     cfg.gateway.webhook.agents.max_body_bytes = 0;
@@ -849,10 +870,10 @@ max_body_bytes = 8192
 fn validate_fails_when_gateway_tls_paths_missing() {
     let mut cfg = AppConfig::default();
     cfg.gateway.tls.enabled = true;
-    cfg.gateway.tls.cert_path = Some("".to_string());
-    cfg.gateway.tls.key_path = None;
+
     let err = validate(&cfg).expect_err("should fail");
-    assert!(format!("{err}").contains("gateway.tls.cert_path"));
+
+    assert!(format!("{err}").contains("gateway.tls.enabled=true is not supported"));
 }
 
 #[test]
