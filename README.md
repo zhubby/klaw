@@ -194,9 +194,10 @@ Build a container image from source, including the embedded WebUI WASM assets:
 docker build -t klaw:latest .
 ```
 
-Package a locally compiled binary into the runtime image:
+Package a locally compiled binary into the runtime image. This is also the path used by the manual GHCR workflow: build WebUI assets and the release binary first, then copy `target/release/klaw` into the image.
 
 ```bash
+make webui-wasm
 cargo build --release -p klaw-cli
 docker build -f docker/Dockerfile \
   --build-arg KLAW_BINARY=target/release/klaw \
@@ -217,6 +218,8 @@ enabled = true
 listen_ip = "0.0.0.0"
 listen_port = 18080
 ```
+
+The `container-image` GitHub Actions workflow is manual-only (`workflow_dispatch`). It publishes to GHCR as `ghcr.io/<owner>/<repo>:<tag>`, plus `sha-<short-sha>` and optionally `latest`.
 
 ## macOS Packaging
 
