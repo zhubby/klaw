@@ -1,5 +1,5 @@
 use clap::{Args, Subcommand};
-use klaw_config::default_config_path;
+use klaw_config::{AppConfig, default_config_path, load_or_init};
 use klaw_storage::StoragePaths;
 use klaw_util::command_search_path;
 use std::{
@@ -320,6 +320,22 @@ impl DaemonManager for SystemdUserManager {
             show_map.get("ActiveState").map(String::as_str),
             Some("active")
         ) || active_output.stdout.trim() == "active";
+        let mut details = vec![
+            ("enabled", enabled_output.stdout.trim().to_string()),
+            (
+                "active_state",
+                show_map.get("ActiveState").cloned().unwrap_or_default(),
+            ),
+            (
+                "sub_state",
+                show_map.get("SubState").cloned().unwrap_or_default(),
+            ),
+            (
+                "unit_file_state",
+                show_map.get("UnitFileState").cloned().unwrap_or_default(),
+            ),
+        ];
+        details.extend(daemon_configuration_warnings(context));
         Ok(ServiceStatus {
             service: SERVICE_NAME,
             manager: "systemd-user",
@@ -329,21 +345,7 @@ impl DaemonManager for SystemdUserManager {
             unit_path,
             stdout_log_path: context.stdout_log_path.clone(),
             stderr_log_path: context.stderr_log_path.clone(),
-            details: vec![
-                ("enabled", enabled_output.stdout.trim().to_string()),
-                (
-                    "active_state",
-                    show_map.get("ActiveState").cloned().unwrap_or_default(),
-                ),
-                (
-                    "sub_state",
-                    show_map.get("SubState").cloned().unwrap_or_default(),
-                ),
-                (
-                    "unit_file_state",
-                    show_map.get("UnitFileState").cloned().unwrap_or_default(),
-                ),
-            ],
+            details,
         })
     }
 
@@ -508,6 +510,8 @@ impl DaemonManager for LaunchdUserManager {
         let loaded = print_output.exit_code == 0;
         let running = loaded && launchd_is_running(&print_output.stdout);
         let detail = summarize_launchd_status(&print_output.stdout, &print_output.stderr);
+        let mut details = vec![("launchd_state", detail)];
+        details.extend(daemon_configuration_warnings(context));
         Ok(ServiceStatus {
             service: SERVICE_NAME,
             manager: "launchd-user",
@@ -517,7 +521,7 @@ impl DaemonManager for LaunchdUserManager {
             unit_path: plist_path,
             stdout_log_path: context.stdout_log_path.clone(),
             stderr_log_path: context.stderr_log_path.clone(),
-            details: vec![("launchd_state", detail)],
+            details,
         })
     }
 
@@ -596,6 +600,31 @@ fn ensure_installed(path: &Path) -> Result<(), DaemonError> {
     } else {
         Err(DaemonError::NotInstalled(path.to_path_buf()))
     }
+}
+
+fn daemon_configuration_warnings(context: &ServiceContext) -> Vec<(&'static str, String)> {
+    match load_or_init(Some(&context.config_path)) {
+        Ok(loaded) => gateway_daemon_warnings(&loaded.config),
+        Err(err) => vec![(
+            "warning",
+            format!(
+                "could not inspect gateway config at '{}': {err}",
+                context.config_path.display()
+            ),
+        )],
+    }
+}
+
+fn gateway_daemon_warnings(config: &AppConfig) -> Vec<(&'static str, String)> {
+    let mut warnings = Vec::new();
+    if config.gateway.listen_port == 0 {
+        warnings.push((
+            "warning",
+            "gateway.listen_port=0 uses a random port; set a fixed port for daemon access"
+                .to_string(),
+        ));
+    }
+    warnings
 }
 
 fn run_command<const N: usize>(
@@ -751,6 +780,30 @@ mod tests {
     fn detects_launchd_running_state() {
         assert!(launchd_is_running("state = running\npid = 101\n"));
         assert!(!launchd_is_running("state = waiting\n"));
+    }
+
+    #[test]
+    fn gateway_daemon_warnings_include_random_port_notice() {
+        let mut config = AppConfig::default();
+        config.gateway.listen_port = 0;
+
+        let warnings = gateway_daemon_warnings(&config);
+
+        assert!(
+            warnings
+                .iter()
+                .any(|(_, value)| value.contains("gateway.listen_port=0"))
+        );
+    }
+
+    #[test]
+    fn gateway_daemon_warnings_skip_fixed_port_notice() {
+        let mut config = AppConfig::default();
+        config.gateway.listen_port = 18_080;
+
+        let warnings = gateway_daemon_warnings(&config);
+
+        assert!(warnings.is_empty());
     }
 
     #[test]

@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-26
+
+### Fixed
+
+- Direct `klaw gateway` shutdown now uses the gateway handle's graceful shutdown path instead of aborting the server task, allowing HTTP and Tailscale teardown to run before runtime shutdown.
+- `klaw daemon status` now warns when the configured gateway port is random, and daemon documentation calls out fixed-port and environment-variable requirements for service deployments.
+
 ## 2026-05-18
 
 ### Fixed

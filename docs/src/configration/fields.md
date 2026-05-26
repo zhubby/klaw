@@ -204,11 +204,11 @@ listen_ip = "127.0.0.1"  # 仅本地访问
 **默认值**: `0`
 **必填**: 是
 
-WebSocket 网关监听端口。设置为 `0` 时，由系统分配随机可用端口。
+WebSocket 网关监听端口。设置为 `0` 时，由系统分配随机可用端口，适合前台调试。`klaw daemon` 长期服务建议使用固定端口，否则需要从 daemon stdout 日志中查找实际地址。
 
 ```toml
 [gateway]
-listen_port = 0
+listen_port = 18080
 ```
 
 ### `gateway.webhook.enabled`
@@ -308,11 +308,11 @@ max_body_bytes = 262144
 **默认值**: `false`
 **必填**: 否
 
-是否启用 TLS。
+是否启用 TLS。TLS 配置模型已保留，但当前 HTTPS/WSS listener 尚未实现；设置为 `true` 会在配置校验阶段失败。
 
 ```toml
 [gateway.tls]
-enabled = true
+enabled = false
 ```
 
 ### `gateway.tls.cert_path`

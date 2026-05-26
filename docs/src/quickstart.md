@@ -101,7 +101,7 @@ klaw agent --input "你的问题"
 klaw gateway
 ```
 
-启动后连接 `ws://127.0.0.1:8080/ws/chat?session_key=your-room`。
+建议为服务端模式配置固定端口，例如 `gateway.listen_port = 18080`。启动后连接 `ws://127.0.0.1:18080/ws/chat`。
 
 支持 Tailscale 内网穿透，可以远程访问。
 
@@ -116,6 +116,8 @@ klaw daemon status
 
 - `install` 会注册为当前用户的系统服务并立即启动
 - macOS 使用 `launchd`，Linux 使用 `systemd --user`
+- daemon 模式建议使用固定 `gateway.listen_port`；`listen_port = 0` 会分配随机端口，需从 `~/.klaw/logs/gateway.stdout.log` 查找实际地址
+- daemon 不保证继承交互式 shell 环境变量；依赖 `env_key` 的 gateway token、provider key、Tailscale 或 MCP 配置需要在服务环境中显式提供
 
 如需停止或卸载：
 
@@ -251,4 +253,3 @@ klaw archive search --query "vacation"
 - 查看 [工具文档](./tools/README.md) 了解可用工具
 - 参考 [存储文档](./storage/README.md) 了解持久化配置
 - 查看 [网关文档](./gateway/README.md) 了解远程部署
-

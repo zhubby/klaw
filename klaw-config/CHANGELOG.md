@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-26
+
+### Fixed
+
+- Gateway config validation now rejects enabled auth without a resolvable token and rejects `gateway.tls.enabled=true` until HTTPS/WSS listener support is implemented.
+
 ## 2026-04-26
 
 ### Changed

@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-26
+
+### Fixed
+
+- Gateway startup now fails fast when auth is enabled but no token or environment-backed token can be resolved, preventing accidental unauthenticated exposure.
+- `GatewayHandle` now exposes borrowed graceful wait/shutdown methods so direct gateway hosts can respond to shutdown signals without aborting the server task.
+
 ## 2026-05-08
 
 ### Added

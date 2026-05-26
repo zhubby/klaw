@@ -6,6 +6,8 @@ pub enum GatewayError {
     InvalidListenAddress(String, u16, std::net::AddrParseError),
     #[error("TLS listener is not implemented yet; set gateway.tls.enabled=false")]
     TlsNotImplemented,
+    #[error("gateway auth is enabled but no token is configured or resolved")]
+    MissingAuthToken,
     #[error("failed to bind gateway listener: {0}")]
     Bind(#[source] std::io::Error),
     #[error("gateway server failed: {0}")]

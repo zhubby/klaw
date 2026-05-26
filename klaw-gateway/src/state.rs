@@ -340,6 +340,10 @@ impl GatewayHandle {
     }
 
     pub async fn wait(mut self) -> Result<(), GatewayError> {
+        self.wait_until_stopped().await
+    }
+
+    pub async fn wait_until_stopped(&mut self) -> Result<(), GatewayError> {
         let result = match self.task.take() {
             Some(task) => task
                 .await
@@ -351,6 +355,10 @@ impl GatewayHandle {
     }
 
     pub async fn shutdown(mut self) -> Result<(), GatewayError> {
+        self.shutdown_gracefully().await
+    }
+
+    pub async fn shutdown_gracefully(&mut self) -> Result<(), GatewayError> {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
