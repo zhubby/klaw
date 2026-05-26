@@ -94,7 +94,7 @@ fn parse_default_template_succeeds() {
     assert!(template.contains("auto_index = false"));
     assert!(!template.contains("index_on_startup"));
     assert_eq!(parsed.knowledge.obsidian.max_excerpt_length, 400);
-    assert_eq!(parsed.knowledge.retrieval.top_k, 5);
+    assert_eq!(parsed.knowledge.retrieval.top_k, 10);
     assert_eq!(parsed.knowledge.retrieval.rerank_candidates, 20);
     assert_eq!(parsed.knowledge.retrieval.graph_hops, 1);
     assert!(!parsed.models.enabled);

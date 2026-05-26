@@ -74,6 +74,7 @@ pub fn should_require_gateway_auth(path: &str) -> bool {
         || path == Route::ProvidersList.as_str()
         || path.starts_with("/archive/download/")
         || path.starts_with("/archive/")
+        || path.starts_with("/mcp/")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,6 +350,8 @@ mod tests {
         assert!(should_require_gateway_auth("/archive/download/123"));
         assert!(should_require_gateway_auth("/archive/123"));
         assert!(should_require_gateway_auth("/providers/list"));
+        assert!(should_require_gateway_auth("/mcp/status"));
+        assert!(should_require_gateway_auth("/mcp/servers/local/restart"));
         assert!(!should_require_gateway_auth("/"));
         assert!(!should_require_gateway_auth("/health/status"));
         assert!(!should_require_gateway_auth("/metrics"));

@@ -21,7 +21,7 @@
 - 基础路径：`http://<listen_ip>:<listen_port>`
 - 响应格式：JSON（除文件下载和健康检查文本响应外）
 - 认证方式：
-  - **Gateway Auth**：保护 `/ws/chat`、`/archive/*`、`/providers/list` 等路径，使用 `gateway.auth.token` 或 `gateway.auth.env_key` 配置的 Bearer Token。
+  - **Gateway Auth**：保护 `/ws/chat`、`/archive/*`、`/providers/list`、`/mcp/*` 等路径，使用 `gateway.auth.token` 或 `gateway.auth.env_key` 配置的 Bearer Token。
   - **Webhook Auth**：保护 `/webhook/events` 和 `/webhook/agents`，支持多种验证模式（Bearer Token、GitHub HMAC、GitLab Token/签名），同样使用 `gateway.auth` 配置的密钥。
 
 ## 路由注册条件
@@ -30,6 +30,7 @@
 
 - `/archive/*`：仅当 archive service 配置时注册
 - `/providers/list`：仅当 providers state 配置时注册
+- `/mcp/*`：仅当 MCP handler 配置时注册
 - `/webhook/events`：仅当 `gateway.webhook.enabled = true` 且 `gateway.webhook.events.enabled = true` 时注册
 - `/webhook/agents`：仅当 `gateway.webhook.enabled = true` 且 `gateway.webhook.agents.enabled = true` 时注册
 
@@ -315,11 +316,151 @@
 - `401 Unauthorized`：Gateway Auth 认证失败
 - `503 Service Unavailable`：提供商服务未配置
 
-### 3. Webhook 事件接口
+### 3. MCP 管理接口
+
+MCP 管理接口用于查看和管理 `mcp.servers` 配置，并将配置变更同步到运行中的 MCP manager。所有接口使用 Gateway Auth；当 `gateway.auth.enabled = false` 时不做认证检查。响应中的 server 配置默认脱敏，只返回 `env_keys` 和 `header_keys`，不返回 secret 原文。
+
+#### 3.1 获取 MCP runtime 状态
+
+- **端点**：`GET /mcp/status`
+- **认证**：Gateway Auth
+- **描述**：返回 MCP server 运行状态和最近一次 `tools/list` detail
+
+**响应示例：**
+
+```json
+{
+  "success": true,
+  "runtime": {
+    "statuses": [
+      {
+        "id": "filesystem",
+        "mode": "stdio",
+        "enabled": true,
+        "state": "running",
+        "last_error": null,
+        "tool_count": 3
+      }
+    ],
+    "details": [
+      {
+        "id": "filesystem",
+        "tools_list_response": {
+          "tools": [
+            {
+              "name": "read_file",
+              "description": "Read a file",
+              "inputSchema": {"type": "object"}
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+#### 3.2 列出 MCP server 配置
+
+- **端点**：`GET /mcp/servers`
+- **认证**：Gateway Auth
+- **描述**：返回脱敏后的 MCP server 配置列表和 runtime snapshot
+
+**响应示例：**
+
+```json
+{
+  "success": true,
+  "servers": [
+    {
+      "id": "filesystem",
+      "enabled": true,
+      "mode": "stdio",
+      "tool_timeout_seconds": 60,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "env_keys": ["API_KEY"],
+      "header_keys": []
+    }
+  ],
+  "runtime": {
+    "statuses": [],
+    "details": []
+  },
+  "error": null
+}
+```
+
+#### 3.3 获取单个 MCP server
+
+- **端点**：`GET /mcp/servers/{id}`
+- **认证**：Gateway Auth
+- **描述**：返回单个脱敏配置、对应 status 和 detail
+
+#### 3.4 新增 MCP server
+
+- **端点**：`POST /mcp/servers`
+- **认证**：Gateway Auth
+- **描述**：新增 MCP server 配置，保存后立即同步 MCP runtime
+
+**请求体：**
+
+```json
+{
+  "id": "filesystem",
+  "enabled": true,
+  "mode": "stdio",
+  "tool_timeout_seconds": 60,
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+  "env": {"API_KEY": "secret"},
+  "headers": {}
+}
+```
+
+`enabled` 默认 `true`，`tool_timeout_seconds` 默认 `60`，`env` / `headers` 默认 `{}`。
+
+#### 3.5 替换 MCP server
+
+- **端点**：`PUT /mcp/servers/{id}`
+- **认证**：Gateway Auth
+- **描述**：替换 path id 对应的 MCP server 配置，保存后立即同步 MCP runtime。body 中 `id` 可与 path id 不同，用于重命名。
+
+`PUT` 省略 `env` 或 `headers` 时保留旧 map；显式发送 `{}` 时清空对应 map。
+
+#### 3.6 删除 MCP server
+
+- **端点**：`DELETE /mcp/servers/{id}`
+- **认证**：Gateway Auth
+- **描述**：删除 MCP server 配置，保存后立即同步 MCP runtime
+
+#### 3.7 同步 MCP runtime
+
+- **端点**：`POST /mcp/sync`
+- **认证**：Gateway Auth
+- **描述**：按磁盘最新配置同步 MCP manager
+
+#### 3.8 重启 MCP server
+
+- **端点**：`POST /mcp/servers/{id}/restart`
+- **认证**：Gateway Auth
+- **描述**：重启已启用的 stdio MCP server。SSE server 和 disabled server 返回错误。
+
+**状态码：**
+
+- `200 OK`：操作成功
+- `400 Bad Request`：请求非法或 runtime 拒绝操作
+- `401 Unauthorized`：Gateway Auth 认证失败
+- `404 Not Found`：server 不存在
+- `409 Conflict`：server id 重复
+- `503 Service Unavailable`：MCP handler 未配置或 manager 忙
+
+### 4. Webhook 事件接口
 
 Webhook 认证使用 `WebhookAuth`，支持多种验证模式。当 `gateway.auth.enabled = true` 时，webhook 认证启用，使用 `gateway.auth` 配置的密钥作为共享 secret。
 
-#### 3.1 发送结构化事件
+#### 4.1 发送结构化事件
 
 - **端点**：`POST /webhook/events`
 - **认证**：Webhook Auth（Bearer Token、GitHub HMAC SHA-256/SHA-1、GitLab Token/Signature）
@@ -386,7 +527,7 @@ Webhook 认证使用 `WebhookAuth`，支持多种验证模式。当 `gateway.aut
 - `404 Not Found`：webhook 未启用
 - `413 Payload Too Large`：请求体超过 `max_body_bytes` 限制
 
-#### 3.2 Agent Webhook 调用
+#### 4.2 Agent Webhook 调用
 
 - **端点**：`POST /webhook/agents`
 - **认证**：Webhook Auth（同 `/webhook/events`）
@@ -435,11 +576,11 @@ Webhook 认证使用 `WebhookAuth`，支持多种验证模式。当 `gateway.aut
 - `401 Unauthorized`：Webhook Auth 认证失败
 - `404 Not Found`：webhook agents 未启用
 
-### 4. 健康检查接口
+### 5. 健康检查接口
 
 健康检查基于 `HealthRegistry`，注册组件后各组件可独立报告状态。
 
-#### 4.1 存活检查 (Liveness)
+#### 5.1 存活检查 (Liveness)
 
 - **端点**：`GET /health/live`
 - **描述**：检查服务是否存活
@@ -464,7 +605,7 @@ Unavailable
 - `200 OK`：服务存活（`Live`）
 - `503 Service Unavailable`：服务不可用（`Unavailable`）
 
-#### 4.2 就绪检查 (Readiness)
+#### 5.2 就绪检查 (Readiness)
 
 - **端点**：`GET /health/ready`
 - **描述**：检查服务是否就绪（可以接收请求）
@@ -495,7 +636,7 @@ Unavailable
 - `200 OK`：服务就绪（`Ready` 或 `Degraded`）
 - `503 Service Unavailable`：服务未就绪（`Unavailable`）
 
-#### 4.3 综合状态检查
+#### 5.3 综合状态检查
 
 - **端点**：`GET /health/status`
 - **描述**：获取详细的健康状态信息（JSON）
@@ -527,9 +668,9 @@ Unavailable
 
 - `200 OK`：始终返回当前状态信息（即使状态为 `Unavailable`）
 
-### 5. 监控指标接口
+### 6. 监控指标接口
 
-#### 5.1 Prometheus 指标
+#### 6.1 Prometheus 指标
 
 - **端点**：`GET /metrics`
 - **描述**：获取 Prometheus 格式的监控指标
@@ -542,32 +683,32 @@ Unavailable
 - `404 Not Found`：Prometheus 指标未启用（响应体为 `Prometheus metrics not enabled\n`）
 - `500 Internal Server Error`：指标渲染失败
 
-### 6. WebUI 与静态资源
+### 7. WebUI 与静态资源
 
 所有静态资源使用 `RustEmbed` 编译时嵌入，从 `static/` 目录打包。
 
-#### 6.1 聊天页面
+#### 7.1 聊天页面
 
 - **端点**：`GET /chat`
 - **描述**：WebUI 聊天应用主页面
 - **Content-Type**：`text/html; charset=utf-8`
 - **认证**：无（页面本身无需认证，但 WebSocket `/ws/chat` 连接需要 Gateway Auth）
 
-#### 6.2 WebUI JS 文件
+#### 7.2 WebUI JS 文件
 
 - **端点**：`GET /chat/dist/klaw_webui.js`
 - **描述**：WebUI JavaScript 主文件
 - **Content-Type**：`application/javascript; charset=utf-8`
 - **Cache-Control**：`public, max-age=3600`
 
-#### 6.3 WebUI WASM 文件
+#### 7.3 WebUI WASM 文件
 
 - **端点**：`GET /chat/dist/klaw_webui_bg.wasm`
 - **描述**：WebUI WebAssembly 文件
 - **Content-Type**：`application/wasm`
 - **Cache-Control**：`public, max-age=3600`
 
-#### 6.4 首页与其他资源
+#### 7.4 首页与其他资源
 
 | 端点 | Content-Type | Cache-Control | 描述 |
 |------|-------------|---------------|------|
@@ -594,7 +735,7 @@ env_key = "KLAW_GATEWAY_AUTH_TOKEN"
 ```
 
 - `token` 直接指定密钥，`env_key` 指定环境变量名。优先使用 `token`，其次从环境变量读取。
-- 保护的路由：`/ws/chat`、`/archive/upload`、`/archive/list`、`/archive/download/{id}`、`/archive/{id}`、`/providers/list`
+- 保护的路由：`/ws/chat`、`/archive/upload`、`/archive/list`、`/archive/download/{id}`、`/archive/{id}`、`/providers/list`、`/mcp/*`
 - 认证方式：`Authorization: Bearer <token>`；`/ws/chat` 还接受 `?token=` 或 `?access_token=` query 参数（浏览器 WebSocket 兼容）
 - 未启用时不做认证检查
 

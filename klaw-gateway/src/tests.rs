@@ -2,10 +2,12 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use crate::{
-        GatewayOptions, GatewayProviderCatalog, GatewayProviderEntry, GatewaySessionHistoryMessage,
-        GatewaySessionHistoryPage, GatewayWebsocketHandler, GatewayWebsocketHandlerError,
-        GatewayWebsocketServerFrame, GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap,
-        GatewayWorkspaceSession, Route,
+        GatewayMcpHandler, GatewayMcpHandlerError, GatewayMcpRuntimeSnapshot,
+        GatewayMcpServerConfigView, GatewayMcpServerDetailView, GatewayMcpServerStatusView,
+        GatewayMcpServerUpsertRequest, GatewayOptions, GatewayProviderCatalog,
+        GatewayProviderEntry, GatewaySessionHistoryMessage, GatewaySessionHistoryPage,
+        GatewayWebsocketHandler, GatewayWebsocketHandlerError, GatewayWebsocketServerFrame,
+        GatewayWebsocketSubmitRequest, GatewayWorkspaceBootstrap, GatewayWorkspaceSession, Route,
         protocol::{GatewayProtocolMethod, GatewayRpcMessage},
         spawn_gateway, spawn_gateway_with_options,
         webhook::{
@@ -15,7 +17,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use futures_util::{SinkExt, StreamExt};
-    use klaw_config::{GatewayAuthConfig, GatewayConfig};
+    use klaw_config::{GatewayAuthConfig, GatewayConfig, McpServerMode};
     use reqwest::StatusCode;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
@@ -208,6 +210,152 @@ mod tests {
                 ))
                 .map_err(|_| GatewayWebsocketHandlerError::internal("connection closed"))?;
             Ok(())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingMcpHandler {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingMcpHandler {
+        fn runtime() -> GatewayMcpRuntimeSnapshot {
+            GatewayMcpRuntimeSnapshot {
+                statuses: vec![GatewayMcpServerStatusView {
+                    id: "local".to_string(),
+                    mode: McpServerMode::Stdio,
+                    enabled: true,
+                    state: "running".to_string(),
+                    last_error: None,
+                    tool_count: 1,
+                }],
+                details: vec![GatewayMcpServerDetailView {
+                    id: "local".to_string(),
+                    tools_list_response: Some(json!({
+                        "tools": [{
+                            "name": "echo",
+                            "description": "Echo input",
+                            "inputSchema": {"type": "object"}
+                        }]
+                    })),
+                }],
+            }
+        }
+
+        fn server() -> GatewayMcpServerConfigView {
+            GatewayMcpServerConfigView {
+                id: "local".to_string(),
+                enabled: true,
+                mode: McpServerMode::Stdio,
+                tool_timeout_seconds: 60,
+                command: Some("npx".to_string()),
+                args: vec!["server".to_string()],
+                cwd: None,
+                url: None,
+                env_keys: vec!["API_KEY".to_string()],
+                header_keys: vec!["Authorization".to_string()],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl GatewayMcpHandler for RecordingMcpHandler {
+        async fn status(&self) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push("status".to_string());
+            Ok(Self::runtime())
+        }
+
+        async fn list_servers(
+            &self,
+        ) -> Result<
+            (Vec<GatewayMcpServerConfigView>, GatewayMcpRuntimeSnapshot),
+            GatewayMcpHandlerError,
+        > {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push("list".to_string());
+            Ok((vec![Self::server()], Self::runtime()))
+        }
+
+        async fn get_server(
+            &self,
+            id: String,
+        ) -> Result<
+            (
+                GatewayMcpServerConfigView,
+                Option<GatewayMcpServerStatusView>,
+                Option<GatewayMcpServerDetailView>,
+            ),
+            GatewayMcpHandlerError,
+        > {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(format!("get:{id}"));
+            Ok((
+                Self::server(),
+                Self::runtime().statuses.into_iter().next(),
+                Self::runtime().details.into_iter().next(),
+            ))
+        }
+
+        async fn create_server(
+            &self,
+            _request: GatewayMcpServerUpsertRequest,
+        ) -> Result<(GatewayMcpServerConfigView, GatewayMcpRuntimeSnapshot), GatewayMcpHandlerError>
+        {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push("create".to_string());
+            Ok((Self::server(), Self::runtime()))
+        }
+
+        async fn update_server(
+            &self,
+            id: String,
+            _request: GatewayMcpServerUpsertRequest,
+        ) -> Result<(GatewayMcpServerConfigView, GatewayMcpRuntimeSnapshot), GatewayMcpHandlerError>
+        {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(format!("update:{id}"));
+            Ok((Self::server(), Self::runtime()))
+        }
+
+        async fn delete_server(
+            &self,
+            id: String,
+        ) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(format!("delete:{id}"));
+            Ok(Self::runtime())
+        }
+
+        async fn sync(&self) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push("sync".to_string());
+            Ok(Self::runtime())
+        }
+
+        async fn restart_server(
+            &self,
+            id: String,
+        ) -> Result<GatewayMcpRuntimeSnapshot, GatewayMcpHandlerError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(format!("restart:{id}"));
+            Ok(Self::runtime())
         }
     }
 
@@ -477,6 +625,170 @@ mod tests {
         handle.shutdown().await.expect("gateway should stop");
     }
 
+    #[tokio::test]
+    async fn gateway_mcp_routes_require_gateway_auth_when_enabled() {
+        let mut config = test_gateway_config();
+        config.auth = GatewayAuthConfig {
+            enabled: true,
+            token: Some("secret-token".to_string()),
+            env_key: None,
+        };
+        let handler = Arc::new(RecordingMcpHandler::default());
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                mcp_handler: Some(handler),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let base_url = format!("http://127.0.0.1:{}", handle.info().actual_port);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("reqwest client");
+
+        let unauthorized = client
+            .get(format!("{base_url}{}", Route::McpStatus.as_str()))
+            .send()
+            .await
+            .expect("mcp status should respond");
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let authorized = client
+            .get(format!("{base_url}{}", Route::McpStatus.as_str()))
+            .bearer_auth("secret-token")
+            .send()
+            .await
+            .expect("mcp status should respond with auth");
+        assert_eq!(authorized.status(), StatusCode::OK);
+        let body: serde_json::Value = authorized.json().await.expect("json body");
+        assert_eq!(
+            body.pointer("/success").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            body.pointer("/runtime/statuses/0/id")
+                .and_then(|v| v.as_str()),
+            Some("local")
+        );
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
+    #[tokio::test]
+    async fn gateway_mcp_routes_expose_redacted_configs_and_actions() {
+        let config = test_gateway_config();
+        let handler = Arc::new(RecordingMcpHandler::default());
+        let calls = Arc::clone(&handler.calls);
+        let handle = match spawn_gateway_with_options(
+            &config,
+            GatewayOptions {
+                mcp_handler: Some(handler),
+                ..GatewayOptions::default()
+            },
+        )
+        .await
+        {
+            Ok(handle) => handle,
+            Err(crate::GatewayError::Bind(err))
+                if err.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(err) => panic!("gateway should start: {err}"),
+        };
+
+        let base_url = format!("http://127.0.0.1:{}", handle.info().actual_port);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("reqwest client");
+
+        let list: serde_json::Value = client
+            .get(format!("{base_url}{}", Route::McpServers.as_str()))
+            .send()
+            .await
+            .expect("mcp servers should respond")
+            .json()
+            .await
+            .expect("json body");
+        assert_eq!(
+            list.pointer("/success").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            list.pointer("/servers/0/env_keys/0")
+                .and_then(|v| v.as_str()),
+            Some("API_KEY")
+        );
+        assert!(list.pointer("/servers/0/env/API_KEY").is_none());
+
+        let create: serde_json::Value = client
+            .post(format!("{base_url}{}", Route::McpServers.as_str()))
+            .json(&json!({
+                "id": "local",
+                "mode": "stdio",
+                "command": "npx",
+                "env": {"API_KEY": "secret"}
+            }))
+            .send()
+            .await
+            .expect("mcp create should respond")
+            .json()
+            .await
+            .expect("json body");
+        assert_eq!(
+            create.pointer("/success").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(create.pointer("/server/env/API_KEY").is_none());
+
+        let invalid_payload: serde_json::Value = client
+            .post(format!("{base_url}{}", Route::McpServers.as_str()))
+            .json(&json!({"id": "missing-mode"}))
+            .send()
+            .await
+            .expect("mcp invalid create should respond")
+            .json()
+            .await
+            .expect("json body");
+        assert_eq!(
+            invalid_payload
+                .pointer("/success")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(invalid_payload.pointer("/error").is_some());
+
+        let restart = client
+            .post(format!(
+                "{base_url}{}",
+                Route::McpServerRestart.as_str().replace("{id}", "local")
+            ))
+            .send()
+            .await
+            .expect("mcp restart should respond");
+        assert_eq!(restart.status(), StatusCode::OK);
+
+        let calls = calls.lock().unwrap_or_else(|err| err.into_inner()).clone();
+        assert!(calls.iter().any(|call| call == "list"));
+        assert!(calls.iter().any(|call| call == "create"));
+        assert!(calls.iter().any(|call| call == "restart:local"));
+
+        handle.shutdown().await.expect("gateway should stop");
+    }
+
     #[test]
     fn exported_route_constants_match_expected_paths() {
         assert_eq!(Route::Home.as_str(), "/");
@@ -490,6 +802,14 @@ mod tests {
         assert_eq!(Route::WsChat.as_str(), "/ws/chat");
         assert_eq!(Route::WebhookEvents.as_str(), "/webhook/events");
         assert_eq!(Route::WebhookAgents.as_str(), "/webhook/agents");
+        assert_eq!(Route::McpStatus.as_str(), "/mcp/status");
+        assert_eq!(Route::McpServers.as_str(), "/mcp/servers");
+        assert_eq!(Route::McpServer.as_str(), "/mcp/servers/{id}");
+        assert_eq!(Route::McpSync.as_str(), "/mcp/sync");
+        assert_eq!(
+            Route::McpServerRestart.as_str(),
+            "/mcp/servers/{id}/restart"
+        );
     }
 
     #[test]

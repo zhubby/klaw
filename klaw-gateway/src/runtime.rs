@@ -7,11 +7,16 @@ use crate::{
     chat_page::{chat_dist_js_handler, chat_dist_wasm_handler, chat_page_handler},
     handlers::{health_live_handler, health_ready_handler, health_status_handler, metrics_handler},
     home::{home_favicon_handler, home_logo_handler, home_page_handler, image_handler},
+    mcp::{
+        GatewayMcpHandler, mcp_create_server_handler, mcp_delete_server_handler,
+        mcp_get_server_handler, mcp_list_servers_handler, mcp_restart_server_handler,
+        mcp_status_handler, mcp_sync_handler, mcp_update_server_handler,
+    },
     providers::providers_list_handler,
     routes::Route,
     state::{
-        GatewayArchiveState, GatewayHandle, GatewayProvidersState, GatewayRuntimeInfo,
-        GatewayState, GatewayWebsocketBroadcaster, GatewayWebsocketState,
+        GatewayArchiveState, GatewayHandle, GatewayMcpState, GatewayProvidersState,
+        GatewayRuntimeInfo, GatewayState, GatewayWebsocketBroadcaster, GatewayWebsocketState,
     },
     tailscale::{TailscaleError, TailscaleManager, TailscaleRuntimeInfo, TailscaleStatus},
     webhook::{
@@ -40,6 +45,7 @@ pub struct GatewayOptions {
     pub websocket_handler: Option<Arc<dyn GatewayWebsocketHandler>>,
     pub archive_service: Option<Arc<dyn ArchiveService>>,
     pub app_config: Option<Arc<AppConfig>>,
+    pub mcp_handler: Option<Arc<dyn GatewayMcpHandler>>,
 }
 
 pub async fn run_gateway(config: &GatewayConfig) -> Result<(), GatewayError> {
@@ -81,6 +87,9 @@ pub async fn spawn_gateway_with_options(
             default_provider: app_config.model_provider.clone(),
         })
     });
+    let mcp = options
+        .mcp_handler
+        .map(|handler| Arc::new(GatewayMcpState { handler }));
     let auth_token = resolve_auth_token(config)?;
     let websocket_broadcaster = options
         .websocket_broadcaster
@@ -93,6 +102,7 @@ pub async fn spawn_gateway_with_options(
         websocket,
         archive,
         providers,
+        mcp,
     ));
     let app = build_router(config, state, auth_token);
 
@@ -273,6 +283,26 @@ fn build_router(
 
     if state.providers.is_some() {
         app = app.route(Route::ProvidersList.as_str(), get(providers_list_handler));
+    }
+
+    if state.mcp.is_some() {
+        app = app
+            .route(Route::McpStatus.as_str(), get(mcp_status_handler))
+            .route(
+                Route::McpServers.as_str(),
+                get(mcp_list_servers_handler).post(mcp_create_server_handler),
+            )
+            .route(
+                Route::McpServer.as_str(),
+                get(mcp_get_server_handler)
+                    .put(mcp_update_server_handler)
+                    .delete(mcp_delete_server_handler),
+            )
+            .route(Route::McpSync.as_str(), post(mcp_sync_handler))
+            .route(
+                Route::McpServerRestart.as_str(),
+                post(mcp_restart_server_handler),
+            );
     }
 
     let app = app

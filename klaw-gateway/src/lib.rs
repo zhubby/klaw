@@ -5,6 +5,7 @@ mod embedded;
 mod error;
 mod handlers;
 mod home;
+mod mcp;
 mod protocol;
 mod providers;
 mod routes;
@@ -16,6 +17,11 @@ mod webhook;
 mod websocket;
 
 pub use error::GatewayError;
+pub use mcp::{
+    GatewayMcpHandler, GatewayMcpHandlerError, GatewayMcpRuntimeSnapshot,
+    GatewayMcpServerConfigView, GatewayMcpServerDetailView, GatewayMcpServerStatusView,
+    GatewayMcpServerUpsertRequest,
+};
 pub use protocol::{
     GATEWAY_WEBSOCKET_PROTOCOL_VERSION, GatewayApprovalDecision, GatewayApprovalRequest,
     GatewayApprovalScope, GatewayContentBlock, GatewayProtocolCapabilities,

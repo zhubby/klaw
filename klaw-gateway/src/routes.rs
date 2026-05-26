@@ -32,6 +32,16 @@ pub enum Route {
     ArchiveGet,
     #[strum(serialize = "/providers/list")]
     ProvidersList,
+    #[strum(serialize = "/mcp/status")]
+    McpStatus,
+    #[strum(serialize = "/mcp/servers")]
+    McpServers,
+    #[strum(serialize = "/mcp/servers/{id}")]
+    McpServer,
+    #[strum(serialize = "/mcp/sync")]
+    McpSync,
+    #[strum(serialize = "/mcp/servers/{id}/restart")]
+    McpServerRestart,
     #[strum(serialize = "/health/live")]
     HealthLive,
     #[strum(serialize = "/health/ready")]
