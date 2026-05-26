@@ -5,6 +5,7 @@
 ### Fixed
 
 - Gateway config validation now rejects enabled auth without a resolvable token and rejects `gateway.tls.enabled=true` until HTTPS/WSS listener support is implemented.
+- Default config template tests now assert the current `knowledge.retrieval.top_k = 10` default.
 
 ## 2026-04-26
 
