@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-26
+
+### Fixed
+
+- GUI build metadata now falls back to an `unknown` git SHA when source builds run without a `.git` directory, such as Docker build contexts.
+
 ## 2026-05-25
 
 ### Added
