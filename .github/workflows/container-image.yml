@@ -59,6 +59,7 @@ jobs:
             libpango1.0-dev \
             libssl-dev \
             libudev-dev \
+            libxdo-dev \
             pkg-config
 
       - name: Install Rust toolchain

@@ -17,6 +17,7 @@ RUN apt-get update \
         libpango1.0-dev \
         libssl-dev \
         libudev-dev \
+        libxdo-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,6 +50,7 @@ RUN apt-get update \
         libssl3 \
         libx11-6 \
         libxcb1 \
+        libxdo3 \
         libxkbcommon0 \
     && rm -rf /var/lib/apt/lists/*
 
