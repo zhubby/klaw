@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-29
+
+### Fixed
+
+- Assistant markdown in WebUI chat bubbles now scrolls horizontally for wide content such as tables, keeping the bubble list aligned.
+
 ## 2026-05-15
 
 ### Added

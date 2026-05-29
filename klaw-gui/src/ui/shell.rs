@@ -30,7 +30,7 @@ use time::OffsetDateTime;
 
 const WINDOW_RESIZE_HIT_ZONE: f32 = 8.0;
 
-fn top_menu_label(icon: &'static str, translator: &Translator, key: &str) -> String {
+fn menu_item_label(icon: &'static str, translator: &Translator, key: &str) -> String {
     format!("{} {}", icon, translator.text(key))
 }
 
@@ -237,59 +237,85 @@ impl ShellUi {
         egui::TopBottomPanel::top("klaw-menu-bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button(
-                    top_menu_label(regular::FILE, &translator, "menu-file"),
+                    menu_item_label(regular::FILE, &translator, "menu-file"),
                     |ui| {
                         if ui
-                            .button(translator.text("menu-force-persist-layout"))
+                            .button(menu_item_label(
+                                regular::FLOPPY_DISK,
+                                &translator,
+                                "menu-force-persist-layout",
+                            ))
                             .clicked()
                         {
                             actions.push(UiAction::ForcePersistLayout);
                             ui.close();
                         }
                         ui.separator();
-                        if ui.button(translator.text("menu-hide-window")).clicked() {
+                        if ui
+                            .button(menu_item_label(
+                                regular::EYE_SLASH,
+                                &translator,
+                                "menu-hide-window",
+                            ))
+                            .clicked()
+                        {
                             actions.push(UiAction::HideWindow);
                             ui.close();
                         }
                     },
                 );
 
-                ui.separator();
                 ui.menu_button(
-                    top_menu_label(regular::EYE, &translator, "menu-view"),
+                    menu_item_label(regular::EYE, &translator, "menu-view"),
                     |ui| {
-                        let label = if state.fullscreen {
-                            translator.text("menu-exit-full-windows")
+                        let (icon, key) = if state.fullscreen {
+                            (regular::CORNERS_IN, "menu-exit-full-windows")
                         } else {
-                            translator.text("menu-toggle-full-windows")
+                            (regular::CORNERS_OUT, "menu-toggle-full-windows")
                         };
-                        if ui.button(label).clicked() {
+                        if ui.button(menu_item_label(icon, &translator, key)).clicked() {
                             actions.push(UiAction::ToggleFullscreen);
                             ui.close();
                         }
                     },
                 );
 
-                ui.separator();
                 ui.menu_button(
-                    top_menu_label(regular::BROWSERS, &translator, "menu-windows"),
+                    menu_item_label(regular::BROWSERS, &translator, "menu-windows"),
                     |ui| {
-                        if ui.button(translator.text("menu-minimize")).clicked() {
+                        if ui
+                            .button(menu_item_label(
+                                regular::MINUS,
+                                &translator,
+                                "menu-minimize",
+                            ))
+                            .clicked()
+                        {
                             actions.push(UiAction::MinimizeWindow);
                             ui.close();
                         }
-                        if ui.button(translator.text("menu-zoom")).clicked() {
+                        ui.separator();
+                        if ui
+                            .button(menu_item_label(
+                                regular::ARROWS_OUT,
+                                &translator,
+                                "menu-zoom",
+                            ))
+                            .clicked()
+                        {
                             actions.push(UiAction::ZoomWindow);
                             ui.close();
                         }
                     },
                 );
 
-                ui.separator();
                 ui.menu_button(
-                    top_menu_label(regular::QUESTION, &translator, "menu-help"),
+                    menu_item_label(regular::QUESTION, &translator, "menu-help"),
                     |ui| {
-                        if ui.button(translator.text("menu-about")).clicked() {
+                        if ui
+                            .button(menu_item_label(regular::INFO, &translator, "menu-about"))
+                            .clicked()
+                        {
                             actions.push(UiAction::ShowAbout);
                             ui.close();
                         }
