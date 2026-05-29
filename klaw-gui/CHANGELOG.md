@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-05-29
+
+### Changed
+
+- 顶部菜单栏的 File/View/Windows/Help 菜单现在显示对应图标，并在菜单之间加入分割线。
+
 ## 2026-05-26
 
 ### Fixed

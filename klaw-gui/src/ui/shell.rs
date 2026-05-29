@@ -30,6 +30,10 @@ use time::OffsetDateTime;
 
 const WINDOW_RESIZE_HIT_ZONE: f32 = 8.0;
 
+fn top_menu_label(icon: &'static str, translator: &Translator, key: &str) -> String {
+    format!("{} {}", icon, translator.text(key))
+}
+
 pub struct ShellUi {
     panels: PanelRegistry,
     notifications: NotificationCenter,
@@ -232,50 +236,65 @@ impl ShellUi {
         let translator = Translator::new(LocaleDomain::Gui, current_ui_language());
         egui::TopBottomPanel::top("klaw-menu-bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button(translator.text("menu-file"), |ui| {
-                    if ui
-                        .button(translator.text("menu-force-persist-layout"))
-                        .clicked()
-                    {
-                        actions.push(UiAction::ForcePersistLayout);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button(translator.text("menu-hide-window")).clicked() {
-                        actions.push(UiAction::HideWindow);
-                        ui.close();
-                    }
-                });
+                ui.menu_button(
+                    top_menu_label(regular::FILE, &translator, "menu-file"),
+                    |ui| {
+                        if ui
+                            .button(translator.text("menu-force-persist-layout"))
+                            .clicked()
+                        {
+                            actions.push(UiAction::ForcePersistLayout);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button(translator.text("menu-hide-window")).clicked() {
+                            actions.push(UiAction::HideWindow);
+                            ui.close();
+                        }
+                    },
+                );
 
-                ui.menu_button(translator.text("menu-view"), |ui| {
-                    let label = if state.fullscreen {
-                        translator.text("menu-exit-full-windows")
-                    } else {
-                        translator.text("menu-toggle-full-windows")
-                    };
-                    if ui.button(label).clicked() {
-                        actions.push(UiAction::ToggleFullscreen);
-                        ui.close();
-                    }
-                });
+                ui.separator();
+                ui.menu_button(
+                    top_menu_label(regular::EYE, &translator, "menu-view"),
+                    |ui| {
+                        let label = if state.fullscreen {
+                            translator.text("menu-exit-full-windows")
+                        } else {
+                            translator.text("menu-toggle-full-windows")
+                        };
+                        if ui.button(label).clicked() {
+                            actions.push(UiAction::ToggleFullscreen);
+                            ui.close();
+                        }
+                    },
+                );
 
-                ui.menu_button(translator.text("menu-windows"), |ui| {
-                    if ui.button(translator.text("menu-minimize")).clicked() {
-                        actions.push(UiAction::MinimizeWindow);
-                        ui.close();
-                    }
-                    if ui.button(translator.text("menu-zoom")).clicked() {
-                        actions.push(UiAction::ZoomWindow);
-                        ui.close();
-                    }
-                });
+                ui.separator();
+                ui.menu_button(
+                    top_menu_label(regular::BROWSERS, &translator, "menu-windows"),
+                    |ui| {
+                        if ui.button(translator.text("menu-minimize")).clicked() {
+                            actions.push(UiAction::MinimizeWindow);
+                            ui.close();
+                        }
+                        if ui.button(translator.text("menu-zoom")).clicked() {
+                            actions.push(UiAction::ZoomWindow);
+                            ui.close();
+                        }
+                    },
+                );
 
-                ui.menu_button(translator.text("menu-help"), |ui| {
-                    if ui.button(translator.text("menu-about")).clicked() {
-                        actions.push(UiAction::ShowAbout);
-                        ui.close();
-                    }
-                });
+                ui.separator();
+                ui.menu_button(
+                    top_menu_label(regular::QUESTION, &translator, "menu-help"),
+                    |ui| {
+                        if ui.button(translator.text("menu-about")).clicked() {
+                            actions.push(UiAction::ShowAbout);
+                            ui.close();
+                        }
+                    },
+                );
 
                 let row_height = ui.spacing().interact_size.y;
                 ui.allocate_ui_with_layout(
