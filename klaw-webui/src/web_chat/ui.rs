@@ -27,7 +27,7 @@ use super::{
     app::{
         ArchivePreviewDialog, ArchivePreviewStatus, ChatApp, web_archive_resource_from_attachment,
     },
-    markdown::{MarkdownCache, render_markdown, render_plain_message},
+    markdown::{MarkdownCache, render_markdown, render_plain_message, render_scrollable_markdown},
     session::{
         BUBBLE_MAX_WIDTH, CardInteractionState, ChatMessage, INPUT_PANEL_HEIGHT,
         PendingHistoryScrollRestore, SESSION_LIST_WIDTH, SESSION_WINDOW_DEFAULT_HEIGHT,
@@ -2193,7 +2193,18 @@ fn render_message_body(
                 ui.ctx().request_repaint();
             }
         } else {
-            render_markdown(ui, markdown_cache, &message.text, body_color, link_color);
+            if matches!(message.role, MessageRole::Assistant) {
+                render_scrollable_markdown(
+                    ui,
+                    markdown_cache,
+                    &message.text,
+                    body_color,
+                    link_color,
+                    ("assistant-message-markdown", &message.id),
+                );
+            } else {
+                render_markdown(ui, markdown_cache, &message.text, body_color, link_color);
+            }
         }
 
         if should_remove_animation {
